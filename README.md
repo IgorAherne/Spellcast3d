@@ -1,10 +1,10 @@
 # Spellcast3D
 
-A free, open-source app for making game-ready 3D props **on your own PC**, in a browser.
+A free, open-source app for making game-ready 3D props **on your own PC**, in a browser.</br>
 You need 8GB vram NVIDIA gpu and 16GB ram.
 
-Its idea is to develop several 3D props simultaneously, before moving to the next stage.
-We load each heavy neural net once per stage, and all 3D props just re-use it.
+Its idea is to develop several 3D props simultaneously, before moving to the next stage.</br>
+We load each heavy neural net once per stage, and all 3D props just re-use it.</br>
 The more props you create at once, the more time savings you get.
 
 Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/InstantMeshes code that was highly optimized by Claude Fable 5.2 over many iterations.
@@ -35,7 +35,7 @@ You do not need Python, git or CUDA: they are inside the folder.
 2. Unzip it to a **short** folder with only English letters, for example `C:\spellcast3d`.
 3. Double-click `run-browser\run-spellcast3d.bat`.
 
-Initial startup takes a few minutes and opens your browser. 
+Initial startup takes a few minutes and opens your browser.</br>
 The AI tools then install in the background (30 to 90 minutes, mostly downloads).
 
 ## Image generators
@@ -94,7 +94,7 @@ notices some of them ask for.
 | Part | Licence |
 |---|---|
 | Spellcast3D, including its baker | [AGPL-3.0](LICENSE) |
-| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) |
+| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) (renders/generations can be used commercially) |
 | FLUX.3 Klein (optional) | [FLUX Kommunity License](https://huggingface.co/unsloth/flux-3-image-klein-GGUF/blob/12ef13ce920d53f45fe805093910c899668b9e76/LICENSE.md) |
 | Forge Neo (optional) | [AGPL-3.0](https://github.com/IgorAherne/stable-diffusion-webui-forge/blob/neo/LICENSE), and the licence of each image model you use with it |
 | Pixal3D | [MIT](https://github.com/IgorAherne/Pixal3D/blob/master/LICENSE); parts it downloads: [RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0), [nvdiffrast](https://github.com/NVlabs/nvdiffrast/blob/main/LICENSE.txt), [nvdiffrec](https://github.com/NVlabs/nvdiffrec/blob/main/LICENSE.txt), [DINOv3](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
