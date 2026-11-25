@@ -45,13 +45,13 @@ Pick one per prop on the Images page, under *Model*:
 | Model | Speed (1024 x 1024, RTX 3060) | Notes |
 |---|---|---|
 | **Qwen-Image 2.1 Turbo** | ~15 s | the default; installed at the first start |
-| **Qwen-Image 2.1 Full** | ~31 s | sometimes finer detail; a 4.2 GB download, on request |
-| **FLUX.3 Klein** | ~30 s | follows *long prompts* best, no transparent background; a 6.8 GB download, on request |
+| **Qwen-Image 2.1 Full** | ~31 s | sometimes finer detail;</br>a 4.2 GB download, on request |
+| **FLUX.3 Klein** | ~30 s | follows *long prompts* best, no transparent background;</br>a 6.8 GB download, on request |
 
-All three take your words and up to 10 example pictures, and can redraw the picture in the viewport with
-marks you paint over it. Resolutions: 1K, 1.5K and 2K.
+All three take your words and up to 10 example pictures.</br>They can redraw the picture in the viewport with
+marks you paint over it.</br>Resolutions: 1K, 1.5K and 2K.
 
-**Forge Neo** is also supported. Open `spellcast3d-config.ini` with Notepad before the
+**Forge Neo** is also supported.</br>Open `spellcast3d-config.ini` with Notepad before the
 first start and switch the backend:
 
 ```ini
@@ -64,7 +64,7 @@ little finer and needs more memory. The file explains each setting.
 
 ## Models and disk space
 
-AI models (neural nets) live in the `models` folder. 
+AI models (neural nets) live in the `models` folder.</br>
 Updates and reinstalls never touch it, and models you already have are not downloaded again if you put them there first (see [`models/README.txt`](models/README.txt)).
 
 | Folder | What | Size |
@@ -82,8 +82,8 @@ Finished props are saved into the `exports` folder, one folder per prop.
 
 ## Updating
 
-Close Spellcast3D and run `tools\update.bat`. It downloads the newest version and reinstalls only what
-changed. Your projects, your settings and the `models` folder are kept.
+Close Spellcast3D and run `tools\update.bat`.</br>
+It downloads the newest version and reinstalls only what changed. Your projects, your settings and the `models` folder are kept.
 
 ## Licences
 
