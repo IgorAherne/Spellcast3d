@@ -1,21 +1,21 @@
 # Spellcast3D
 
-A free, open-source to efficiently make game-ready 3D props **on your own PC**, in a browser.</br>
+A free, open-source app to efficiently make game-ready 3D props **on your own PC**, in a browser.</br>
 You need 8GB vram NVIDIA gpu and 16GB ram.
 
-Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow / LATO.2 / InstantMeshes.</br>
+Using asynchronous loading and Qwen-Image 2.1 + Pixal3D + TriFlow / LATO.2 / Instant Meshes.</br>
 Highly optimized by Claude Fable 5.2 over many iterations.
 
 Its idea is to develop several 3D props simultaneously, when moving between stages.</br>
 **All Images -> All 3D Generations -> All Retopology -> All Projection**</br>
-Each Neural net loads once per stage, and every 3D prop uses it.</br>
+Each neural net loads once per stage, and every 3D prop uses it.</br>
 So - the more 3D props you create at once, the more time you save.
 
 | Stage | What it does | Tool |
 |---|---|---|
 | Images | render or import images or character sheets</br>create tileable textures | Qwen-Image 2.1 Turbo (built in)</br>FLUX.3 Klein / Forge Neo (optional) |
 | 3D | picture (or several views) -> textured high-poly model | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
-| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>Custom-trained Marigold Albedo LoRA |
+| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>our albedo LoRA, trained with [Marigold V2](https://github.com/huawei-bayerlab/marigold-v2)'s recipe |
 | Retopo | clean low-poly mesh with UVs | [TriFlow](https://github.com/IgorAherne/triflow), [LATO.2](https://github.com/IgorAherne/LATO2-stableprojectorz) or [Instant Meshes](https://github.com/IgorAherne/instant-meshes-py) |
 | Projection | bakes the detailed textures onto the clean mesh</br>Export GLB, FBX, OBJ + PBR maps | Spellcast3D's own baker |
 
@@ -43,7 +43,7 @@ The AI tools then install in the background (30 to 90 minutes, mostly downloads)
 
 Pick one per prop on the Images page, under *Model*:
 
-| Model | Speed (1024 x 1024, RTX 3060) | Notes |
+| Model | Speed</br>(1024 x 1024, RTX 3060) | Notes |
 |---|---|---|
 | **Qwen-Image 2.1 Turbo** | ~15 s | the default; installed at the first start |
 | **Qwen-Image 2.1 Full** | ~31 s | sometimes finer detail;</br>a 4.2 GB download, on request |
@@ -67,7 +67,7 @@ A bigger size is a little finer and needs more memory. The file explains each se
 
 AI models (neural nets) live in the `models` folder.</br>
 Updates and reinstalls never touch it.</br> 
-ALready have neural nets? Put them there first to skip download (see [`models/README.txt`](models/README.txt)).
+Already have neural nets? Put them there first to skip download (see [`models/README.txt`](models/README.txt)).
 
 | Folder | What | Size |
 |---|---|---|
@@ -97,7 +97,8 @@ notices some of them ask for.
 | Part | Licence |
 |---|---|
 | Spellcast3D, including its baker | [AGPL-3.0](LICENSE) |
-| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) (renders/generations can be used commercially) |
+| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) (renders/generations can be used commercially: [Qwen's statement](https://x.com/QwenDevs/status/2101917379785838660)) |
+| [Spellcast3D Albedo LoRA](https://huggingface.co/IgorAherne/spellcast3d-marigold-albedo-qwen-image-2.1) | [Qwen Research License](https://huggingface.co/IgorAherne/spellcast3d-marigold-albedo-qwen-image-2.1/blob/main/LICENSE) (renders/generations can be used commercially) |
 | FLUX.3 Klein (optional) | [FLUX Kommunity License](https://huggingface.co/unsloth/flux-3-image-klein-GGUF/blob/12ef13ce920d53f45fe805093910c899668b9e76/LICENSE.md) |
 | Forge Neo (optional) | [AGPL-3.0](https://github.com/IgorAherne/stable-diffusion-webui-forge/blob/neo/LICENSE), and the licence of each image model you use with it |
 | Pixal3D | [MIT](https://github.com/IgorAherne/Pixal3D/blob/master/LICENSE); parts it downloads: [RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0), [nvdiffrast](https://github.com/NVlabs/nvdiffrast/blob/main/LICENSE.txt), [nvdiffrec](https://github.com/NVlabs/nvdiffrec/blob/main/LICENSE.txt), [DINOv3](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
