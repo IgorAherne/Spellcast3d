@@ -4,8 +4,8 @@ A free, open-source app for making game-ready 3D props **on your own PC**, in a 
 You need 8GB vram NVIDIA gpu and 16GB ram.
 
 Its idea is to develop several 3D props simultaneously, before moving between stages.</br>
-We load each neural net once per stage, and all 3D props just re-use it.</br>
-So, the more props you create at once, the more time savings you get.
+Each Neural net loads once per stage, and all 3D props just re-use it.</br>
+So - the more 3D props you create at once, the more time you save.
 
 Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/InstantMeshes code.</br>
 Highly optimized by Claude Fable 5.2 over many iterations.
@@ -82,7 +82,7 @@ Finished props are saved into the `exports` folder, one folder per prop.
 
 ## Updating
 
-Close Spellcast3D and run `tools\update.bat`.</br>
+Close Spellcast3D and run `tools\update.bat`</br>
 It downloads the newest version and reinstalls only what changed. Your projects, your settings and the `models` folder are kept.
 
 ## Licences
