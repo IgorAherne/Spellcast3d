@@ -295,7 +295,7 @@ export const discordCorner = () => h('a', {
   title: 'Join the Spellcast3D community on Discord (opens in a new tab)',
 }, icon('chat'), 'Join Discord');
 
-const LESSONS_URL = 'https://stableprojectorz.com/spellcast3d-lessons';
+const LESSONS_URL = 'https://spellcast3d.com/lessons';
 
 /** "Video Lessons", in the bottom-left corner where a prop begins (Images' chooser): the page of videos, in the browser. */
 export const lessonsCorner = () => h('a', {
