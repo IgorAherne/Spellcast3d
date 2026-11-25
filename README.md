@@ -1,14 +1,14 @@
 # Spellcast3D
 
-A free, open-source app for making game-ready 3D props **on your own PC**, in a browser.</br>
-You need 8GB vram NVIDIA gpu and 16GB ram.
-
-Its idea is to develop several 3D props simultaneously, before moving between stages.</br>
-Each Neural net loads once per stage, and all 3D props just re-use it.</br>
-So - the more 3D props you create at once, the more time you save.
-
+A free, open-source to efficiently make game-ready 3D props **on your own PC**, in a browser.</br>
+You need 8GB vram NVIDIA gpu and 16GB ram.</br>
 Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/InstantMeshes code.</br>
 Highly optimized by Claude Fable 5.2 over many iterations.
+
+Its idea is to develop several 3D props simultaneously, when moving between stages.</br>
+**All Images -> All 3D Generations -> All Retopology -> All Projection**</br>
+Each Neural net loads once per stage, and every 3D prop uses it.</br>
+So - the more 3D props you create at once, the more time you save.
 
 | Stage | What it does | Tool |
 |---|---|---|
