@@ -14,8 +14,8 @@ So - the more 3D props you create at once, the more time you save.
 | Stage | What it does | Tool |
 |---|---|---|
 | Images | render or import images or character sheets</br>create tileable textures | Qwen-Image 2.1 Turbo (built in)</br>FLUX.3 Klein / Forge Neo (optional) |
-| 3D | picture (or several views) -> textured high-poly model | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
-| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>Our albedo LoRA, ([Marigold V2](https://github.com/huawei-bayerlab/marigold-v2)'s recipe) |
+| 3D | picture (or several views) -> textured high-poly mesh | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
+| Omni-Texture | optional: repaints the colours, sharper, from 8 sides | Qwen-Image 2.1</br>Our albedo LoRA: [Marigold V2](https://github.com/huawei-bayerlab/marigold-v2)'s recipe |
 | Retopo | clean low-poly mesh with UVs | [TriFlow](https://github.com/IgorAherne/triflow), [LATO.2](https://github.com/IgorAherne/LATO2-stableprojectorz) or [Instant Meshes](https://github.com/IgorAherne/instant-meshes-py) |
 | Projection | bakes the detailed textures onto the clean mesh</br>Export GLB, FBX, OBJ + PBR maps | Spellcast3D's own baker |
 
