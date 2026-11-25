@@ -3,17 +3,18 @@
 A free, open-source app for making game-ready 3D props **on your own PC**, in a browser.</br>
 You need 8GB vram NVIDIA gpu and 16GB ram.
 
-Its idea is to develop several 3D props simultaneously, before moving to the next stage.</br>
-We load each heavy neural net once per stage, and all 3D props just re-use it.</br>
-The more props you create at once, the more time savings you get.
+Its idea is to develop several 3D props simultaneously, before moving between stages.</br>
+We load each neural net once per stage, and all 3D props just re-use it.</br>
+So, the more props you create at once, the more time savings you get.
 
-Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/InstantMeshes code that was highly optimized by Claude Fable 5.2 over many iterations.
+Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/InstantMeshes code.</br>
+Highly optimized by Claude Fable 5.2 over many iterations.
 
 | Stage | What it does | Tool |
 |---|---|---|
 | Images | render or import images or character sheets | **Qwen-Image 2.1** (built in), optionally FLUX.3 Klein or Forge Neo |
 | 3D | picture (or several views) -> textured high-poly model | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
-| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1 |
+| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>custom-trained Marigold Albedo LoRA |
 | Retopo | clean low-poly mesh with UVs | [TriFlow](https://github.com/IgorAherne/triflow), [LATO.2](https://github.com/IgorAherne/LATO2-stableprojectorz) or [Instant Meshes](https://github.com/IgorAherne/instant-meshes-py) |
 | Projection | bakes the detailed textures onto the clean mesh -> GLB, FBX, OBJ + maps | Spellcast3D's own baker |
 
@@ -23,10 +24,9 @@ Using asynchronous loading and Qwen Image 2.1 + Pixal3D + TriFlow/LATO.2/Instant
 - NVIDIA graphics card with 8 GB of video memory or more, GTX 10xx series or newer (RTX 30xx and newer are
   the fastest)
 - 16 GB of RAM
-- About 92 GB of free disk space
-- Internet for the first start: it downloads about 56 GB of libraries and AI models
+- About 92 GB of free disk space: downloads libraries, AI models
 
-You do not need Python, git or CUDA: they are inside the folder.
+Don't worry about Python, git or CUDA: they are inside the zip.
 
 ## Install
 
