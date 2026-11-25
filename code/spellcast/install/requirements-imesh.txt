@@ -1,0 +1,35 @@
+# Instant Meshes venv (code/venvs/imesh), Python 3.11. Fully pinned for reproducible installs.
+# Runtime deps of the prebuilt code/whl/instant_meshes_brush-*.whl (installed afterwards with
+# --no-deps). No gradio: the hub runs the tool's pure FastAPI server (launchers/imesh_server.py).
+# numpy 2.4.x is the newest line with cp311 wheels; assimp-py 1.2+ needs Python 3.12.
+numpy==2.4.6
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+# FastAPI refuses to build the mesh-upload route without it (gradio used to pull it in).
+python-multipart==0.0.32
+trimesh==5.1.0
+pillow==12.3.0
+# xatlas: Spellcast3D's own build (code/whl/xatlas-0.0.11+spellcast3d.1-cp311-cp311-win_amd64.whl, installed after
+# this file with --no-deps): PyPI's 0.0.11 with xatlas's chart-merging pass fixed (install/components.py XATLAS_WHEEL).
+assimp-py==1.1.0
+# The Projection stage's ray casting (launchers/spellbake, CPU only, so it runs on any GPU): Intel Embree 4
+# with TBB, 13.1 MB wheel, BSD licence (Embree and TBB: Apache-2.0), needs only numpy. Pinned: its GIL
+# release and thread safety, which the bake's thread pool relies on, were verified on this version.
+embreex==4.4.0
+# transitive pins
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+h11==0.16.0
+httptools==0.8.0
+idna==3.20
+pydantic==2.13.5
+pydantic_core==2.46.5
+python-dotenv==1.2.3
+PyYAML==6.0.3
+starlette==1.7.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+watchfiles==1.3.0
+websockets==17.1

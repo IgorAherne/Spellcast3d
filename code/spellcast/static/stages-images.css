@@ -1,0 +1,632 @@
+/* Stage 1, Images (js/stages/images.js; loaded after stages.css): the chooser of an empty draft - five big
+   cards in two rows - and the workbench of a prop: the picture's tools and the mode control on top, the picture with its
+   candidates on the left, the controls on the right with the picture's (or the example's) slot at their top. */
+
+/* ---- the frame both show in (the chooser's cards fly across it into the mode control) ------------- */
+
+.sv-imgroot {
+  position: relative; height: 100%; min-height: 0; overflow: hidden; container-type: size;
+  border-radius: var(--radius); border: 1px solid var(--line-2); background: var(--surface-2); box-shadow: var(--shadow);
+}
+.sv-imgroot > .sv { border: 0; border-radius: 0; background: none; box-shadow: none; }
+.sv-preparing { position: absolute; inset: 0; display: grid; place-items: center; }
+
+/* ---- the chooser -------------------------------------------------------------------------------- */
+
+.sv-chooser {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 24px;
+}
+.sv-chooser.drag-over::after {
+  content: ""; position: absolute; inset: 10px; border: 2px dashed var(--accent); border-radius: 14px; pointer-events: none;
+}
+.sv-chooser.leaving { pointer-events: none; }
+.sv-chooser-title { font-size: 18px; font-weight: 640; }
+/* The four ways in one row, and under them the wide "Import folder" button (two cards long, a third as tall, its
+   icon beside its words); a frame too narrow for the row wraps it. */
+.sv-choice-rows { display: flex; flex-direction: column; align-items: center; gap: clamp(12px, 2cqw, 22px); max-width: 100%; }
+.sv-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: clamp(12px, 2cqw, 22px); max-width: 100%; }
+.sv-choice:disabled { opacity: 0.6; cursor: progress; transform: none; }
+/* (.sv-choice.sv-choice-folder: the card's own rule below sets a square size and must lose.) Two cards wide and as
+   tall as one: twice its first height, so that it weighs as much as the other ways of starting. */
+.sv-choice.sv-choice-folder { width: calc(2 * var(--size) + clamp(12px, 2cqw, 22px)); height: auto; min-height: var(--size); max-width: 100%; }
+.sv-choice.sv-choice-folder .sv-choice-body { flex-direction: row; align-items: center; justify-content: flex-start; text-align: left; gap: 16px; padding: 14px 20px; }
+.sv-choice.sv-choice-folder .sv-choice-icon { flex: none; width: 46px; height: 46px; margin: 0; border-radius: 13px; }
+.sv-choice.sv-choice-folder .sv-choice-icon .icon { width: 22px; height: 22px; }
+.sv-choice-words { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.sv-choice.sv-choice-folder b { font-size: 15px; }
+.sv-choice.sv-choice-folder .sv-choice-text { max-width: none; font-size: 12.5px; white-space: pre-line; }
+.sv-choice {
+  --size: clamp(150px, min(18cqw, 40cqh), 240px);
+  width: var(--size); height: var(--size); flex-shrink: 0; padding: 0; cursor: pointer; text-align: center;
+  border-radius: 18px; border: 1px solid var(--line-2);
+  background: linear-gradient(180deg, #242937, #1d212b); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s cubic-bezier(.2, .8, .2, 1), border-color 0.15s, background 0.15s;
+}
+.sv-choice:hover, .sv-chooser.drag-over .sv-choice:first-child {
+  border-color: rgba(139, 125, 255, 0.6); background: linear-gradient(180deg, #2a2946, #211f33); transform: translateY(-3px);
+}
+.sv-choice:active { transform: translateY(-1px); }
+.sv-choice.on { border-color: var(--accent); }
+.sv-chooser.leaving .sv-choice { transform: none; transform-origin: 0 0; transition: none; will-change: transform, opacity; }
+.sv-choice-body { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 18px 16px; }
+.sv-choice-icon {
+  display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 6px;
+  border-radius: 17px; background: var(--accent-soft); color: var(--accent-2);
+}
+.sv-choice-icon .icon { width: 28px; height: 28px; stroke-width: 1.6; }
+.sv-choice b { font: 650 16px/1.25 var(--font-display); color: var(--text); }
+.sv-choice-text { max-width: 200px; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+.sv-chooser-drop { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--text-3); }
+.sv-chooser-drop .icon { width: 16px; height: 16px; }
+.sv-chooser-note { margin: 0; font-size: 12.5px; color: var(--text-3); text-align: center; }
+
+/* ---- the workbench: the picture's tools and the mode control over the picture and the controls ------- */
+
+.sv-images { grid-template-rows: auto minmax(0, 1fr); }
+/* The header lies on the two columns of the body under it (.sv in stages.css; 100cqw is the workbench's width,
+   .sv-imgroot): the picture's tools above the picture, the mode control above the controls. In a window so
+   narrow that the mode control is wider than the controls, its column grows by the difference and the tools
+   keep to the rest: they never run under it. */
+.sv-imghead {
+  grid-column: 1 / -1; min-width: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(clamp(300px, 31cqw, 390px), auto);
+  border-bottom: 1px solid var(--line);
+}
+/* The picture's tools (slicer.js mounts its buttons here): centred above the picture, between its two edges
+   (the 14px are .sv-media's). The ones that do not fit in one row there wrap into centred rows (the slicer's
+   row wraps by itself: .sl-bar), and the header grows by them. With none to show, the header keeps the height
+   the mode control gives it. */
+.sv-tools {
+  grid-area: 1 / 1; min-width: 0; padding: 9px 14px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px;
+}
+/* Its two parts (the slicer's row, the Sketch tab's "Copy") are laid out as if their buttons were its own. */
+.sv-tools-part { display: contents; }
+/* The mode control stays at the header's top right, also while the tools take more than one row. */
+.sv-modes { grid-area: 1 / 2; justify-self: end; align-self: start; margin: 9px 14px 9px 0; }
+.sv-modes .seg-btn { padding: 0 14px; }
+
+/* ---- the picture and its candidates ------------------------------------------------------------- */
+
+.sv-picture {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 10px;
+}
+.sv-picture-img { width: 100%; height: 100%; min-width: 0; object-fit: contain; display: block; user-select: none; }
+/* A tileable picture from afar (the wheel over it: images.js syncTiling): it shrinks to a quarter about its middle
+   while copies of it fade in all round - a field of 17 x 17 of them laid on the picture's own fitted box (--ar, as
+   the slicer's .sl-fit), moved with the picture's offset (--shift, in tiles) and shrunk with it. */
+.sv-picture, .sv-tiling-fit { transition: transform 0.3s ease-in-out; }
+.sv-tiling { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; pointer-events: none; }
+.sv-tiling-fit { position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1); }
+.sv-tiling-field {
+  position: absolute; inset: -800%; opacity: 0; transition: opacity 0.3s ease-in-out;
+  background: var(--tile, none) repeat;
+  background-size: calc(100% / 17) calc(100% / 17);
+  background-position: calc(var(--shift, 0) * 6.25%) calc(var(--shift, 0) * 6.25%);
+}
+.sv-imgstage.afar > .sv-picture, .sv-imgstage.afar .sv-tiling-fit { transform: scale(0.25); }
+.sv-imgstage.afar .sv-tiling-field { opacity: 1; }
+.sv-imgstage.afar > :is(.mk, .sl) { visibility: hidden; }
+/* The live preview (Qwen-Image 2.1): the rough low-res picture of what is being made, scaled up softly in the
+   picture's own box, over the picture the prop had (and the slicer). The progress over it steps down to the
+   bottom edge and loses its veil, so the preview stays in sight. */
+.sv-live {
+  position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center;
+  padding: 10px; border-radius: inherit; background: #101318;
+}
+.sv-live-img { width: 100%; height: 100%; min-width: 0; object-fit: contain; display: block; user-select: none; }
+/* A preview of a part of the picture (the window a masked change is drawn in: images.js previewParts) lies over just
+   that part of the picture's own fitted box (as the markers' .mk-fit), in pieces round a tileable picture's edge, the
+   rest of the picture in sight round it; from afar it shrinks with the picture. */
+.sv-live.part { background: none; }
+.sv-live-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; }
+.sv-live-fit {
+  position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1);
+  transition: transform 0.3s ease-in-out;
+}
+.sv-imgstage.afar > .sv-live .sv-live-fit { transform: scale(0.25); }
+.sv-live-part { position: absolute; overflow: hidden; }
+.sv-live-part > img { position: absolute; display: block; user-select: none; }
+.sv-live-tag {
+  position: absolute; top: 10px; left: 10px; padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--text-2); background: rgba(10, 12, 16, 0.7);
+}
+.sv-imgstage.live > .sv-busy {
+  justify-content: flex-end; gap: 8px; padding-bottom: 16px; backdrop-filter: none;
+  background: linear-gradient(to top, rgba(10, 12, 16, 0.9), rgba(10, 12, 16, 0) 170px);
+}
+.sv-imgstage.live > .sv-busy .spinner { display: none; }
+.sv-dropzone {
+  width: min(460px, 86%); height: min(300px, 80%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border: 2px dashed var(--line-2); border-radius: 18px; background: rgba(255, 255, 255, 0.015); color: var(--text-2); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.sv-dropzone:hover, .sv-imgstage.drag-over .sv-dropzone { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.sv-dropzone .icon.big { color: var(--accent-2); }
+.sv-dropzone b { font-size: 16px; color: var(--text); }
+
+/* The prop's pictures: a row under the picture, at the bottom of the picture's panel, packed against its right end,
+   the oldest first and new ones added on the right. When they are many it scrolls sideways: the row's two ends
+   (::before, ::after) keep 8px, so the first and the last picture stay in reach.
+   A tile is larger than its picture by --pad on every side (two of them are the gap to the next picture) and
+   takes the pointer as a whole: a click anywhere on it chooses the picture (images.js). Under the pointer, or
+   with the keyboard on it, it shows its ×, which takes the picture out of the prop: a round button that sticks
+   out of the picture's top right corner, a third of it over the picture, the rest over the gap, so a click on
+   the picture does not remove it. The row's padding is the room the × needs above the tiles (a row that
+   scrolls cuts off what leaves it); its margins give that room, and the tiles' own, back to the panel. */
+.sv-cands {
+  --pad: 8px;
+  position: relative; display: flex; flex-shrink: 0; margin: -10px 0 -6px; padding-top: 10px;
+  overflow: auto hidden; scrollbar-width: thin; user-select: none;
+}
+.sv-cands::before { content: ""; flex: 1 0 8px; }
+.sv-cands::after { content: ""; flex: 0 0 8px; }
+/* While pictures are removed under the pointer (tilerow.js): the last end takes the removed tiles' room, so the
+   row holds still (its first end keeps its width) and the tiles after a removed one move up under the pointer. */
+.sv-cands.held::after { flex: 0 0 calc(8px + var(--tail, 0px)); }
+.sv-cands.panning, .sv-cands.panning * { cursor: grabbing; }
+.sv-cand {
+  position: relative; width: calc(64px + 2 * var(--pad)); height: calc(64px + 2 * var(--pad)); flex-shrink: 0;
+  padding: var(--pad); cursor: pointer;
+}
+/* The tile under the pointer lies over its neighbours: its × reaches into the next one's margin. */
+.sv-cand:hover, .sv-cand:focus-within { z-index: 1; }
+.sv-cand:hover > *, .sv-cand:focus-within > * { transform: translateY(-2px); }
+.sv-cand-pick {
+  position: relative; display: block; width: 100%; height: 100%; padding: 0; overflow: hidden; cursor: pointer;
+  border-radius: 10px; border: 2px solid transparent; background: var(--field);
+  opacity: 0.75; transition: opacity 0.15s, border-color 0.15s, transform 0.15s;
+}
+.sv-cand:hover .sv-cand-pick, .sv-cand:focus-within .sv-cand-pick { opacity: 1; }
+.sv-cand.on .sv-cand-pick { border-color: var(--accent); opacity: 1; box-shadow: 0 0 0 3px var(--accent-soft); }
+.sv-cand img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The ×: 20px, 7 of them over the picture's corner. It turns red under the pointer: that click removes. */
+.sv-cand-x {
+  position: absolute; top: calc(var(--pad) - 13px); right: calc(var(--pad) - 13px);
+  width: 20px; height: 20px; padding: 0; display: grid; place-items: center;
+  border: 1px solid var(--line-2); border-radius: 50%; background: #0c0e12; color: var(--text); cursor: pointer;
+  opacity: 0; transition: opacity 0.12s, background 0.12s, border-color 0.12s, scale 0.12s, transform 0.15s;
+}
+.sv-cand-x .icon { width: 12px; height: 12px; stroke-width: 2.4; }
+.sv-cand:hover .sv-cand-x, .sv-cand:has(:focus-visible) .sv-cand-x { opacity: 1; }
+.sv-cand-x:hover { background: var(--bad); border-color: var(--bad); color: #fff; scale: 1.15; }
+/* Pictures with see-through parts (Qwen-Image 2.1's transparent backgrounds, examples with transparency): a
+   quiet checkerboard shows there, like the picture's own box. */
+.sv-cand img, .sv-slot img, .sv-ref img {
+  background: repeating-conic-gradient(rgba(255, 255, 255, 0.045) 0 25%, transparent 0 50%) 0 0 / 12px 12px, #101318;
+}
+
+/* A picture with views: its view ("Front", "←"...) or how many, on its thumbnail. */
+.sl-cand-chip {
+  position: absolute; left: 3px; bottom: 3px; max-width: calc(100% - 6px); height: 16px; padding: 0 5px;
+  border-radius: 5px; background: var(--view, rgba(15, 18, 23, 0.85)); color: #11141a;
+  font-size: 10.5px; font-weight: 700; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sl-cand-chip:not([style]) { color: var(--text); }
+
+/* ---- the slicer over the picture (js/stages/slicer.js) ------------------------------------------------ */
+
+/* Over the picture, under the busy layer; only its buttons and chips take the pointer (the drawing canvas
+   too, while slicing). Its row of buttons is above the picture, in the workbench's header (.sl-bar below). */
+.sl { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.sl button { pointer-events: auto; }
+/* The <img>'s own box (.sv-picture's padding): the picture shows in it, fitted (xMidYMid meet). */
+.sl-canvas { position: absolute; left: 10px; top: 10px; width: calc(100% - 20px); height: calc(100% - 20px); overflow: visible; }
+/* While slicing the whole layer takes the pointer, the empty room beside the picture too: a slice may begin there. */
+.sl.on { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.sl-rect { fill: var(--view); fill-opacity: 0.1; stroke: var(--view); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.sl-rect.whole { fill: none; stroke-width: 3px; }
+.sl-draft {
+  fill: var(--view); fill-opacity: 0.14; stroke: var(--view); stroke-width: 2px; stroke-dasharray: 7 5;
+  vector-effect: non-scaling-stroke;
+}
+/* The slices' buttons sit on the picture itself: the fitted box of its aspect ratio (--ar), centred like the <img>. */
+.sl-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; pointer-events: none; }
+.sl-fit { position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1); }
+/* A slice's buttons, in its bottom-left corner (--x, --y): the chip with its view's name, the move button above
+   it, the one that removes it to its right (the last two while slicing). A small slice, or one at the
+   picture's right or top edge, has them beside it: they stay on the picture (104px, 58px: the room they take). */
+.sl-ctl {
+  position: absolute; left: max(0px, min(var(--x), calc(100% - 104px))); top: max(var(--y), 58px);
+  translate: 5px calc(-100% - 5px); display: grid; grid-template: "move ." auto "chip del" auto / auto auto;
+  gap: 4px; justify-items: start;
+}
+.sl-chip {
+  grid-area: chip; height: 22px; padding: 0 8px; border: 0; border-radius: 7px;
+  background: var(--view); color: #11141a; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); transition: filter 0.15s, transform 0.1s;
+}
+.sl-chip:hover, .sl-chip.menu-open { filter: brightness(1.12); }
+.sl-chip:active { transform: translateY(1px); }
+.sl-move, .sl-del {
+  width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 1.5px solid var(--view); border-radius: 7px;
+  background: rgba(15, 18, 23, 0.88); color: var(--text); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.sl-move { grid-area: move; cursor: grab; touch-action: none; }
+.sl-del { grid-area: del; }
+.sl-move .icon, .sl-del .icon { width: 13px; height: 13px; stroke-width: 2.2; }
+.sl-move:hover, .sl-move.moving { background: var(--view); color: #11141a; }
+.sl-move.moving { cursor: grabbing; }
+.sl-del:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
+.sl:not(.on) :is(.sl-move, .sl-del) { display: none; }
+
+/* The slicer's row of buttons, above the picture in the workbench's header (slicer.js puts it there while a
+   picture shows), centred: the view the next drag draws (a row of four, while slicing), then the buttons
+   (.sl-acts: Copy, the bin of the picture's slices, the presets and "Slice into views"). Where the two do
+   not fit side by side they take a row each, the views over the buttons; only where even one of them is
+   too wide does it wrap inside. It fades in as it comes. */
+.sl-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; min-width: 0;
+  animation: sc-fade 0.3s ease-out;
+}
+.sl-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; min-width: 0; }
+/* A slicer without a header to be in: the row lies over the picture's top, on glass, the hints under it. */
+.sl > .sl-bar { position: absolute; top: 10px; left: 10px; right: 10px; }
+:where(.sl > .sl-bar) :is(.sl-toggle, .sl-preset, .sl-save, .sl-copy) { background: rgba(20, 23, 29, 0.78); backdrop-filter: blur(6px); }
+.sl:has(> .sl-bar) .sl-hints { top: 50px; }
+.sl-toggle .icon, .sl-preset .icon, .sl-save .icon, .sl-copy .icon { color: var(--accent-2); }
+/* "Saved" / "Copied" for a moment after a save or a copy: as wide as that word needs, so their neighbours stay where
+   they are. A little apart from the slicing buttons before them. */
+.sl-save, .sl-copy { min-width: 92px; }
+.sl-acts > :is(.sl-save, .sl-copy:not(.sl-save + .sl-copy)) { margin-left: 39px; }
+:is(.sl-save, .sl-copy).done, :is(.sl-save, .sl-copy).done .icon { color: var(--ok); }
+.sl-toggle.on { border-color: transparent; background: var(--accent-deep); color: #fff; }
+.sl-toggle.on:hover { background: #7466ff; }
+.sl-toggle.on .icon { color: #fff; }
+.sl-clear { width: 30px; height: 30px; }
+
+/* The view the next drag draws: a row of four, while slicing. */
+.sl-views {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; padding: 3px; border-radius: 11px;
+  border: 1px solid var(--line-2); background: var(--field);
+}
+.sl-views[hidden] { display: none; }
+.sl-view {
+  display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px 0 8px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer;
+  font-size: 12.5px; font-weight: 560; white-space: nowrap; transition: background 0.15s, color 0.15s;
+}
+.sl-view:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.sl-view.on { color: var(--text); background: var(--surface-3); box-shadow: inset 0 0 0 1.5px var(--view); }
+.sl-swatch { width: 11px; height: 11px; flex-shrink: 0; border-radius: 4px; background: var(--view); }
+.sl-check { width: 14px; height: 14px; margin-left: -2px; color: var(--ok); visibility: hidden; }
+.sl-view.has .sl-check { visibility: visible; }
+.sl-view.elsewhere .sl-check { opacity: 0.5; }
+/* What the views still lack, while slicing: a small pill over the top edge of the picture's box. It takes no
+   room, so the picture stays where it is as it comes and goes, and no pointer: a slice may start under it. */
+.sl-hints { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: center; }
+.sl-hint, .sl-note {
+  min-width: 0; margin: 0; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.sl-hint { background: rgba(58, 42, 12, 0.92); color: #ffdca0; }
+.sl-note { background: rgba(15, 18, 23, 0.88); color: var(--text-2); }
+/* A chip's menu: the view swatch in the icon's place. */
+.sl-menu .sl-swatch { margin: 0 2.5px; }
+
+/* A prop made from the artist's own 3D model. */
+.sv-own-model { max-width: 460px; }
+.sv-own-model > img { width: min(180px, 40%); aspect-ratio: 1; object-fit: contain; }
+
+/* ---- the controls ---------------------------------------------------------------------------------- */
+
+/* Room between the example pictures, the words, the model, Variations and the switches; the model's name stays
+   with its choice. */
+.sv-images .sv-side-scroll {
+  gap: 24px; padding-top: 14px; padding-bottom: 14px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+}
+.sv-images .sv-side-scroll > .sv-group { gap: 20px; }
+.sv-images .sv-side-scroll > .sv-group > .sv-model { margin-top: -12px; }
+.sv-images details.fold { padding-top: 10px; }
+.sv-prompt { min-height: 66px; }
+/* Without "Avoid" under them (Qwen-Image 2.1: images.js CONTROLS) the words take its room: 7 lines (the 20px
+   are the padding and the border) in the place of 3, a label and 2, so a longer description shows whole
+   and the panel is no taller than with both. Dragging the corner still sizes it. */
+.sv-prompt.alone { height: calc(7 * 1.45em + 20px); }
+.sv-avoid { min-height: 0; }
+/* The words with the prompt library's chips under them, both inside one field (promptlib.js): a chip per shown
+   prompt, then "+prompt", on as many lines as they need (the field grows by them, the words keep their lines). */
+.sv-prompt-box {
+  border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--field);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.sv-prompt-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.sv-prompt-box > .sv-prompt, .sv-prompt-box > .sv-prompt:focus { display: block; border: 0; background: transparent; box-shadow: none; }
+.pl-bar { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px 8px; }
+.pl-chip {
+  flex-shrink: 0; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: var(--surface-3); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.pl-chip:hover { color: var(--text); border-color: var(--accent); }
+.pl-chip.pl-open { color: var(--accent-2); border-style: dashed; background: transparent; }
+/* The library itself, over the whole viewport while open: an x in either top corner back to the picture, + Add, the
+   prompts in long rows under them (the name, the words, then "Show" over the bin), scrolling down. */
+.pl-panel {
+  position: absolute; inset: 0; z-index: 9; display: flex; flex-direction: column; gap: 12px; padding: 14px 16px;
+  border-radius: inherit; background: var(--surface); animation: sc-fade 0.12s ease-out;
+}
+.pl-head { display: flex; align-items: center; gap: 10px; }
+.pl-head h3 { flex: 1; margin: 0; font-size: 16px; font-weight: 650; }
+.pl-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.pl-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; flex-shrink: 0;
+  border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line);
+}
+.pl-side { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+.pl-show { display: flex; align-items: center; gap: 6px; height: 30px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.pl-name { width: 14ch; flex-shrink: 0; }
+.pl-text { flex: 1; min-width: 0; min-height: 38px; resize: vertical; }
+.pl-empty { margin: 6px 2px; color: var(--text-3); }
+/* A label and its control on one line, and a switch with its explanation in the tooltip. */
+.sv-inline-field { display: flex; align-items: center; gap: 12px; }
+.sv-inline-field > .field-label { flex-shrink: 0; }
+.sv-inline-field > .sv-with-btn { flex: 1; min-width: 0; }
+.sv-oneline { align-items: center; }
+.sv-oneline .switch-track { margin-top: 0; }
+/* "Tileable", a little off the switch above it: to the right of its switch while it is on, "R" (the picture a quarter
+   turned) and the small slider that slides the picture round (its middle is nought: a notch there, nothing filled),
+   and under them the hint for the wheel. */
+.sv-tileable { margin-top: 10px; }
+.sv-tileable-row { display: flex; align-items: center; gap: 14px; }
+.sv-turn { width: 30px; height: 30px; padding: 0; margin-left: auto; font-weight: 650; }
+.sv-turn + .sv-shift { margin-left: 0; }
+.sv-shift { flex: 0 1 150px; min-width: 0; margin-left: auto; }
+.sv-shift::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, var(--line-2) 0 calc(50% - 1px), var(--text-2) calc(50% - 1px) calc(50% + 1px), var(--line-2) calc(50% + 1px) 100%);
+}
+.sv-tileable > .hint { margin: 6px 0 0 48px; }
+.sv-shapes .seg-btn { display: grid; place-items: center; padding: 0 6px; }
+.sv-shapes .seg-btn .icon { width: 18px; height: 18px; }
+
+/* The slot at the top: the picture (Import) or the example (Describe + example), the same size either way. */
+.sv-slot {
+  width: 100%; height: 72px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 8px 12px; text-align: left;
+  border: 1.5px dashed var(--line-2); border-radius: 12px; background: transparent; color: var(--text-2); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.sv-slot:hover, .sv-slot.drag-over { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.sv-slot.filled { gap: 10px; padding: 8px 6px 8px 8px; border-style: solid; background: var(--field); }
+div.sv-slot.filled { cursor: default; }
+div.sv-slot.filled:hover { border-color: var(--line-2); background: var(--field); }
+.sv-slot > .icon { width: 22px; height: 22px; margin: 0 5px; color: var(--accent-2); }
+.sv-slot img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+.sv-slot > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sv-slot b { color: var(--text); font-size: 13.5px; font-weight: 600; }
+.sv-slot small {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  color: var(--text-3); font-size: 12.5px; line-height: 1.35;
+}
+.sv-slot:disabled { cursor: default; }
+.sv-explain .sv-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); }
+
+/* Qwen-Image 2.1's example pictures (Describe + example): small squares in rows, × on the one under the
+   pointer, + and "Paste" while there is room for more. */
+.sv-refs { display: flex; flex-direction: column; gap: 8px; border-radius: 12px; }
+.sv-refs.drag-over { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.sv-refs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sv-refs-head .field-label { cursor: help; }
+.sv-refs-count { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sv-refs-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; }
+.sv-ref {
+  position: relative; aspect-ratio: 1; min-width: 0; overflow: hidden;
+  border-radius: 9px; border: 1px solid var(--line-2); background: var(--field);
+}
+.sv-ref img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; }
+/* The example picture under the pointer, larger, in the viewport's top right corner (over the picture and its
+   marks, under the layers that say a job runs). */
+.sv-ref-peek {
+  position: absolute; top: 12px; right: 12px; z-index: 4; width: min(56%, 504px); aspect-ratio: 1; padding: 6px;
+  display: grid; place-items: center; border-radius: 12px; pointer-events: none;
+  background: rgba(20, 23, 29, 0.86); border: 1px solid var(--line-2); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px); animation: sc-fade 0.12s ease-out;
+}
+.sv-ref-peek img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 7px; }
+.sv-ref-x {
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: rgba(12, 14, 18, 0.82); color: var(--text); cursor: pointer;
+  opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.sv-ref-x .icon { width: 13px; height: 13px; stroke-width: 2.2; }
+.sv-ref:hover .sv-ref-x, .sv-ref-x:focus-visible { opacity: 1; }
+.sv-ref-x:hover { background: var(--bad); }
+.sv-ref-add {
+  display: grid; place-items: center; padding: 0; border: 1.5px dashed var(--line-2); background: transparent;
+  color: var(--accent-2); cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.sv-ref-add:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.sv-ref-add:disabled { cursor: default; }
+.sv-ref-add .icon { width: 20px; height: 20px; }
+/* "Paste", beside the +: the clipboard and the word under it. */
+.sv-ref-paste { display: flex; flex-direction: column; justify-content: center; gap: 1px; font-size: 10.5px; font-weight: 600; color: var(--text-2); }
+.sv-ref-paste .icon { width: 16px; height: 16px; color: var(--accent-2); }
+.sv-ref-paste:hover:not(:disabled) { color: var(--text); }
+/* No example pictures yet: "Add example pictures" over four places of the row, "Paste" beside it, as tall as a
+   picture's square, so the first one drops into the row without moving what is under it. */
+.sv-ref.sv-ref-first {
+  grid-column: span 4; aspect-ratio: auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+  padding: 0 10px; text-align: left; color: var(--text-2);
+}
+.sv-ref-first > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sv-ref-first b { color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-ref-first small { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-refs.drag-over .sv-ref-first { border-color: var(--accent); background: var(--accent-soft); }
+.sv-ref-add .spinner, .sv-slot > .spinner { width: 18px; height: 18px; margin: 0 7px; }
+
+/* The foot's buttons in one row, as wide and as coloured as each other (images.js syncFoot): "Render From Scratch"
+   and the two "Re-Render Viewport", each its name and under it, smaller, what goes along. They look like the picked
+   model's button (.seg-btn.on). In a narrow panel a name wraps, balanced. The number of variations is a quiet "×N"
+   after "Render From Scratch". Disabled they fade further than other buttons; the one whose job runs stays bright. */
+.sv-makes { display: flex; gap: 8px; }
+.sv-make {
+  flex: 1 1 0; min-width: 0; height: auto; min-height: 78px; padding: 8px; flex-direction: column; gap: 6px;
+  white-space: normal; text-align: center; line-height: 1.2;
+  border-color: transparent; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px var(--line-2);
+}
+.btn.sv-make:disabled { opacity: 0.34; }
+.btn.sv-make.working:disabled { opacity: 0.85; }
+/* "Render\nFrom Scratch" keeps its own line break. */
+.sv-make b { font-size: 13.5px; font-weight: 600; text-wrap: balance; white-space: pre-line; }
+.sv-make small { font-size: 11.5px; font-weight: 500; opacity: 0.75; }
+.sv-count { font-weight: 600; opacity: 0.75; }
+
+/* ---- the markers over the picture (js/stages/marks.js) --------------------------------------------- */
+
+/* The marks lie on the picture's own fitted box, like the slicer's slices (under them, so while slicing the slicer
+   takes the pointer, and the slices' buttons always do), and under Donate (the same z-index, earlier in the stage).
+   Elsewhere a press paints; the cursor is a ring of the marker's size (marks.js ringCursor). */
+.mk { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.mk-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; }
+.mk-fit { position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1); }
+.mk-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: auto; cursor: crosshair;
+  touch-action: none;
+}
+/* A tool's selection (moving stripes through its strokes: Select Object's circle, Smart Mask's mask) on a layer of its
+   own over the marks; the pointer goes on to the marks under it. A mask covers an area: the picture shows through. */
+.mk-circle { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.mk-circle.veil { opacity: 0.55; }
+/* Smart Mask's window (marks.js, mask_window.js): where the image server draws the change of a large or tileable
+   picture - an outline of white and black dashes, seen on any picture -, in parts where it wraps round a tileable
+   picture's edge (no outline where the edge cuts it). At full strength while a stroke is drawn, faded out within a
+   second once it is let go. */
+.mk-window { position: absolute; inset: 0; pointer-events: none; }
+.mk-window.fade { opacity: 0; transition: opacity 1s ease-in; }
+.mk-window-part {
+  position: absolute; box-sizing: border-box; border: 2px solid;
+  border-image: repeating-linear-gradient(45deg, #fff 0 5px, #000 5px 10px) 2;
+}
+.mk-window-part.open-l { border-left-width: 0; }
+.mk-window-part.open-t { border-top-width: 0; }
+.mk-window-part.open-r { border-right-width: 0; }
+.mk-window-part.open-b { border-bottom-width: 0; }
+/* The markers in the viewport's bottom-right corner, across from Donate, on its glass: the wipe (while the picture
+   has marks), the size, then white, black and any colour. The one taken up has a ring. */
+.mk-bar {
+  position: absolute; right: 12px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 9px;
+  height: 40px; padding: 0 12px 0 10px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: rgba(20, 23, 29, 0.72); backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+.mk-size { width: 96px; height: 20px; }
+.mk-size::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -4px; }
+.mk-pen {
+  flex-shrink: 0; width: 24px; height: 24px; padding: 0; border-radius: 50%; cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.28); transition: transform 0.12s, box-shadow 0.12s;
+}
+.mk-pen:hover { transform: scale(1.1); }
+.mk-pen.on { transform: scale(1.12); box-shadow: 0 0 0 2px #14171d, 0 0 0 4px var(--accent); }
+/* While a tool is taken up (the wand, Smart Mask) no marker has the ring: one thing in the corner is lit. */
+.mk-bar.idle .mk-pen.on { transform: none; box-shadow: none; }
+.mk-white { background: #fff; }
+.mk-black { background: #000; border-color: rgba(255, 255, 255, 0.5); }
+/* Any colour: the rainbow, with the colour last picked in its middle (the colour field's own swatch). */
+.mk-rainbow {
+  -webkit-appearance: none; appearance: none; border: 0; block-size: 24px; inline-size: 24px;
+  background: conic-gradient(#ff3b3b, #ffd23b, #4bdc4b, #3bd6ff, #4b6bff, #d64bff, #ff3b3b);
+}
+.mk-rainbow::-webkit-color-swatch-wrapper { padding: 6px; }
+.mk-rainbow::-webkit-color-swatch { border: 1.5px solid rgba(0, 0, 0, 0.55); border-radius: 50%; }
+.mk-rainbow::-moz-color-swatch { border: 1.5px solid rgba(0, 0, 0, 0.55); border-radius: 50%; }
+.mk-wipe {
+  width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-2); cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.mk-wipe:hover { background: var(--bad); color: #fff; }
+.mk-wipe .icon { width: 15px; height: 15px; }
+/* The markers' corner: the tools' glass, then the markers' (.mk-bar keeps its own look, in other stages too). */
+.mk-tools { position: absolute; right: 12px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 10px; }
+.mk-tools > .mk-bar { position: static; }
+/* The tools on their glass, each in a ring like the markers', lit while it is taken up: Select Object, a pointer
+   (img/magic_select.png, white on clear, as a mask: it takes the colour; img/wand.png, its icon before, is kept
+   beside it), and Smart Mask, a brush. A tool's question sits
+   under what it drew (over it near the picture's bottom): the words above, the answer and Render under them - a
+   name for the wand, a few lines for the mask. */
+.mk-wand {
+  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: rgba(20, 23, 29, 0.72); backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+.mk-tool {
+  width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border-radius: 50%; cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.5); background: transparent; color: #fff;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.mk-select::before {
+  content: ''; width: 21px; height: 21px; background: currentColor;
+  -webkit-mask: url('img/magic_select.png') center / contain no-repeat; mask: url('img/magic_select.png') center / contain no-repeat;
+}
+.mk-smart .icon { width: 18px; height: 18px; }
+.mk-tool:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.1); }
+.mk-tool.on { border-color: transparent; background: var(--accent); box-shadow: 0 0 0 2px #14171d, 0 0 0 4px var(--accent); }
+.mk-ask {
+  position: absolute; z-index: 4; transform: translateY(10px); display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 8px 8px 10px; border-radius: 12px; border: 1px solid var(--line-2); pointer-events: auto;
+  background: rgba(20, 23, 29, 0.94); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); white-space: nowrap;
+}
+.mk-ask.above { transform: translateY(calc(-100% - 10px)); }
+.mk-ask-label { padding-left: 2px; font-size: 12.5px; color: var(--text-2); }
+.mk-ask-row { display: flex; align-items: center; gap: 8px; }
+.mk-ask-input { width: 170px; height: 30px; }
+.mk-ask-mask { white-space: normal; padding: 8px 10px 10px; }
+.mk-ask-mask > .mk-ask-input { width: 320px; height: auto; resize: none; }
+.mk-ask-mask > .mk-ask-row { justify-content: space-between; }
+/* Why Render waits: the mask is too large for its window. */
+.mk-ask-why { max-width: 320px; padding-left: 2px; font-size: 12.5px; line-height: 1.35; color: var(--bad); }
+/* A picture lifted out of the row under the picture (tilerow.js carry): it follows the pointer, and where the props
+   column takes it (it shows where) the picture says so. */
+.tr-ghost {
+  position: fixed; left: -36px; top: -36px; z-index: 1000; width: 72px; height: 72px; object-fit: cover; border-radius: 10px;
+  pointer-events: none; opacity: 0.85; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); border: 2px solid var(--line-2);
+}
+.tr-ghost.over { border-color: var(--accent); opacity: 1; }
+.props.drop-ready { outline: 2px dashed rgba(139, 125, 255, 0.45); outline-offset: -6px; border-radius: 14px; }
+.props.drop-here { outline-color: var(--accent); background: rgba(139, 125, 255, 0.08); }
+/* For two seconds after the size slider is dragged: the quicker way to size the marker, over the markers at the
+   viewport's bottom right (in a narrow viewport the middle would run into them); it takes no pointer. */
+.mk-hint {
+  position: absolute; right: 12px; bottom: 58px; z-index: 3; padding: 5px 12px; border-radius: 999px;
+  font-size: 12.5px; color: var(--text-2); background: rgba(15, 18, 23, 0.88); white-space: nowrap; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Qwen-Image 2.1 in the model list's place: its name and its licence chip, which shows the line with the
+   links under it. */
+.sv-tool-row { min-height: 24px; }
+.sv-tool-name { min-width: 0; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.sv-tool-row > .chip { flex-shrink: 0; margin-left: auto; }
+/* Its models under its name (images.js QWEN_MODELS): Turbo | Full | FLUX.3 Klein. While the full model or FLUX.3 is
+   not on disk, its button says its download under its name (and how far it got), a bar under the choice while it
+   downloads; FLUX.3's is disabled (dimmed, stages.css) while the engine cannot draw it. In a narrow panel the names
+   wrap. */
+.sv-model { display: flex; flex-direction: column; gap: 6px; }
+.sv-model .seg-btn { height: auto; min-height: 30px; padding: 4px 8px; white-space: normal; line-height: 1.25; }
+.sv-model-text { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.sv-model-name { white-space: pre-line; }
+.sv-model-note {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 500; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.sv-model-note .icon { width: 12px; height: 12px; }
+.sv-model .seg-btn.sv-get .sv-model-note { color: var(--accent-2); }
+.sv-model > .progress { width: 100%; }
+.sv-model-error { color: var(--warn); }
+.license-line.research { color: var(--text-2); }
+.license-line.research .icon { color: var(--info); flex-shrink: 0; }
+
+/* ---- motion, small screens -------------------------------------------------------------------------- */
+
+:root[data-motion="gentle"] .sv-choice,
+:root[data-motion="gentle"] .sv-choice:hover,
+:root[data-motion="gentle"] .sv-choice:active { transform: none; }
+
+@media (max-width: 860px) {
+  .sv-images { grid-template-rows: auto minmax(320px, 1fr) auto; }
+  /* One column: the mode control on top, the picture's tools (when there are any) in centred rows under it. */
+  .sv-imghead { grid-template-columns: minmax(0, 1fr); }
+  .sv-modes { grid-area: 1 / 1; justify-self: center; max-width: calc(100% - 28px); margin: 9px 14px; overflow-x: auto; }
+  .sv-tools { grid-area: 2 / 1; padding-top: 0; }
+  .sv-tools:not(:has(> .sv-tools-part > *)) { display: none; }
+}

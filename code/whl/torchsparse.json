@@ -1,0 +1,171 @@
+{
+  "wheel": "torchsparse-2.1.0+cu128torch2.8-cp311-cp311-win_amd64.whl",
+  "sha256": "075b88c7ac4348f2252c1c0823cf276eb6bd8da8c3fc484532a1456a207fe298",
+  "size_bytes": 14045950,
+  "built": "2026-09-26T00:05:23+00:00",
+  "build_seconds": 510,
+  "source_repo": "https://github.com/mit-han-lab/torchsparse",
+  "source_commit": "385f5ce8718fcae93540511b7f5832f4e71fd835",
+  "source_commit_why": "the commit TriFlow's setup.sh:11 installs (IgorAherne/triflow @ 873a2cdf68b0a1ec243635bbf9170c87556b2f2b)",
+  "source_license": "MIT (LICENSE is inside the wheel's dist-info)",
+  "patches": {
+    "script": "code/release/wheels/torchsparse/patch_torchsparse_win.py",
+    "applied_to": "a clean `git archive` export of the pinned commit (the clone itself stays untouched)",
+    "equivalent_to": "the Windows edits of Deathdadev/torchsparse (MIT) commit f1787ee (in bebadc476e...), except the hash_cpu int->int64_t change (it breaks int32 coords, which torchsparse asserts) and the no-op uint64_t->unsigned long long edits",
+    "hunks": [
+      {
+        "id": "P1",
+        "file": "setup.py",
+        "why": "setup.py: import platform (for P1b)"
+      },
+      {
+        "id": "P1b",
+        "file": "setup.py",
+        "why": "setup.py: MSVC flags instead of the GCC-only -g/-O3/-fopenmp/-lgomp (cl would ignore them with D9002 warnings; no /openmp, so the CPU-only fallbacks run single-threaded)"
+      },
+      {
+        "id": "P2",
+        "file": "torchsparse/backend/convolution/convolution_backward_wgrad_implicit_gemm_cuda.cu",
+        "why": "implicit-GEMM kernels: map GNU __asm__/__volatile__ to asm/volatile, which nvcc accepts in MSVC mode"
+      },
+      {
+        "id": "P2",
+        "file": "torchsparse/backend/convolution/convolution_backward_wgrad_implicit_gemm_sorted_cuda.cu",
+        "why": "implicit-GEMM kernels: map GNU __asm__/__volatile__ to asm/volatile, which nvcc accepts in MSVC mode"
+      },
+      {
+        "id": "P2",
+        "file": "torchsparse/backend/convolution/convolution_forward_implicit_gemm_cuda.cu",
+        "why": "implicit-GEMM kernels: map GNU __asm__/__volatile__ to asm/volatile, which nvcc accepts in MSVC mode"
+      },
+      {
+        "id": "P2",
+        "file": "torchsparse/backend/convolution/convolution_forward_implicit_gemm_sorted_cuda.cu",
+        "why": "implicit-GEMM kernels: map GNU __asm__/__volatile__ to asm/volatile, which nvcc accepts in MSVC mode"
+      },
+      {
+        "id": "P3",
+        "file": "torchsparse/backend/convolution/convolution_gather_scatter_cuda.cu",
+        "why": "gather/scatter: include cuda_fp16.h explicitly (half2/__hadd2 are not pulled in transitively on Windows)"
+      },
+      {
+        "id": "P4",
+        "file": "torchsparse/backend/others/downsample_cuda.cu",
+        "why": "downsample: data_ptr<long> is not instantiated by libtorch on Windows (long is 32-bit); the kernel takes int64_t*"
+      },
+      {
+        "id": "P4",
+        "file": "torchsparse/backend/others/downsample_cuda.cu",
+        "why": "downsample: same as above, second call"
+      },
+      {
+        "id": "P5",
+        "file": "setup.py",
+        "why": "wheel version label 2.1.0+cu128torch2.8 (metadata only; torchsparse.__version__ stays 2.1.0)"
+      }
+    ]
+  },
+  "vendored_headers": {
+    "sparsehash": {
+      "repo": "https://github.com/sparsehash/sparsehash",
+      "tag": "sparsehash-2.0.4",
+      "commit": "f93c0c69e959c1c77611d0ba8d107aa971338811",
+      "license": "BSD-3-Clause (Google), shipped as dist-info/licenses/LICENSE-sparsehash",
+      "used_by": "torchsparse/backend/hashmap/hashmap_cpu.cpp, others/query_cpu.cpp (CPU tensors only)",
+      "config": "code/release/wheels/torchsparse/sparsehash_msvc/sparsehash/internal/sparseconfig.h (std::hash, as ./configure generates on Linux; sparsehash's own Windows config names stdext::hash_compare, which MSVC 17.14 no longer has)",
+      "how": "INCLUDE=<sparseconfig dir>;<sparsehash>/src;%INCLUDE% (no torchsparse source change)"
+    }
+  },
+  "python": "CPython 3.11.9 (spellcast3d tools/python), throw-away build venv",
+  "torch_at_build": "2.8.0+cu128 (CUDA 12.8) from code\\venvs\\pixal3d via a .pth (not installed/modified)",
+  "msvc": "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35213 for x64 (Visual Studio Community 2022 17.14, toolset 14.44.35207), dynamic CRT /MD like torch",
+  "windows_sdk": "10.0.26100.0",
+  "cuda": "CUDA 12.8 (nvcc V12.8.93) at C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8",
+  "torch_cuda_arch_list": "6.1;7.0;7.5;8.0;8.6;8.9;9.0;10.0;12.0+PTX",
+  "cuobjdump": {
+    "sass_sm": [
+      61,
+      70,
+      75,
+      80,
+      86,
+      89,
+      90,
+      100,
+      120
+    ],
+    "ptx_compute": [
+      120
+    ],
+    "cubin_images": 153,
+    "ptx_images": 17
+  },
+  "pyd": "torchsparse/backend.cp311-win_amd64.pyd",
+  "pyd_dll_imports": [
+    "c10.dll",
+    "torch_cpu.dll",
+    "torch_python.dll",
+    "cudart64_12.dll",
+    "MSVCP140.dll",
+    "python311.dll",
+    "KERNEL32.dll",
+    "VCRUNTIME140.dll",
+    "VCRUNTIME140_1.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-string-l1-1-0.dll",
+    "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-stdio-l1-1-0.dll",
+    "api-ms-win-crt-utility-l1-1-0.dll",
+    "api-ms-win-crt-time-l1-1-0.dll"
+  ],
+  "build_tools": {
+    "setuptools": "80.9.0",
+    "wheel": "0.45.1",
+    "ninja": "1.13.2.git.kitware.jobserver-pipe-1"
+  },
+  "env": {
+    "CUDA_HOME": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8",
+    "DISTUTILS_USE_SDK": "1",
+    "FORCE_CUDA": "1",
+    "TORCH_CUDA_ARCH_LIST": "6.1;7.0;7.5;8.0;8.6;8.9;9.0;10.0;12.0+PTX",
+    "MAX_JOBS": "8"
+  },
+  "build_command": "python -m pip wheel <patched export> --no-deps --no-build-isolation -v -w <out>  (inside vcvars64; driver: code/release/wheels/torchsparse/build_torchsparse_win.py)",
+  "runtime_requirements": {
+    "install": "pip install --no-deps <this wheel>",
+    "import_needs": [
+      "torch 2.8.x+cu128",
+      "numpy",
+      "tqdm",
+      "typing-extensions",
+      "rootpath 0.1.1 (--no-deps: at import it needs only six)",
+      "six"
+    ],
+    "not_needed_on_py311": [
+      "backports.cached_property (functools.cached_property is used)",
+      "wheel",
+      "torchvision (metadata only)"
+    ]
+  },
+  "wheel_files": 66,
+  "wheel_license_files": [
+    "torchsparse-2.1.0+cu128torch2.8.dist-info/licenses/LICENSE",
+    "torchsparse-2.1.0+cu128torch2.8.dist-info/licenses/LICENSE-sparsehash"
+  ],
+  "build_log": "release/cache/wheels/logs/torchsparse-build.log (on the build PC)",
+  "verified": {
+    "when": "2026-09-26",
+    "how": "not installed: wheel unpacked + rootpath on PYTHONPATH, run with the pixal3d venv python (torch 2.8.0+cu128); code/release/wheels/torchsparse/test_torchsparse_wheel.py + smoke_torchsparse.py",
+    "gpu": "NVIDIA GeForce RTX 3060 (sm_86)",
+    "import": true,
+    "cases_passed": "27/27",
+    "max_rel_err_vs_dense_fp64": {
+      "ImplicitGEMM fp32 (TF32 on sm_86), subm3": 0.0007863782238001971,
+      "ImplicitGEMM fp16": 0.00037874722737030723,
+      "GatherScatter fp32": 2.100318641459273e-07,
+      "GatherScatter fp16": 0.001391023058299101
+    },
+    "results": "release/cache/wheels/logs/torchsparse-smoke.json (on the build PC)"
+  }
+}

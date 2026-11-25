@@ -1,0 +1,38 @@
+{
+  "_comment": "Pinned downloads for 'python prepare_release.py fetch-tools'. Paths are relative to the repo root. An empty sha256 is filled in (and must then be committed) by the first successful fetch.",
+  "python": {
+    "version": "3.11.9",
+    "url": "https://api.nuget.org/v3-flatcontainer/python/3.11.9/python.3.11.9.nupkg",
+    "size": 17478009,
+    "sha256": "9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c67",
+    "archive_subdir": "tools/",
+    "percent_encoded_names": true,
+    "dest": "tools/python"
+  },
+  "git": {
+    "version": "2.55.0.windows.5",
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-64-bit.zip",
+    "size": 38989688,
+    "sha256": "56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e",
+    "archive_subdir": "",
+    "percent_encoded_names": false,
+    "dest": "tools/git"
+  },
+  "vc_runtime": {
+    "_comment": "App-local Microsoft Visual C++ 2015-2022 runtime (x64), copied from %SystemRoot%\\System32 next to tools/python/python.exe. Venvs made with 'python -m venv' run that base python.exe as the real process, so the DLL loader finds these first (torch's c10.dll and Pixal3D's native modules import MSVCP140.dll).",
+    "dest": "tools/python",
+    "required": [
+      "msvcp140.dll",
+      "vcruntime140.dll",
+      "vcruntime140_1.dll"
+    ],
+    "optional": [
+      "msvcp140_1.dll",
+      "msvcp140_2.dll",
+      "msvcp140_atomic_wait.dll",
+      "msvcp140_codecvt_ids.dll",
+      "concrt140.dll",
+      "vcomp140.dll"
+    ]
+  }
+}

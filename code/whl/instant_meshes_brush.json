@@ -1,0 +1,15 @@
+{
+  "wheel": "instant_meshes_brush-0.1.0-cp311-cp311-win_amd64.whl",
+  "sha256": "ddaba5b13a815383128feb5bf91953c30af0095b919a911d91528e631998ce16",
+  "source_commit": "f02205a443bb1e813a4547d3727a1d6d216563a4",
+  "built": "2026-09-24T20:02:04+00:00",
+  "python": "CPython 3.11.9 (tools/python)",
+  "msvc": "MSVC 19.44.35213.0 (Visual Studio Community 2022 17.14.36310.24, toolset 14.44.35207, static CRT /MT)",
+  "build_deps": {
+    "packaging": "26.3",
+    "pathspec": "1.1.1",
+    "pybind11": "3.1.0",
+    "scikit-build-core": "1.0.3"
+  },
+  "repackaged": "repackaged from the 8dffeef build: only pure-Python and static viewer files changed, the compiled _core is the same"
+}

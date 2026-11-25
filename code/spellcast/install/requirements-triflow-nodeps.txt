@@ -1,0 +1,7 @@
+# TriFlow venv: installed with --no-deps after requirements-triflow.txt (see its header).
+# meshiki: TriFlow imports it (quad ratio); its __init__ needs only numpy and trimesh. Its declared dependencies
+# pymeshlab (GPL, 55 MB) and kiui are never used by TriFlow.
+meshiki==0.0.7
+# rootpath: torchsparse imports it (needs only six there). Its declared dependencies are test tools (tox, coverage,
+# codecov, deepdiff...).
+rootpath==0.1.1

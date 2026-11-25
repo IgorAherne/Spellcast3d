@@ -1,0 +1,14 @@
+{
+  "name": "spellcast3d-bake-devchecks",
+  "private": true,
+  "description": "Dev-only checks of baked GLBs, never installed for users: the Khronos glTF-Validator and reference MikkTSpace.",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "validate": "node validate.mjs",
+    "mikkcheck": "node mikkcheck.cjs"
+  },
+  "dependencies": {
+    "gltf-validator": "2.0.0-dev.3.10",
+    "mikktspace": "1.1.1"
+  }
+}

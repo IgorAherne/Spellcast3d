@@ -1,0 +1,83 @@
+# Spellcast3D
+#
+# Git on Windows matches these patterns case-insensitively, and a pattern without a
+# leading "/" matches at any depth. Generic names such as lib/, dist/, build/, *.mo
+# would therefore silently drop files from tools/ or from the hub code. Anything that
+# is not a clear cache/junk name is anchored to the repo root with a leading "/".
+# Check a path with:  git check-ignore --no-index -v <path>
+# (python prepare_release.py check runs such probes for you.)
+
+# --- Added at release time / created on the user's machine: never commit ---
+/tools/python/
+/tools/git/
+/code/venvs/
+/code/logs/
+/code/tmp/
+/code/settings.json
+# The artist edits it (made from code/spellcast/config-template.ini); tools/update.bat's `git reset --keep` would
+# refuse to update over an edited tracked file. (Big downloads the installer keeps: code/venvs/downloads/.)
+/spellcast3d-config.ini
+# The artist's prompt library (code/spellcast/promptlib.py): theirs, shared by every project, never shipped.
+/prompt-library.json
+/prompt-library.unreadable.json
+/projects/
+/exports/
+/release/
+/.claude/
+# The developers' own notes, record of the work and one-off tools (prepare_release.py DEVELOPERS_OWN): beside the
+# code, in no commit, in no release.
+/SUMMARIES.md
+/SUMMARIES_detailed.md
+/code/ARCHITECTURE.md
+/code/devtools/
+# The artist's models: only the README and the empty folders (.gitkeep) are tracked.
+/models/*
+!/models/README.txt
+!/models/checkpoints/
+!/models/vae/
+!/models/text-encoders/
+!/models/loras/
+!/models/qwen-image/
+!/models/pixal3d/
+!/models/hi3d/
+!/models/lato2/
+!/models/triflow/
+/models/*/*
+!/models/*/.gitkeep
+
+# --- Python caches ---
+__pycache__/
+*.py[co]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Python packaging / local environments (repo root only) ---
+/build/
+/dist/
+*.egg-info/
+/.venv/
+/venv/
+/env/
+.env
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.vs/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# shallow clones of other projects, read for research only (never part of the product)
+/temp_repos/
+/reports
+/temp_code
+/research_notes

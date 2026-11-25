@@ -1,0 +1,22 @@
+# Qwen-Image 2.1 venv (code/venvs/qwen), Python 3.11. Fully pinned. No torch: the model runs in
+# stable-diffusion.cpp's own CUDA build (stable-diffusion.dll, unpacked to code/venvs/qwen/sdcpp), which
+# launchers/qwen_server.py calls through ctypes (launchers/qwen_sdcpp.py). The same versions as the hub and the other
+# tool venvs, so pip takes them from its cache.
+# ---- the server (launchers/qwen_server.py) ---------------------------------------------------------------------
+fastapi==0.141.1
+uvicorn==0.53.0
+# reads the example pictures (any format, RGBA kept) and writes the RGBA PNGs
+pillow==12.3.0
+# ---- transitive pins -------------------------------------------------------------------------------------------
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+colorama==0.4.6
+h11==0.16.0
+idna==3.20
+pydantic==2.13.5
+pydantic_core==2.46.5
+starlette==1.7.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0

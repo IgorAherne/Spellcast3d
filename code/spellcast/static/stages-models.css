@@ -1,0 +1,218 @@
+/* The views that show a prop's model: 3D, Projection and Rig (js/stages/mesh.js, projection.js, rig.js,
+   preview.js). Loaded after stages.css, whose sv-* card, side panel and 3D preview rules they build on. */
+
+/* The navigation hint, small and quiet in the viewport's bottom-right corner (like the Instant Meshes
+   viewer's readout in Retopo); it never takes a drag. On a narrow viewport it is cut short ("…") before it
+   reaches Donate in the bottom-left corner (stages.css). */
+.sv-viewer-help {
+  position: absolute; right: 12px; bottom: 10px; z-index: 2; max-width: calc(100% - 136px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+  font-size: 12px; color: var(--text-3); pointer-events: none;
+}
+
+/* The map bar under the viewport, flush to its right edge: next to the controls column. Retopo has the
+   Wireframe toggle alone there, under its LATO.2 / TriFlow model. */
+.sv-mediabar { flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px 12px; flex-wrap: wrap; }
+.sv-mediabar:not(:has(> :not([hidden]))) { display: none; }
+/* While a model loads (preview.js): the bar's place stays taken, the bar itself dimmed and inert. */
+.sv-mediabar.reserve { display: flex; min-height: 36px; }
+.sv-mediabar > .map-row { justify-content: flex-end; transition: opacity 0.15s; }
+.sv-mediabar .map-bar { justify-content: flex-end; }
+.map-row.waiting { opacity: 0.45; }
+
+/* [.glb] [.fbx] [.obj]: saved into the project folder (preview.js exportButtons). */
+.sv-export { display: flex; flex-direction: column; gap: 6px; }
+.sv-export-caption { font-size: 12px; font-weight: 600; color: var(--text-3); cursor: help; }
+.sv-export-btns { display: flex; gap: 8px; }
+.sv-export-btns > .btn {
+  flex: 1 1 0; min-width: 0; padding: 0 8px; gap: 6px;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+}
+.sv-export-btns > .btn:not(:disabled):hover { border-color: rgba(139, 125, 255, 0.45); }
+.sv-export-btns .icon { width: 17px; height: 17px; color: var(--accent-2); }
+.sv-export-btns .spinner { display: none; width: 16px; height: 16px; border-width: 2px; }
+.sv-export-btns .btn.working .spinner { display: block; }
+.sv-export-btns .btn.working .icon { display: none; }
+.sv-export-btns .btn.working:disabled { opacity: 0.85; }
+
+/* "Made in 45 s · Seed 1234 · 4 views" under the prop's name. */
+.sv-mesh .sv-subtitle { font-variant-numeric: tabular-nums; }
+
+/* 3D: the multi-view models several views need - a quiet offer to download them, then their progress. */
+.sv-mv-note {
+  display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid var(--line); font-size: 12.5px; line-height: 1.45; color: var(--text-2);
+}
+.sv-mv-note > .icon { width: 16px; height: 16px; margin-top: 1px; color: var(--info); }
+.sv-mv-note.failed > .icon { color: var(--warn); }
+.sv-mv-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.sv-mv-body > .progress { width: 100%; }
+.sv-mv-body > .btn .icon { color: var(--accent-2); }
+
+/* Export (.sv-rig): the note under the prop's name. */
+.sv-rig .sv-side-scroll > .sv-empty { padding: 12px 0; }
+
+/* ---- painting a model in the viewport: Projection's bake, Omni-Texture's result (js/stages/paintbar.js, paint3d.js) */
+
+/* The tools over the viewport, on a layer that takes no pointer (only the glasses do): the brush's ring, the clone
+   stamp's source mark, and the dock in the bottom-right corner. Its glass, the markers' (stages-images.css .mk-bar),
+   holds a stage's own button at its left end (Omni-Texture's "Render Masked"), "Saving…" while the painting goes to
+   its files, the brush size, P and F; rising from its right end, a glass of their own holds the tools from the top
+   down - Orbit, the clone stamp, the marker (the rainbow: it opens the palette), a stage's own (Omni-Texture's mask
+   marker, with an x to its left while it is up: it wipes the mask) - the one that is up with a ring. To the glass's left, in two lines, how to use it, in the navigation hint's
+   place; they take what room is left beside Donate and Discord ("Omni-Texture the chosen") and are cut short ("…"). */
+.pt-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.sv-stagebox:has(> .pt-layer:not([hidden])) > .sv-viewer-help { display: none; }
+.pt-dock {
+  position: absolute; right: 12px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  max-width: calc(100% - 180px);
+}
+.sv-stagebox:has(> .ot-go:not([hidden])) > .pt-layer > .pt-dock { max-width: calc(100% - 322px); }
+.pt-row { display: flex; align-items: center; gap: 12px; max-width: 100%; }
+.pt-bar, .pt-tools {
+  border: 1px solid var(--line-2); background: rgba(20, 23, 29, 0.72); backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); pointer-events: auto;
+}
+.pt-bar { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 8px 0 12px; border-radius: 999px; }
+.pt-bar:has(> .mk-render:not([hidden])) { padding-left: 6px; }
+.pt-tools { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 42px; padding: 8px 0; border-radius: 21px; }
+.pt-size { width: 96px; height: 20px; }
+.pt-own { position: relative; display: grid; place-items: center; }
+.pt-wipe {
+  position: absolute; right: calc(100% + 16px); top: 50%; width: 30px; height: 30px; padding: 0; display: grid;
+  place-items: center; transform: translateY(-50%); border: 1px solid var(--line-2); border-radius: 50%;
+  background: rgba(20, 23, 29, 0.72); backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  color: var(--text-2); cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.pt-wipe[hidden] { display: none; }
+.pt-wipe:hover:not(:disabled) { color: var(--text); border-color: rgba(255, 255, 255, 0.4); }
+.pt-wipe:disabled { opacity: 0.45; cursor: default; }
+.pt-wipe .icon { width: 15px; height: 15px; }
+/* Omni-Texture's mask marker (stages/maskbar.js), at the column's foot: a tool like the ones above it, its icon a
+   marked-out patch (a magenta disc read as one more colour to paint with); "Render Masked" once something is masked.
+   While the marker is up: black over the viewport outside its largest centred square, the picture "Render Masked"
+   sends. Under the tools and the buttons, over the model; it takes no pointer. */
+.mk-cover {
+  position: absolute; inset: 0; z-index: 2; overflow: hidden; container-type: size; display: grid; place-items: center;
+  pointer-events: none; border-radius: inherit;
+}
+.mk-cover > div { width: min(100cqw, 100cqh); aspect-ratio: 1; box-shadow: 0 0 0 100vmax #000; }
+/* The panel's "Faster image generation": apart from what is above it, by the panel's own gap once more. */
+.ot-faster { margin-top: 16px; }
+.mk-render { height: 30px; border-radius: 999px; white-space: nowrap; }
+.mk-render .mk-glyph { display: inline-flex; }
+.pt-tool:disabled { opacity: 0.5; cursor: progress; transform: none; }
+.pt-size::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -4px; }
+.pt-flag {
+  height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent;
+  color: var(--text-3); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.pt-flag:hover { color: var(--text-2); }
+.pt-flag[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: rgba(139, 125, 255, 0.55); }
+.pt-tool {
+  flex-shrink: 0; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0;
+  border-radius: 50%; background: transparent; color: var(--text-2); cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.pt-tool:hover { transform: scale(1.08); color: var(--text); }
+.pt-tool.on { color: var(--text); background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 2px #14171d, 0 0 0 4px var(--accent); }
+.pt-tool .icon { width: 18px; height: 18px; }
+.pt-marker {
+  -webkit-appearance: none; appearance: none; block-size: 26px; inline-size: 26px; width: 26px; height: 26px;
+  background: conic-gradient(#ff3b3b, #ffd23b, #4bdc4b, #3bd6ff, #4b6bff, #d64bff, #ff3b3b);
+}
+.pt-marker:hover { transform: scale(1.1); }
+.pt-marker::-webkit-color-swatch-wrapper { padding: 6px; }
+.pt-marker::-webkit-color-swatch { border: 1.5px solid rgba(0, 0, 0, 0.55); border-radius: 50%; }
+.pt-marker::-moz-color-swatch { border: 1.5px solid rgba(0, 0, 0, 0.55); border-radius: 50%; }
+.pt-status { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.pt-hint { min-width: 0; text-align: right; font-size: 12px; line-height: 1.45; color: var(--text-3); }
+.pt-hint > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-hint.active {
+  padding: 5px 12px; border-radius: 12px; color: var(--text-2); background: rgba(15, 18, 23, 0.88);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+/* A brush too big for a mouse cursor (over 120 px) gets this ring instead; the clone stamp's source, a + in a ring. */
+.pt-ring {
+  position: absolute; left: 0; top: 0; z-index: 3; width: var(--d, 40px); height: var(--d, 40px);
+  margin: calc(var(--d, 40px) / -2) 0 0 calc(var(--d, 40px) / -2); border-radius: 50%; pointer-events: none;
+  border: 1.5px solid #fff; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+}
+.pt-source {
+  position: absolute; left: 0; top: 0; z-index: 3; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+  border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.5); pointer-events: none;
+}
+.pt-source::before, .pt-source::after {
+  content: ""; position: absolute; left: 50%; top: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.pt-source::before { width: 12px; height: 1.5px; margin: -0.75px 0 0 -6px; }
+.pt-source::after { width: 1.5px; height: 12px; margin: -6px 0 0 -0.75px; }
+
+/* ---- Omni-Texture (js/stages/omnitexture.js) ------------------------------------------------------------------- */
+
+/* "Omni-Texture the chosen", in the viewport's lower-left corner, over the busy layer like Donate, which steps up. */
+.sv-stagebox > .ot-go {
+  position: absolute; left: 12px; bottom: 10px; z-index: 6; height: 42px; padding: 0 14px 0 12px; gap: 8px;
+  font-size: 14px; font-weight: 650; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.sv-stagebox:has(> .ot-go:not([hidden])) > .btn.donate { bottom: 62px; }
+.ot-glyph { display: grid; place-items: center; }
+.ot-glyph .icon { width: 18px; height: 18px; }
+.ot-glyph .spinner { width: 16px; height: 16px; border-width: 2px; }
+.btn.ot-go.working:disabled { opacity: 0.85; cursor: progress; }
+/* Its first look: what to do, in the middle of the viewport. */
+.ot-intro { display: grid; place-items: center; width: 100%; height: 100%; padding-bottom: 60px; }
+.ot-what { max-width: 440px; margin: 0; }
+.chip.ot-chosen { background: rgba(242, 193, 78, 0.16); color: #f6d589; }
+/* The rough picture Qwen-Image 2.1 is painting (stages-images.css .sv-live), the progress stepping down under it. */
+.ot-stage.live > .sv-busy {
+  justify-content: flex-end; gap: 8px; padding-bottom: 64px; background: linear-gradient(to top, rgba(10, 12, 16, 0.9), rgba(10, 12, 16, 0) 200px);
+}
+.ot-stage.live > .sv-busy .spinner { display: none; }
+/* The side panel's foot only while it has something to say or offer. */
+.sv-omnitexture .sv-foot:not(:has(> :not([hidden]))) { display: none; }
+/* The pictures that were painted, small, four in a row. */
+.ot-views { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+/* (contain: a view painted in a sheet is shown by its own cut of it, taller than wide for a figure) */
+.ot-view {
+  width: 100%; aspect-ratio: 1; object-fit: contain; display: block; border-radius: 8px; border: 1px solid var(--line-2);
+  background: #000;
+}
+/* A click shows what Qwen-Image was given for it; the model shows its share while the pointer is over it. */
+.ot-view { cursor: zoom-in; }
+.ot-view.has-layer:hover { border-color: rgba(242, 193, 78, 0.9); box-shadow: 0 0 0 1px rgba(242, 193, 78, 0.9); }
+/* A repaint of what the artist masked, among the views: framed in the marker's colour; a click picks it for the
+   fade slider under them. */
+.ot-view.ot-repaint { cursor: pointer; border-color: rgba(255, 92, 244, 0.65); }
+.ot-view.ot-repaint.picked, .ot-view.ot-repaint.picked:hover { border-color: #ff5cf4; box-shadow: 0 0 0 2px #ff5cf4; }
+/* Each picture's × (as the Images stage's .sv-cand-x) in its corner, faint until the pointer is on the picture: it
+   takes the picture off the model. The one beside the views' heading takes them all off. It turns red under the
+   pointer, and waits while the prop's Omni-Texture changes. */
+.ot-tile { position: relative; }
+.ot-tile.removing, .ot-views.removing { opacity: 0.4; pointer-events: none; }
+.ot-x {
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; display: grid; place-items: center;
+  border: 1px solid var(--line-2); border-radius: 50%; background: #0c0e12; color: var(--text); cursor: pointer;
+  opacity: 0.45; transition: opacity 0.12s, background 0.12s, border-color 0.12s, scale 0.12s;
+}
+.field-label > .ot-x { position: static; flex: none; align-self: center; opacity: 0.8; }
+.ot-x .icon { width: 12px; height: 12px; stroke-width: 2.4; }
+.ot-tile:hover .ot-x, .ot-x:hover, .ot-x:focus-visible { opacity: 1; }
+.ot-x:disabled, .ot-tile:hover .ot-x:disabled { opacity: 0.4; cursor: wait; }
+.ot-x:hover:not(:disabled) { background: var(--bad); border-color: var(--bad); color: #fff; scale: 1.15; }
+.ot-fade { display: flex; align-items: center; gap: 10px; margin-top: 10px; user-select: none; }
+.ot-fade-label, .ot-fade-value { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.ot-fade-value { min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+.ot-fade .range { flex: 1; min-width: 0; }
+.ot-fade .range:disabled { opacity: 0.4; cursor: not-allowed; }
+.ot-fade-busy { display: grid; place-items: center; }
+.ot-fade-busy .spinner { width: 14px; height: 14px; border-width: 2px; }
+/* One view's inputs and answers (stages/omnitexture.js showInputs; an Images picture's too: stages/given.js): the
+   words, then the pictures in rows. */
+dialog.modal.ot-inputs { width: min(1120px, calc(100vw - 32px)); }
+.ot-words { margin: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: #101318; white-space: pre-wrap; }
+.ot-inputs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.ot-input { margin: 0; display: grid; gap: 6px; align-content: start; }
+.ot-input img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; border-radius: 8px; border: 1px solid var(--line-2); background: #101318; }
+.ot-input figcaption { font-size: 12.5px; color: var(--text-2); }

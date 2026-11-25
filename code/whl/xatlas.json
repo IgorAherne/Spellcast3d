@@ -1,0 +1,56 @@
+{
+  "wheel": "xatlas-0.0.11+spellcast3d.1-cp311-cp311-win_amd64.whl",
+  "sha256": "eedaba95cba1d81802c3e32d15e4cb47d0ce6996f324533743c7338d86d985b7",
+  "size_bytes": 207375,
+  "built": "2026-11-03T23:24:37+00:00",
+  "source_repo": "github.com/IgorAherne/xatlas-python (fork of mworchel/xatlas-python 0.0.11, 64bbeca) with its submodule extern/xatlas = github.com/IgorAherne/xatlas (fork of jpcy/xatlas, f700c77), both on their branch spellcast3d (and their default branch); checked out at temp_code/xatlas-python",
+  "source_commit": "11842d4 (xatlas-python; the branch spellcast3d has two later commits that only point .gitmodules at the xatlas fork) with extern/xatlas 216e3d0",
+  "source_commit_why": "xatlas-python 0.0.11 as PyPI ships it, plus Spellcast3D's one change to the vendored xatlas (below) and the version tag",
+  "source_license": "MIT (xatlas-python: Markus Worchel; xatlas: Jonathan Young); LICENSE is inside the wheel: xatlas-0.0.11+spellcast3d.1.dist-info/licenses/LICENSE",
+  "patches": "source/xatlas/xatlas.cpp ClusteredCharts::mergeCharts (code/devtools/triflow/xatlas/xatlas-mergeCharts.patch, +65/-25): the boundary walk records the neighbours it touches and only those are visited and reset (not every chart id, with three per-chart arrays zeroed each time); a chart tested and merged with nothing is skipped until it or a neighbour changes (not re-tested after every merge); merged charts are compacted in one pass. The candidates, their order and every test are unchanged, so the atlas is the same.",
+  "python": "CPython 3.11.9 (code/venvs/imesh), pip's isolated build (scikit-build-core>=0.10, cmake, ninja from PyPI)",
+  "msvc": "Visual Studio Community 2022, toolset 14.44.35207, CMAKE_BUILD_TYPE=Release, generator Ninja, dynamic CRT",
+  "windows_sdk": "10.0.26100.0",
+  "cuda": "none (CPU only)",
+  "build_command": "python -m pip wheel <temp_code/xatlas-python> --no-deps -w dist  (inside vcvars64; driver: code/release/wheels/xatlas/build_xatlas_win.py)",
+  "runtime_requirements": {
+    "install": "pip install --no-deps <this wheel>",
+    "import_needs": [
+      "numpy"
+    ]
+  },
+  "wheel_files": [
+    "xatlas.cp311-win_amd64.pyd",
+    "xatlas-0.0.11+spellcast3d.1.dist-info/METADATA",
+    "xatlas-0.0.11+spellcast3d.1.dist-info/WHEEL",
+    "xatlas-0.0.11+spellcast3d.1.dist-info/licenses/LICENSE",
+    "xatlas-0.0.11+spellcast3d.1.dist-info/RECORD"
+  ],
+  "verified": {
+    "when": "2026-11-04",
+    "how": "code/devtools/triflow/xatlas/profile_unwrap.py: layouts saved with PyPI's xatlas 0.0.11 (code/venvs/imesh), then --compare with this wheel in a scratch venv (uv, faces, chart, cut arrays, chart_count, unmapped, cut_count bit for bit)",
+    "cases": "the tree (22,829 triangles, leniency 0.5), the ork (11,662, 0.5 and 1.0), grid_bumpy 5,000 and 10,082 (0.5 and 1.0), grid_smooth 10,082 (0.5 and 1.0): all identical",
+    "seconds_stock_vs_this": {
+      "tree 0.5": [
+        164.0,
+        1.12
+      ],
+      "ork 0.5": [
+        10.87,
+        0.43
+      ],
+      "ork 1.0": [
+        0.52,
+        0.42
+      ],
+      "grid_bumpy_10000 0.5": [
+        17.95,
+        0.5
+      ],
+      "grid_bumpy_5000 0.5": [
+        2.53,
+        0.22
+      ]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# Build dependencies of the instant-meshes wheel (prepare_release.py build-wheel), pinned: its
+# pyproject.toml only asks for scikit-build-core>=0.10 and pybind11>=2.12, so a later rebuild of the
+# same commit could pick up a new major version. build-wheel fails when pip used other versions and
+# records these in code/whl/instant_meshes_brush.json. Change them on purpose only.
+scikit-build-core==1.0.3
+pybind11==3.1.0
+packaging==26.3
+pathspec==1.1.1

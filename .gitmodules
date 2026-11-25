@@ -1,0 +1,36 @@
+[submodule "forge"]
+	path = code/forge
+	url = https://github.com/IgorAherne/stable-diffusion-webui-forge.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true
+[submodule "pixal3d"]
+	path = code/pixal3d
+	url = https://github.com/IgorAherne/Pixal3D.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true
+[submodule "instant-meshes"]
+	path = code/instant-meshes
+	url = https://github.com/IgorAherne/instant-meshes-py.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true
+[submodule "lato2"]
+	path = code/lato2
+	url = https://github.com/IgorAherne/LATO2-stableprojectorz.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true
+[submodule "triflow"]
+	path = code/triflow
+	url = https://github.com/IgorAherne/triflow.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true
+[submodule "hi3d"]
+	path = code/hi3d
+	url = https://github.com/IgorAherne/Hi3Dv1.0.git
+	branch = spellcast3d
+	ignore = untracked
+	shallow = true

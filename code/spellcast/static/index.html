@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Spellcast3D</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/shell.css">
+  <link rel="stylesheet" href="/static/stages.css">
+  <link rel="stylesheet" href="/static/stages-images.css">
+  <link rel="stylesheet" href="/static/stages-import.css">
+  <link rel="stylesheet" href="/static/stages-models.css">
+  <link rel="stylesheet" href="/static/stages-retopo.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three/build/three.module.js",
+        "three/addons/": "/static/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header id="topbar" class="topbar"></header>
+  <div id="notices" class="notices"></div>
+  <div id="app" class="app"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <noscript><p class="noscript">Spellcast3D needs JavaScript. Please enable it for this page.</p></noscript>
+</body>
+</html>

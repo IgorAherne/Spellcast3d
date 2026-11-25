@@ -1,0 +1,183 @@
+<!doctype html>
+<!--
+  Dev-only: does the hub's three.js (r186, vendored) decode a baked normal map to the
+  analytic normal? Never shipped to users.
+
+    python -m bakecheck.fixtures --normcheck ../../tmp/normcheck      (from code/tests/bake)
+    python -m http.server 8931                                          (from code/)
+    open http://localhost:8931/tests/bake/web/normcheck.html           (?dir=<folder> overrides)
+
+  Each GLB is a bake of the local plane z = h(x, y) (bakecheck.PlaneScene) in one UV layout
+  and one tangent basis. It is rendered top-down with an orthographic camera (view space ==
+  the plane's frame) through MeshNormalMaterial into a float target and compared, pixel by
+  pixel, with the analytic normal. GLBs declaring tangent_basis "mikk" get the per-fragment
+  MikkTSpace patch of design section 5.6 -- a copy of the viewer's; keep the two in sync.
+  Gates: median <= 0.15 deg, p99 <= 0.3 deg; the two mutated oracle bakes (green flipped,
+  bitangent sign ignored) must be rejected. window.RESULTS holds the numbers.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Normal decode check</title>
+<script type="importmap">
+{ "imports": { "three": "../../../spellcast/static/vendor/three/build/three.module.js",
+               "three/addons/": "../../../spellcast/static/vendor/three/examples/jsm/" } }
+</script>
+<style>
+  body { margin: 16px; background: #1e1e1e; color: #ddd; font: 13px/1.4 system-ui, sans-serif; }
+  table { border-collapse: collapse; }
+  th, td { padding: 3px 10px; text-align: right; border-bottom: 1px solid #333; }
+  th:first-child, td:first-child { text-align: left; }
+  .pass { color: #7c7; } .fail { color: #f77; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Normal decode check</h1>
+<p id="status">running...</p>
+<table id="table" hidden>
+  <thead><tr><th>file</th><th>basis</th><th>TANGENT</th><th>normalScale</th><th>pixels</th>
+    <th>median &deg;</th><th>p99 &deg;</th><th>max &deg;</th><th>result</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const SIZE = 1024;
+const MARGIN = 0.01;  // ignore the outermost 1% (plane edge pixels)
+const dir = new URLSearchParams(location.search).get('dir') || '../../../tmp/normcheck/';
+const base = dir.endsWith('/') ? dir : `${dir}/`;
+
+// Per-fragment MikkTSpace decode (design section 5.6): unnormalised interpolated vTangent
+// and vNormal, bitangent = w * cross(vNormal, vTangent) with w from the TANGENT attribute.
+// The varying is declared right before main(): MeshNormalMaterial's fragment shader has no
+// <common> chunk to hang it on.
+function applyMikkPatch(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', 'varying float vMikkW;\nvoid main() {')
+      .replace('#include <normal_vertex>', `#include <normal_vertex>
+#ifdef USE_TANGENT
+	vMikkW = tangent.w;
+	#ifdef FLIP_SIDED
+		vMikkW = - vMikkW;
+	#endif
+#endif`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'varying float vMikkW;\nvoid main() {')
+      .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace(
+        'mat3 tbn = mat3( normalize( vTangent ), normalize( vBitangent ), normal );',
+        `#ifdef DOUBLE_SIDED
+		mat3 tbn = mat3( vTangent, vMikkW * cross( vNormal, vTangent ), vNormal * faceDirection );
+	#else
+		mat3 tbn = mat3( vTangent, vMikkW * cross( vNormal, vTangent ), vNormal );
+	#endif`));
+  };
+  material.customProgramCacheKey = () => 'spellcast-mikk';
+}
+
+// bakecheck.PlaneScene: h = amp sin(6 pi x) cos(4 pi y) + bump exp(-r^2 / (2 0.07^2))
+function trueNormal(x, y, amp, bump) {
+  const tau = 2 * Math.PI;
+  const s2 = 2 * 0.07 * 0.07;
+  const g = bump * Math.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2) / s2);
+  const hx = amp * tau * 3 * Math.cos(tau * 3 * x) * Math.cos(tau * 2 * y) - g * 2 * (x - 0.5) / s2;
+  const hy = -amp * tau * 2 * Math.sin(tau * 3 * x) * Math.sin(tau * 2 * y) - g * 2 * (y - 0.5) / s2;
+  const l = Math.hypot(hx, hy, 1);
+  return [-hx / l, -hy / l, 1 / l];
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(SIZE, SIZE);
+const target = new THREE.WebGLRenderTarget(SIZE, SIZE, { type: THREE.FloatType });
+const camera = new THREE.OrthographicCamera(0, 1, 1, 0, 0.01, 10);
+camera.position.set(0, 0, 5);
+camera.lookAt(0, 0, 0);
+camera.updateMatrixWorld();
+const loader = new GLTFLoader();
+
+async function check(entry, scene, gates) {
+  const gltf = await loader.loadAsync(base + entry.file);
+  let mesh = null;
+  gltf.scene.traverse((o) => { if (o.isMesh) mesh = o; });
+  const source = mesh.material;
+  const basis = source.userData.spellcast?.tangent_basis ?? 'mikk';
+  const material = new THREE.MeshNormalMaterial({ normalMap: source.normalMap });
+  material.normalScale.copy(source.normalScale);
+  if (basis === 'mikk') applyMikkPatch(material);
+  mesh.material = material;
+  const world = new THREE.Scene();
+  world.add(gltf.scene);
+  renderer.setRenderTarget(target);
+  renderer.render(world, camera);
+  renderer.setRenderTarget(null);
+  const px = new Float32Array(SIZE * SIZE * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, SIZE, SIZE, px);
+  const errors = [];
+  for (let j = 0; j < SIZE; j++) {
+    for (let i = 0; i < SIZE; i++) {
+      const x = (i + 0.5) / SIZE;
+      const y = (j + 0.5) / SIZE;  // readPixels row 0 is the bottom, y = 0
+      if (x < MARGIN || x > 1 - MARGIN || y < MARGIN || y > 1 - MARGIN) continue;
+      const k = 4 * (j * SIZE + i);
+      const n = [px[k] * 2 - 1, px[k + 1] * 2 - 1, px[k + 2] * 2 - 1];
+      const t = trueNormal(x, y, scene.amp, scene.bump);
+      const cross = Math.hypot(n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]);
+      errors.push(Math.atan2(cross, n[0] * t[0] + n[1] * t[1] + n[2] * t[2]) * 180 / Math.PI);
+    }
+  }
+  errors.sort((a, b) => a - b);
+  const q = (p) => errors[Math.min(errors.length - 1, Math.floor(p * errors.length))];
+  const result = {
+    file: entry.file, basis, declared: entry.basis, tangent: Boolean(mesh.geometry.attributes.tangent),
+    normalScale: [material.normalScale.x, material.normalScale.y], pixels: errors.length,
+    median: q(0.5), p99: q(0.99), max: errors[errors.length - 1],
+  };
+  result.pass = result.tangent && basis === entry.basis && result.median <= gates.median && result.p99 <= gates.p99;
+  // a deliberately broken bake (expect "fail") is a success when the gates reject it
+  result.expect = entry.expect;
+  result.ok = result.pass === (entry.expect === 'pass');
+  gltf.scene.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+  material.dispose();
+  return result;
+}
+
+function row(r) {
+  const tr = document.createElement('tr');
+  const verdict = r.expect === 'pass' ? (r.pass ? 'PASS' : 'FAIL') : (r.pass ? 'NOT CAUGHT' : 'rejected (expected)');
+  const cells = [r.file, r.basis, r.tangent ? 'yes' : 'NO', r.normalScale.join(', '), r.pixels,
+    r.median.toFixed(3), r.p99.toFixed(3), r.max.toFixed(3), verdict];
+  for (const value of cells) {
+    const td = document.createElement('td');
+    td.textContent = value;
+    tr.append(td);
+  }
+  tr.lastChild.className = r.ok ? 'pass' : 'fail';
+  return tr;
+}
+
+const status = document.getElementById('status');
+try {
+  const manifest = await (await fetch(`${base}manifest.json`)).json();
+  const results = [];
+  const body = document.querySelector('#table tbody');
+  document.getElementById('table').hidden = false;
+  for (const entry of manifest.glbs) {
+    const r = await check(entry, manifest.scene, manifest.gates);
+    results.push(r);
+    body.append(row(r));
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  window.RESULTS = { revision: THREE.REVISION, gates: manifest.gates, failed, results };
+  status.textContent = `three.js r${THREE.REVISION}: ${results.length - failed} of ${results.length} as expected `
+    + `(bakes pass median <= ${manifest.gates.median} deg and p99 <= ${manifest.gates.p99} deg; `
+    + `mutated bakes must be rejected)`;
+  status.className = failed ? 'fail' : 'pass';
+} catch (error) {
+  window.RESULTS = { error: String(error) };
+  status.textContent = `Could not run: ${error}. Did you write ${base}manifest.json with bakecheck.fixtures --normcheck?`;
+  status.className = 'fail';
+}
+</script>
+</body>
+</html>

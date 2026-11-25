@@ -1,0 +1,106 @@
+/* The Import tab of the Images workbench (js/stages/importpanel.js): one picture, or a picture per side. */
+
+/* Two areas, one under the other: Single view, Multi-view. The one the 3D model is made from now ("In use")
+   has the accent's outline. */
+.ip { flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ip-area {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border: 1px solid var(--line); border-radius: 14px; background: rgba(12, 14, 18, 0.25);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ip-area.on { border-color: rgba(139, 125, 255, 0.55); background: var(--accent-soft); }
+.ip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; }
+.ip-head h3 { margin: 0; font-size: 14px; font-weight: 620; color: var(--text); }
+.ip-used {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px 0 7px; border-radius: 999px;
+  background: var(--accent-deep); color: #fff; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+}
+.ip-used .icon { width: 13px; height: 13px; stroke-width: 2.4; }
+.ip-area > .hint { margin: 0; }
+
+/* Single view: the zone (the picture in it, small, while it is the one used) and "Paste" beside it. */
+.ip-row { display: flex; align-items: stretch; gap: 8px; border-radius: 12px; }
+.ip-zone {
+  flex: 1; min-width: 0; min-height: 84px; display: flex; align-items: center; gap: 12px; padding: 8px 12px; text-align: left;
+  border: 1.5px dashed var(--line-2); border-radius: 12px; background: transparent; color: var(--text-2); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.ip-zone:hover:not(:disabled), .ip-row.drag-over > .ip-zone { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.ip-zone.filled { border-style: solid; background: var(--field); }
+.ip-zone:disabled, .ip-slot-zone:disabled { cursor: default; opacity: 0.55; }
+.ip-zone > .icon { width: 24px; height: 24px; margin: 0 6px; color: var(--accent-2); flex-shrink: 0; }
+.ip-zone > span:last-child { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ip-zone b { color: var(--text); font-size: 13.5px; font-weight: 600; }
+.ip-zone small { color: var(--text-3); font-size: 12.5px; line-height: 1.35; }
+.ip-row > .ip-paste { height: auto; flex: 0 0 72px; justify-content: center; }
+.ip-paste { border-style: solid; }
+.ip-paste:hover:not(:disabled) { border-color: var(--accent); }
+
+/* A small picture of one of the prop's pictures: the whole of it, or the slice a view is (the picture is
+   then sized and moved inside the slice's frame once its size is known). See-through parts: the checkerboard
+   of the workbench's other small pictures. */
+.ip-thumb {
+  width: 64px; height: 64px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; border-radius: 8px;
+  background: repeating-conic-gradient(rgba(255, 255, 255, 0.045) 0 25%, transparent 0 50%) 0 0 / 12px 12px, #101318;
+}
+.ip-thumb > img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+.ip-crop { position: relative; display: block; overflow: hidden; }
+.ip-crop > img { position: absolute; max-width: none; visibility: hidden; user-select: none; }
+.ip-crop.ready > img { visibility: visible; }
+
+/* Multi-view: four slots, two by two (Front, Back / ← Left, Right →). A slot: its zone (the picture, or where to
+   drop it; an empty Left or Right one shows which way the object looks there), under it the side's name, what
+   it means and its own "Paste"; filled, an × in its corner. */
+.ip-slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ip-slot {
+  position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 6px;
+  border: 1px solid var(--line-2); border-radius: 12px; background: var(--field);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ip-slot.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+.ip-slot-zone {
+  height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 0;
+  border: 1.5px dashed var(--line-2); border-radius: 9px; background: transparent; color: var(--text-3); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.ip-slot-zone:hover:not(:disabled) { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.ip-slot.filled > .ip-slot-zone { border-color: transparent; }
+.ip-slot.filled > .ip-slot-zone:hover:not(:disabled) { border-color: var(--accent); }
+.ip-slot-zone > .icon { width: 20px; height: 20px; color: var(--accent-2); }
+.ip-slot-zone > .ip-facing { width: 40px; height: 40px; }
+.ip-slot-zone small { font-size: 12px; }
+.ip-slot-zone .ip-thumb { width: 88px; height: 88px; }
+.ip-slot-foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; padding: 0 2px 2px 4px; }
+.ip-slot-name { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ip-slot-name b { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }   /* "Right →" stays whole */
+.ip-slot-name small { font-size: 11.5px; line-height: 1.3; color: var(--text-3); }
+.ip-slot-foot > .ip-paste { flex-shrink: 0; height: 26px; padding: 0 9px; font-size: 12.5px; }
+.ip-x {
+  position: absolute; top: 10px; right: 10px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: rgba(12, 14, 18, 0.82); color: var(--text); cursor: pointer;
+  transition: background 0.12s;
+}
+.ip-x:hover:not(:disabled) { background: var(--bad); }
+.ip-x:disabled { opacity: 0.5; cursor: default; }
+.ip-x .icon { width: 13px; height: 13px; stroke-width: 2.2; }
+/* The slot shows a part of a bigger picture (a slice made in the slicer). */
+.ip-slice {
+  position: absolute; left: 10px; top: 10px; height: 16px; padding: 0 5px; border-radius: 5px; cursor: help;
+  background: rgba(15, 18, 23, 0.85); color: var(--text-2); font-size: 10.5px; font-weight: 700; line-height: 16px;
+}
+
+/* Under the slots: the front is missing, or the views wait for one of their pictures to be chosen. */
+.ip-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0;
+  font-size: 12.5px; line-height: 1.4; color: var(--text-2);
+}
+.ip-note.warn { justify-content: flex-start; color: #ffdca0; }
+.ip-note .icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--warn); }
+.ip-note > .btn { flex-shrink: 0; }
+
+/* Under the areas: a slow upload, or why nothing can be imported now (the prop's pictures are being made). */
+.ip-status { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 12.5px; line-height: 1.4; color: var(--text-2); }
+.ip-status[hidden] { display: none; }
+.ip-status-icon { display: grid; place-items: center; flex-shrink: 0; }
+.ip-status .icon, .ip-status .spinner { width: 16px; height: 16px; }
+.ip-status .icon { color: var(--accent-2); }

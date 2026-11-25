@@ -1,0 +1,12 @@
+{
+  "ports": {"hub": 7770, "forge": 7771, "pixal3d": 7772, "imesh": 7773, "lato2": 7774, "triflow": 7775,
+            "qwen": 7776},
+  "open_browser": true,
+  "gpu_exclusive": true,
+  "forge":   {"ckpt_dirs": [], "extra_args": []},
+  "pixal3d": {"low_vram": "auto", "attn_backend": "auto", "sage": "auto", "int8": "auto", "coarse_exact": true,
+              "wave_size": 0, "allow_spill": false},
+  "imesh":   {"threads": -1},
+  "lato2":   {"low_vram": "auto"},
+  "qwen":    {"int8_matmul": false}
+}

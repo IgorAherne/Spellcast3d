@@ -1,0 +1,93 @@
+/* Styles of the retopo stage view (loaded after stages.css). */
+
+/* The card: the method picker on top, then the prop's clean meshes with its panel, or Instant Meshes' own viewer
+   edge to edge (its panel docks on the right). */
+.sv-retopo { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.sv-retopo.sv-single { grid-template-rows: minmax(0, 1fr); }
+
+/* "Retopologize with [TriFlow | LATO.2 | Instant Meshes]": the same height whatever is picked. */
+.rt-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(12, 14, 18, 0.35);
+}
+.rt-bar-label { font-size: 13px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.rt-methods { flex: 0 1 auto; min-width: 0; }
+.rt-methods .seg-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; }
+.rt-methods .seg-btn:disabled { opacity: 0.35; }
+/* The chip is part of its button: a click on it picks TriFlow, like the rest of the button (its hover still says why). */
+.rt-methods .chip.nc { cursor: inherit; }
+/* The viewer's way back to the prop's clean meshes, at the bar's far end. */
+.rt-back { margin-left: auto; }
+/* TriFlow's terms, first in its settings, and a word on a card with little video memory. */
+.license-line { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; color: #ffdca0; }
+.license-line .icon { width: 16px; height: 16px; margin-top: 1px; color: var(--warn); }
+.license-line a { color: var(--accent-2); white-space: nowrap; }
+.rt-vram { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
+.rt-vram[hidden], .rt-terms:empty { display: none; }
+.rt-vram .icon { width: 16px; height: 16px; margin-top: 1px; flex-shrink: 0; }
+.sv-retopo :is(.rt-info, .rt-changed, .rt-cap, .rt-sizes) { margin: 0; }
+
+.sv-imesh {
+  position: relative; min-width: 0; min-height: 0; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 38%, #262c38 0%, #151820 55%, #0f1116 100%);
+}
+.sv-imesh-frame { position: absolute; inset: 0; width: 100%; height: 100%; display: block; border: 0; background: #2d2d30; }
+/* While this prop's clean meshes are made: its layer says what happens (the note under it steps aside). */
+.sv-imesh:has(> .sv-busy:not([hidden])) > .sv-viewer-msg { visibility: hidden; }
+
+/* Why this prop's last job failed: over the model's top left corner, clear of the viewer's panel. */
+.sv-imesh > .sv-error {
+  position: absolute; top: 12px; left: 12px; z-index: 4; max-width: min(460px, calc(100% - 300px));
+  background: rgba(46, 22, 24, 0.94); box-shadow: var(--shadow); backdrop-filter: blur(6px);
+}
+
+/* The model on the left, the prop's settings, numbers and buttons on the right. */
+.rt-body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 31%, 390px); grid-template-rows: minmax(0, 1fr); }
+.sv-retopo .sv-subtitle { font-variant-numeric: tabular-nums; }
+
+/* The prop's clean meshes, one box per size, at the bottom of the viewport (under the busy layer while they are
+   made): the one on screen ringed, the one picked with a green check in its corner, one not made yet dashed. */
+.rt-variants {
+  position: absolute; left: 50%; bottom: 12px; z-index: 4; transform: translateX(-50%);
+  display: flex; gap: 10px; padding: 8px 10px; border-radius: 14px;
+  background: rgba(15, 18, 23, 0.72); backdrop-filter: blur(6px);
+}
+/* The navigation hint in the bottom-right corner steps up over them: three boxes would reach it. */
+.sv-stagebox:has(> .rt-variants:not([hidden])) > .sv-viewer-help { bottom: 80px; }
+.rt-variant {
+  position: relative; min-width: 66px; height: 48px; padding: 0 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border-radius: 10px; border: 1.5px solid var(--line-2); background: var(--surface-2); color: var(--text);
+  cursor: pointer; font-variant-numeric: tabular-nums; transition: border-color 0.12s, background 0.12s;
+}
+.rt-variant-size { font-size: 15px; font-weight: 700; line-height: 1; }
+.rt-variant small { font-size: 11px; font-weight: 550; line-height: 1; color: var(--text-3); }
+.rt-variant:hover:not(:disabled) { border-color: var(--text-3); background: var(--surface-3); }
+.rt-variant:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rt-variant.shown { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.rt-variant:disabled { cursor: default; }
+.rt-variant:disabled:not(.shown, .picked) { border-style: dashed; background: transparent; color: var(--text-3); }
+.rt-variant-check {
+  position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--ok); color: #05281a; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.rt-variant-check .icon { width: 14px; height: 14px; stroke-width: 3; }
+.rt-variant-check.waiting { background: var(--surface-3); }
+.rt-variant-check .spinner { width: 12px; height: 12px; border-width: 2px; }
+
+/* "Retopo All", in the viewport's lower-left corner, over the busy layer like Donate, which steps up. */
+.sv-stagebox > .rt-go {
+  position: absolute; left: 12px; bottom: 10px; z-index: 6; height: 42px; padding: 0 14px 0 12px; gap: 8px;
+  font-size: 14px; font-weight: 650; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.sv-stagebox:has(> .rt-go) > .btn.donate { bottom: 62px; }
+.rt-glyph { display: grid; place-items: center; }
+.rt-glyph .icon { width: 18px; height: 18px; }
+.rt-glyph .spinner { width: 16px; height: 16px; border-width: 2px; }
+.btn.rt-go.working:disabled { opacity: 0.85; cursor: progress; }
+
+@media (max-width: 860px) {
+  .sv-retopo { grid-template-rows: auto minmax(420px, 1fr); }
+  .rt-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 1fr) auto; }
+  .rt-body > .sv-side { border-left: 0; border-top: 1px solid var(--line); }
+}

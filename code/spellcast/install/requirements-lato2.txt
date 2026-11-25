@@ -1,0 +1,56 @@
+# LATO.2 venv (code/venvs/lato2), Python 3.11. Fully pinned: the versions LATO.2 @ fbb1f5a ran with through
+# launchers/lato2_server.py (RTX 3060, torch 2.8.0+cu128, 2026-09-26), so this file also acts as its own constraints.
+# Installed in this order (install/components.py):
+#   1. torch==2.8.0+cu128 torchvision==0.23.0+cu128 from https://download.pytorch.org/whl/cu128 (not listed here:
+#      PyPI has other files for them).
+#   2. pip install -r this file.
+#   3. --no-deps: code/pixal3d/whl/o_voxel-0.0.1 (only its convert.mesh_to_flexible_dual_grid is used, imported
+#      without the package __init__, which would pull in triton, flex_gemm, cumesh and nvdiffrast) and
+#      code/pixal3d/whl/flash_attn-2.8.3+cu128torch2.8 (RTX 30xx+; below that the launcher's SDPA shim,
+#      launchers/attn_shim.py, stands in, so flash_attn is optional there).
+# Not needed: nvdiffrast (the conditioning picture is drawn with plain torch, launchers/lato2_render.py: nvdiffrast's
+# licence is non-commercial), open3d (its offscreen renderer is Linux-only), torch_scatter (training only; the
+# launcher stubs it), vox2seq and torchsparse (unused attention / convolution modes), xformers (DINOv2 runs on torch
+# SDPA: the launcher sets XFORMERS_DISABLED), cumesh, flex_gemm.
+
+# ---- what LATO.2 runs ------------------------------------------------------------------------------------------
+numpy==2.2.6
+scipy==1.17.1
+trimesh==4.10.1
+pillow==12.3.0
+# sparse convolutions (LATO.2's V-VAE): PyPI's CUDA 12.6 build, the pair the user already runs with torch cu128
+# (Pixal3D-stableprojectorz's venv); machine code for sm_50-90 plus compute_90 PTX (RTX 50xx: compiled at first use)
+spconv-cu126==2.3.8
+cumm-cu126==0.7.11
+pccm==0.4.16
+ccimport==0.4.4
+pybind11==3.1.0
+fire==0.7.1
+lark==1.3.1
+portalocker==4.3.2
+termcolor==3.3.0
+ninja==1.13.2
+requests==2.34.2
+# o_voxel's convert package imports tqdm (and PIL, trimesh)
+tqdm==4.67.1
+colorama==0.4.6
+# ---- the server (launchers/lato2_server.py) ---------------------------------------------------------------------
+fastapi==0.141.1
+uvicorn==0.53.0
+# ---- transitive pins -------------------------------------------------------------------------------------------
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+h11==0.16.0
+idna==3.20
+mpmath==1.3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+starlette==1.7.0
+sympy==1.14.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.8.0

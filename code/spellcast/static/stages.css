@@ -1,0 +1,290 @@
+/* Spellcast3D stage views (js/stages/*): the workbench card of the stage on screen and the controls
+   they are built from (controls.js, mapbar.js, viewer3d.js). The page, the tokens
+   (--surface, --accent...), buttons, inputs, chips, hints, folds, dialogs and toasts are shell.css's. */
+
+/* ---- controls (controls.js, mapbar.js, viewer3d.js) --------------------------------------------- */
+
+.field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.field-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.field-value { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+/* A setting on one line (controls.js rowField): its name in a column as wide for every setting, so a panel's controls
+   line up, then its control in the room left - on a line of its own where the panel is too narrow for both. */
+.field-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 12px; }
+.field-row > .field-label { flex: 0 0 104px; }
+.field-row > :not(.field-label) { flex: 1 1 150px; min-width: 0; }
+.field-row > .range { flex-basis: 60px; }                 /* a slider gives way to the value after it */
+.field-row > .field-value { flex: none; font-size: 13px; }
+.field-row .seg-btn { padding: 0 6px; }                   /* two worded choices ("Standard 1K") in a narrow panel */
+.field > .field-row ~ .chip { align-self: flex-end; }     /* a credit under the line (Hi3D's, under the Shape) */
+/* After a setting's hint the next setting stands twice as far: the hint reads as the one's above it. */
+.field:has(> .hint) + .field:has(> .field-row) { margin-top: 14px; }
+
+.seg { display: flex; padding: 3px; gap: 2px; background: var(--field); border: 1px solid var(--line-2); border-radius: var(--radius-sm); }
+.seg-btn {
+  flex: 1; height: 30px; padding: 0 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text-2); cursor: pointer; font-size: 13px; font-weight: 560; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn:disabled { opacity: 0.4; cursor: default; color: var(--text-2); }
+.seg-btn.on { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px var(--line-2); }
+
+/* The checkbox itself is unseen, inside its label (position: relative): left to an ancestor further out, it would
+   stay put while its list scrolls, and a click - which focuses it - would have the browser scroll the whole
+   workbench to reach it. */
+.switch { position: relative; display: flex; align-items: flex-start; gap: 12px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-track {
+  position: relative; flex-shrink: 0; width: 38px; height: 22px; margin-top: 1px;
+  border-radius: 11px; background: var(--surface-3); border: 1px solid var(--line-2);
+  transition: background 0.2s, border-color 0.2s;
+}
+.switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #cfd5df; transition: transform 0.2s cubic-bezier(.3, .8, .3, 1), background 0.2s;
+}
+.switch input:checked + .switch-track { background: var(--accent-deep); border-color: transparent; }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(16px); background: #fff; }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-text { display: flex; flex-direction: column; gap: 2px; }
+.switch-title { font-weight: 600; font-size: 13.5px; }
+
+.seed { display: flex; gap: 6px; }
+
+.range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; margin: 0;
+  --fill: 50%;
+}
+.range::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent) 0 var(--fill), var(--surface-3) var(--fill) 100%);
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%;
+  background: #fff; border: 0; box-shadow: 0 0 0 4px rgba(139, 125, 255, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.15s;
+}
+.range:hover::-webkit-slider-thumb { box-shadow: 0 0 0 6px rgba(139, 125, 255, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4); }
+.range::-moz-range-track { height: 6px; border-radius: 3px; background: var(--surface-3); }
+.range::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
+.range::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgba(139, 125, 255, 0.35); }
+
+.progress { position: relative; height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.progress-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent-2));
+  transition: width 0.5s ease;
+}
+.progress.indeterminate .progress-fill { width: 35%; animation: sv-slide 1.4s ease-in-out infinite; }
+.spinner {
+  width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%;
+  border: 2.5px solid var(--line-2); border-top-color: var(--accent-2);
+  animation: sv-spin 0.8s linear infinite;
+}
+
+/* None | All | <maps> under a 3D preview, and the Wireframe toggle a stage adds after them (mapbar.js). */
+.map-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.map-row > .chip.toggle { height: 28px; padding: 0 12px; font-size: 12.5px; white-space: nowrap; }
+.map-bar { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; background: var(--field); border: 1px solid var(--line-2); border-radius: var(--radius-sm); }
+.map-btn {
+  height: 28px; padding: 0 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text-2); cursor: pointer; font-size: 12.5px; font-weight: 560; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.map-btn:hover { color: var(--text); }
+.map-btn.on { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px var(--line-2); }
+.map-btn.view + .map-btn:not(.view) { margin-left: 7px; position: relative; }
+.map-btn.view + .map-btn:not(.view)::before { content: ""; position: absolute; left: -5px; top: 6px; bottom: 6px; width: 1px; background: var(--line-2); }
+
+.viewer-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.viewer-canvas:active { cursor: grabbing; }
+
+/* ---- the workbench card ------------------------------------------------------------------------- */
+
+.sv-root { position: relative; height: 100%; min-height: 0; }
+.sv {
+  height: 100%; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 31%, 390px); grid-template-rows: minmax(0, 1fr);
+  border-radius: var(--radius); border: 1px solid var(--line-2);
+  background: var(--surface-2); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.sv-single { grid-template-columns: minmax(0, 1fr); padding: 14px; }
+.sv-root.drag-over > .sv { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+.sv-media { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.sv-stagebox {
+  position: relative; flex: 1; min-height: 160px; overflow: hidden;
+  display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center;
+  border-radius: 14px; border: 1px solid var(--line);
+  background:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.025) 0 25%, transparent 0 50%) 0 0 / 24px 24px,
+    #101318;
+}
+.sv-stagebox.dark { background: radial-gradient(ellipse at 50% 38%, #262c38 0%, #151820 55%, #0f1116 100%); }
+.sv-stagebox.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* Donate (common.js donateCorner): in the bottom-left corner of every stage's viewport, across from the
+   navigation hint; glass like the viewer's tools, the pink heart its only colour. Over the picture, the model
+   and the Instant Meshes viewer (Retopo's .sv-imesh). In the 3D viewports it stays in sight while a job runs
+   (over the busy layer, z-index 5): the minutes of waiting are when the artist looks at that corner. In Images
+   it sits over the marks painted on the picture but under the slices' buttons (the slicer's layer is z-index 3),
+   so a slice in that corner keeps them, and under the layers that say a job runs. */
+.sv-stagebox > :is(.btn.donate, .btn.discord), .sv-imesh > .btn.donate, .sv-chooser > :is(.btn.lessons, .btn.discord) {
+  position: absolute; left: 12px; bottom: 10px; z-index: 6;
+  height: 34px; padding: 0 14px 0 11px; gap: 7px; font-size: 13.5px; font-weight: 600; color: var(--text);
+  background: rgba(20, 23, 29, 0.72); border-color: var(--line-2); backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+.sv-stagebox > .btn.donate:hover, .sv-imesh > .btn.donate:hover { background: rgba(38, 31, 41, 0.86); border-color: rgba(240, 138, 166, 0.4); }
+/* "Join Discord" (Projection and Export) under Donate, which steps up: the same glass, Discord's blurple its colour.
+   Where a prop begins (Images' chooser) it stands under "Video Lessons" instead, whose colour is the accent's. */
+.sv-stagebox:has(> .btn.discord) > .btn.donate, .sv-chooser > .btn.lessons { bottom: 52px; }
+:is(.sv-stagebox, .sv-chooser) > .btn.discord:hover { background: rgba(30, 32, 52, 0.86); border-color: rgba(114, 137, 218, 0.45); }
+.sv-chooser > .btn.lessons:hover { background: rgba(34, 30, 52, 0.86); border-color: rgba(167, 139, 250, 0.45); }
+.btn.lessons .icon { width: 17px; height: 17px; color: var(--accent-2); }
+.btn.discord .icon { width: 17px; height: 17px; color: #8c9eff; }
+.sv-imgstage > .btn.donate { z-index: 2; }
+.btn.donate .icon { width: 17px; height: 17px; color: #f08aa6; transition: fill 0.15s; }
+.btn.donate:hover .icon { fill: rgba(240, 138, 166, 0.3); }
+
+.sv-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); }
+/* It scrolls with the wheel, without a scrollbar: one coming and going (a fold opened) would shift the panel. */
+.sv-side-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 16px 18px 20px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); scrollbar-width: none;
+}
+.sv-side-scroll::-webkit-scrollbar { display: none; }
+.sv-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: rgba(12, 14, 18, 0.35); }
+.sv-wide { width: 100%; }
+.sv-group { display: flex; flex-direction: column; gap: 14px; }
+.sv-group.tight { gap: 8px; }
+.sv-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sv-with-btn { display: flex; gap: 6px; }
+.sv-with-btn > .input { flex: 1; min-width: 0; }
+.sv-row-btns { display: flex; gap: 8px; }
+
+/* The shown prop: its picture, name and a line under it (3D, Projection, Rig). */
+.sv-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sv-heading-pic {
+  display: grid; place-items: center; width: 56px; height: 56px; flex-shrink: 0; overflow: hidden;
+  border-radius: 12px; border: 1px solid var(--line-2); background: var(--field); color: var(--text-3);
+}
+.sv-heading-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sv-heading-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sv-title { font-size: 18px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-subtitle { font-size: 12.5px; color: var(--text-3); }
+
+/* Notes over the main button, results, errors. */
+.sv-gate-line, .sv-error, .sv-warning {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.45;
+}
+.sv-gate-line .icon, .sv-error .icon, .sv-warning .icon { width: 16px; height: 16px; margin-top: 1px; }
+.sv-gate-line { background: rgba(108, 182, 255, 0.1); color: #c4e2ff; }
+.sv-gate-line .icon { color: var(--info); }
+.sv-gate-line:is(.unsupported, .failed, .missing, .config) { background: rgba(241, 182, 76, 0.1); color: #ffdca0; }
+.sv-gate-line:is(.unsupported, .failed, .missing, .config) .icon { color: var(--warn); }
+.sv-gate-line small { color: var(--text-2); font-size: 12px; }
+.sv-gate-line a { color: var(--accent-2); white-space: nowrap; }
+/* A mistake in spellcast3d-config.ini: a short headline, what to do under it, then "Show the file". */
+.sv-gate-line.config > span > small { display: block; margin: 2px 0; }
+.sv-error { background: rgba(240, 107, 107, 0.1); color: #ffb3b3; }
+.sv-error .icon { color: var(--bad); }
+.sv-warning { background: rgba(241, 182, 76, 0.1); color: #ffdca0; }
+.sv-warning .icon { color: var(--warn); }
+.sv-why { text-align: center; font-size: 12.5px; color: var(--text-2); }
+
+.sv-stats-wrap { display: flex; flex-direction: column; gap: 8px; }
+.sv-stats { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); font-size: 13px; }
+.sv-stats dt { color: var(--text-3); }
+.sv-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* While a prop's job is queued or running: over its picture / model. */
+.sv-busy {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 20px; text-align: center; border-radius: inherit;
+  background: rgba(10, 12, 16, 0.8);   /* no backdrop blur: re-blurring the view behind a spinner kept the card busy */
+}
+/* It says what happens: a note of the view under it steps aside (a picture under it stays in sight). */
+.sv-stagebox:has(> .sv-busy:not([hidden])) .sv-empty { visibility: hidden; }
+.sv-busy-text { font-weight: 600; max-width: 380px; white-space: pre-line; }
+/* "Faster image generation is on", over the progress's words: a pale red-orange, to be seen without alarming. */
+.sv-busy-faster { font-size: 13px; font-weight: 650; color: #ffa585; }
+.sv-busy .progress { width: min(320px, 70%); }
+
+.sv-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: var(--text-2); }
+.sv-empty h3 { font-size: 17px; font-weight: 620; color: var(--text); }
+.sv-empty p { margin: 0; max-width: 440px; font-size: 13.5px; }
+.sv-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+
+/* ---- 3D previews (stages 2-4) --------------------------------------------------------------------- */
+
+.sv-model { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.sv-viewer-host { position: absolute; inset: 0; }
+/* The prop's snapshot, standing in for its model while the stages swipe. */
+.sv-viewer-still { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: contain; padding: 4%; pointer-events: none; }
+.sv-viewer-loading {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  color: var(--text-2); background: rgba(15, 17, 22, 0.55);
+}
+.sv-viewer-loading .progress { width: 200px; }
+.sv-viewer-msg { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; overflow: auto; }
+.sv-viewer-tools { position: absolute; top: 10px; right: 10px; z-index: 3; display: flex; align-items: center; gap: 6px; }
+.sv-viewer-tools .seg { background: rgba(15, 18, 23, 0.72); backdrop-filter: blur(6px); }
+.sv-viewer-tools .seg .seg-btn { white-space: nowrap; }   /* a short neighbour must not fold a name in two */
+.sv-stagebox:has(.sv-viewer-tools .seg) .sv-badges { max-width: calc(100% - 200px); }
+.sv-badges { position: absolute; top: 10px; left: 10px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 64px); }
+/* The number on a stage's own button in the viewport's corner ("Retopo All", "Omni-Texture the chosen"): how many
+   props it works on - white on the button's violet. */
+.go-count {
+  min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 12.5px; font-variant-numeric: tabular-nums; background: #fff; color: var(--accent-deep);
+}
+/* The navigation hint and the map bar: stages-models.css. */
+.sv-pic-note { position: relative; width: 100%; height: 100%; display: grid; place-items: center; }
+.sv-ghost-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 16px; opacity: 0.22; filter: blur(1px); }
+.sv-dropspace.drag-over, .sv-root.drag-over .sv-dropspace { background-color: var(--accent-soft); }
+
+/* An import on its way to becoming a new prop (3D): over the model, clear of the prop's name. */
+.sv-importing {
+  position: absolute; top: 16px; left: 16px; z-index: 8;
+  display: flex; align-items: center; gap: 12px; max-width: calc(100% - clamp(300px, 31%, 390px) - 32px); padding: 10px 16px;
+  border-radius: 12px; border: 1px solid var(--line-2); background: #1d222c; box-shadow: var(--shadow);
+  font-size: 13px; font-weight: 600;
+}
+.sv-importing .spinner { width: 18px; height: 18px; border-width: 2px; }
+.sv-importing .progress { width: 140px; flex-shrink: 0; }
+.sv-root:has(> .sv-single) > .sv-importing { max-width: calc(100% - 32px); }
+
+/* A baked prop: its settings fold away (Projection). */
+.sv-settings:has(> summary[hidden]) { border-top: 0; padding-top: 0; }
+
+/* The texture maps an imported model brought (3D). */
+.sv-maplist { display: flex; flex-direction: column; gap: 6px; }
+.sv-maprow { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--field); }
+.sv-mapfile { display: flex; align-items: baseline; gap: 8px; min-width: 0; cursor: help; }
+.sv-mapname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.sv-mapfile .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-unsure {
+  flex-shrink: 0; display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
+  background: rgba(241, 182, 76, 0.18); color: var(--warn); font-size: 11.5px; font-weight: 700;
+}
+.sv-mapedit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sv-mapedit select { flex: 1 1 170px; width: auto; min-width: 0; }
+.chip.toggle { border: 1px solid var(--line-2); cursor: pointer; }
+.chip.toggle:hover { color: var(--text); }
+.chip.toggle.on { background: var(--accent-soft); border-color: rgba(139, 125, 255, 0.45); color: var(--accent-2); }
+.chip.toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- motion, small screens ------------------------------------------------------------------------ */
+
+@keyframes sv-spin { to { transform: rotate(360deg); } }
+@keyframes sv-slide { 0% { left: -35%; } 100% { left: 100%; } }
+/* Gentle motion (see shell.css). */
+:root[data-motion="gentle"] .progress.indeterminate .progress-fill { animation-duration: 3s; }
+
+@media (max-width: 860px) {
+  .sv { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 1fr) auto; height: auto; }
+  .sv-side { border-left: 0; border-top: 1px solid var(--line); }
+  .sv-side-scroll { mask-image: none; }
+}

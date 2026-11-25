@@ -1,0 +1,775 @@
+-------------------------------------------------------------------------------
+
+	Spellcast3D  -  from an idea to a game-ready 3D prop, on your own PC, for free.
+
+	It chains free AI tools together, one stage each:
+
+		1. Images      -  Qwen-Image 2.1 (built in) paints concept images of your props, with a
+		                  transparent background, ready for 3D (or Forge Neo with image models
+		                  you choose: see THE CONFIG FILE below)
+		2. 3D          -  Pixal3D turns the image you picked into a textured 3D model (.glb)
+		                  (or use your own model: .fbx, .obj, .glb, .gltf with its textures)
+		3. Omni-Texture - optional: Qwen-Image 2.1 paints the 3D model's colours anew, sharper,
+		                  seen from 8 sides
+		4. Retopo      -  rebuilds that model as a clean low-poly mesh with UVs (.obj), with the
+		                  method you pick for each prop: Instant Meshes, LATO.2 or TriFlow
+		5. Projection  -  bakes the detailed model's textures onto the clean model
+		                  (.glb, .fbx, .obj + texture maps, ready for a game engine)
+
+	(The Rigging stage is coming later.)
+
+-------------------------------------------------------------------------------
+
+	WHAT YOU NEED
+
+	-  Windows 10 or 11 (64-bit)
+	-  NVIDIA graphics card with 8 GB of video memory or more, from the GTX 10xx series on
+	   (for example GTX 1070, RTX 2060 SUPER, RTX 3060, RTX 4060). Every stage runs on
+	   all of them; RTX 30xx and newer are the fastest.
+	-  NVIDIA driver 570 or newer:   https://www.nvidia.com/drivers
+	-  32 GB of RAM recommended (the 3D step on its own works within 16 GB)
+	-  About 92 GB of free disk space (33 GB more for the optional multi-view models, see 3D below)
+	-  Internet for the first start (it downloads about 55 GB - less if you already have
+	   the AI models: see THE MODELS FOLDER below)
+
+	You do NOT need to install Python, git, CUDA or anything else. It's all inside the folder.
+
+-------------------------------------------------------------------------------
+
+	INSTALL
+
+	1. Unzip into a SHORT folder, for example:      C:\spellcast3d
+
+	   Not the Desktop, not Downloads, not 'Program Files'. Long folder paths break some
+	   of the AI tools. Use only English letters and numbers in the folder path, and avoid
+	   special characters like  &  %  !  in it.
+
+	   Images come from Qwen-Image 2.1, built in. Would you rather use Forge Neo with image
+	   models you choose? Switch it in spellcast3d-config.ini now, before the first start
+	   downloads anything (see THE CONFIG FILE below). You can also switch later.
+
+	2. Go into the 'run-browser' folder, double click:
+
+		-  run-spellcast3d.bat
+
+	3. The FIRST start shows a big notice: CALIBRATING FOR PERFORMANCE. Close heavy programs
+	   (Blender, Photoshop, games, videos, a browser with many tabs) and keep them closed until
+	   the installation is done, then click into the black window and press Enter. At the end
+	   of the installation Spellcast3D measures your graphics card once, so that the 3D step runs
+	   as fast as it can on it - a program using the card at that moment makes the measurement
+	   wrong (if the card is busy, it waits up to 15 minutes for it to be free). While it
+	   measures, the Spellcast3D page shows a yellow bar under its header with what it does and
+	   how far it is (3D jobs wait meanwhile), and when the installation is through the black
+	   window says, last, that you can open 127.0.0.1:7770 in your browser. It is done only
+	   once, at the installation, never again by itself while you work (a new graphics card is
+	   measured when it is first seen); to measure again on purpose, with the card free, press
+	   "Measure the graphics card again" in Settings > Debugging.
+
+	   Then Spellcast3D sets up itself (about a minute), and your browser opens by itself at:
+
+		http://127.0.0.1:7770
+
+	   If it doesn't, open Chrome or Edge and type that address, as if it was a website.
+
+	4. You can start working right away. Meanwhile the AI tools install in the background
+	   (about 55 GB of downloads: 30 - 90 minutes or more, depending on your internet).
+	   The page shows how far each one is, and a tool that is still installing is used as
+	   soon as it is ready. Importing your own images works from the start, importing your
+	   own 3D models after a minute or two (Instant Meshes, which reads them, comes first).
+
+	   Keep the black window open. If the installation gets interrupted (or you close the
+	   window), just double click run-spellcast3d.bat again: finished downloads are kept,
+	   and the rest continues.
+
+	After the first time, the page opens within seconds. Each AI tool starts by itself when you
+	first use it (the image generator within a minute, Pixal3D a few minutes, LATO.2 and TriFlow
+	about a minute).
+	Keep the black window open while you work. Close it when you're done - that stops everything.
+
+-------------------------------------------------------------------------------
+
+	THE CONFIG FILE  -  which image generator
+
+	The file spellcast3d-config.ini, in the Spellcast3D folder (next to 'run-browser'), picks
+	the image generator of the Images stage. Open it with Notepad. A line starting with ; is
+	switched off:
+
+		backend = qwen      Qwen-Image 2.1, built in (the default). Downloads about
+		                    11.5 GB once; no image model of your own needed.
+		backend = forge     Forge Neo with the image models you choose (a checkpoint in
+		                    models\checkpoints, see THE MODELS FOLDER below).
+		quality = Q4_K_M    Qwen-Image 2.1's model size: Q3_K_M (3.2 GB, for 6 GB cards),
+		                    Q4_K_M (4.2 GB, the default), Q5_K_M, Q6_K, Q8_0 (7.6 GB, for
+		                    16 GB cards and up). Bigger is a little better, but needs more
+		                    video memory and a bigger download.
+		text_encoder = UD-Q4_K_XL   the size of the part that reads your words and example
+		                    pictures: UD-Q4_K_XL (5.1 GB, the default), UD-Q5_K_XL, UD-Q6_K_XL,
+		                    Q8_0, UD-Q8_K_XL (10.8 GB). Bigger may follow subtle words a little
+		                    better; it needs more RAM, not more video memory.
+		For both: a bigger file already in models\qwen-image is used when the one named
+		is not there; the black window says which files are read.
+
+	To switch: put a ; in front of the backend line you no longer want and remove the ; in
+	front of the one you want (only ONE backend line may be switched on), save, close
+	Spellcast3D (its black window) and start it again. The start installs what the new choice
+	needs, in the background like the first time, and keeps the old one's files: switching
+	back needs no download. A new model size is downloaded the same way (only that size); one
+	you no longer use can be deleted from models\qwen-image. Your projects and their pictures
+	stay as they are.
+
+	Nothing switches while Spellcast3D runs: after you save a change, the page reminds you to
+	close it and start it again (a note on the Images stage, and an amber dot on the
+	settings gear).
+	A mistake in the file (a typo, two backend lines switched on) is never guessed at: no
+	image generator is installed or used until it is fixed, and the Images stage says which
+	line to fix. An unknown model size uses Q4_K_M, and the page says so.
+	The file comes with Spellcast3D (it is made at the start if it is missing: delete it to get
+	the original back). Updates never change it, but they make it when it is missing - using
+	Forge Neo? See UPDATING below.
+
+-------------------------------------------------------------------------------
+
+	HOW TO WORK WITH IT
+
+	The page shows one stage at a time: 1. All Images, 2. All 3D, 3. Omni-Texture All, 4. All
+	Retopo, 5. Project All and 6. Export All (where your exported props end up; rigging is
+	coming later).
+	Your props are always listed on the left - one picture per prop - and you take them all
+	down, stage by stage: picture -> 3D model (-> Omni-Texture, if you want it) -> clean
+	low-poly model -> baked textures.
+	The big button at the bottom of the list goes down to the next stage (hover it to see
+	what it does). The big heading above the list names the stage you are in ("2. All 3D");
+	the big button above it ("↑ Images") goes back up to the stage before.
+	A green check on a prop means it is done in the stage you are in: ready for the next stage.
+	
+	-  Images:   press "+ New prop" (at the end of the props list), then pick how it
+	             gets its picture: "Use Existing Images" (your own images, as they are), "Render
+	             Images" (write what you want and press Render, or Enter) or "Import folder" (a
+	             folder with the images of several props at once: a name like knight_front.png,
+	             knight_back.png, dragon_front.png says which prop and which side; front_knight.png
+	             works too; a Windows dialog opens, step into the folder and press Open). As soon as
+	             it has a picture, the prop appears in the list on the left (the pencil after its name
+	             renames it, the bin on its right deletes it; Ctrl+Z brings it back). Several images
+	             dropped on the "New prop" cards whose names say different props (knight_front.png,
+	             dragon_front.png...) become those props at once.
+	             Click the best of the pictures under the big one (the x on a picture's corner
+	             removes it; Ctrl+Z brings it back): the prop's tile in the list rings, it is that
+	             picture now. Drag a picture from that row onto the props list to make it a prop
+	             of its own (named after what you circled for it, else after this prop). "Variations",
+	             under "More", is how many pictures one Render makes (1 unless you change it; they
+	             are drawn one after the other). Click a prop in the list
+	             to change it again. "Generate 3D" makes the 3D models of all your props.
+	             Ctrl+Z only undoes what you did in the stage you are in: going to "All 3D" and
+	             back keeps what you can undo in Images.
+	             On the "New prop" cards, Ctrl+V takes a picture you copied as the prop's picture,
+	             as if you had dropped it there.
+	
+	             In "Render Images":
+	             -  three buttons at the bottom: "Render From Scratch" (a new picture from your words, and
+	                from the example pictures when there are some), "Re-Render Viewport / no
+	                examples" (a new picture from the one shown, with what you painted on it, and
+	                your words) and "Re-Render Viewport / with examples" (the same, and the
+	                example pictures too).
+	             -  the markers at the picture's bottom right (white, black, any colour) paint on
+	                the picture shown, or on the black canvas a new prop starts with; the slider
+	                beside them, or Shift + moving the mouse sideways, sets their size. Ctrl+Z takes
+	                a stroke back, Ctrl+Y brings it again.
+	             -  Select Object, the pointer left of the markers (Qwen-Image):
+	                press it, circle one object on the picture, type what it is and press Enter. A
+	                new picture shows that object alone, large and centred, in its own style and
+	                facing the way it did, on a gray background: a quick way from a whole scene to
+	                one prop. The circle shows as a band of moving stripes: it selects, it paints
+	                nothing on your picture. Circle the object closely, without touching its
+	                neighbours, and name it plainly ("wooden barrel", not "thing"): the name counts
+	                as much as the circle. You need not close the circle yourself: when you let go,
+	                a straight line joins its end to its start. Esc, or a click elsewhere, lets the
+	                circle go - the tool stays lit, so just circle again (a press on the picture
+	                starts the next circle). It is put down when your object is rendered, or when
+	                you press it again (or Esc once nothing is circled).
+	             -  Smart Mask, the brush beside it (Qwen-Image): press it and brush over a part
+	                of the picture - as many strokes as it takes, they add up (the marker's slider
+	                sets the brush, twice as wide as the marker). After each stroke a box asks "What
+	                should be here?": name it ("a black polymer stock", "a telescopic sight";
+	                Shift+Enter starts a new line) and press Enter or "Render". Qwen-Image gets the
+	                picture with that part covered in magenta - it does not see what was there - and
+	                is told to place your thing inside it. The picture is drawn again with it: Qwen-Image
+	                redraws all of it, so the new thing sits in it naturally, sized to the scene, with
+	                its shadow or reflection. At 1K all of that fresh drawing is kept: the rest looks
+	                the same and keeps its place and its tone, but its finest detail (a blade of grass,
+	                small lettering) differs from the picture before. Of a 1.5K or 2K picture only a
+	                part round what you brushed is kept - a frame of white and black dashes shows it on
+	                the picture while you
+	                brush: 1024 px a side, more for a large mask; it keeps off the picture's edges and
+	                nears one only as your mask does - and laid onto your picture, in its place and
+	                its tone, joined along a ragged line; outside the frame the picture stays as it
+	                is, to the pixel. (Redrawn from a smaller copy, a picture that large comes back a
+	                few pixels off and stretched a little - it is brought back onto yours where the two
+	                meet - and softer in its finest detail: so
+	                no more of it is kept than the change needs. What the new thing itself reaches
+	                beyond the frame - a larger shape, its shadow - is kept with it.) Such a
+	                change takes as long as drawing the picture anew: about a minute and a half at 2K
+	                on an RTX 3060. Brush over the place the thing should take, about as large as it
+	                should be. When nothing changed where you brushed, the page says so, and you
+	                render again. A "Tileable" picture is changed another way, because redrawn whole
+	                it would no longer repeat: Qwen-Image works on a part of it round what you brushed
+	                - the frame, which is all it sees then, so the new thing fills what you brushed -,
+	                only what you brushed and some room around it changes, and the rest stays as it
+	                is, to the pixel: it still repeats without a seam, also when you brush across its
+	                edge. That frame is 768 px a side for a small mask and grows with the mask (a
+	                long mask makes it long and thin); near the picture's edge it goes on at the
+	                opposite side, as the picture itself does. A mask too large for one go is not
+	                sent: the box under it says so, and
+	                Render waits until it fits: Ctrl+Z takes the last stroke back, or clear the mask
+	                and brush a smaller part. Such a change takes seconds, and its rough preview shows
+	                over that part of the picture while it forms. Alt + click on a picture in the row under the viewport shows
+	                what Qwen-Image was given for it - its words, its pictures, where it could draw -
+	                and what it answered.
+	                "Clear mask" (or Esc) takes the mask off. The brush
+	                stays lit for the next change, and the box keeps your words - from mask to mask and from
+	                picture to picture of the prop; once rendered they show selected, so typing
+	                replaces them and Enter renders them again. Another prop starts with an empty box.
+	             -  your own prompts, kept for every project: "+prompt" (the last button under the
+	                words) opens the Prompt Library over the picture. "+ Add" adds a prompt at the
+	                end of the list: a short name (10 letters at most) and its words. Ticked "Show",
+	                its name sits under the words: a click puts its words where your text cursor
+	                is. The x in either top corner (or Esc) goes back to the picture. They are kept in
+	                prompt-library.json in the Spellcast3D folder. The library starts with three prompts.
+	                "4 views": "shown in an orthographic sheet of four quadrants: front, back, left,
+	                right." Added to your words it asks for one picture with the object's four sides,
+	                which "4 quadrants" (Slice into views) then cuts into its Front, Back, Left and Right.
+	                "T 4 views": that sheet for a character you will rig: "standing in a t-pose, shown in
+	                an orthographic sheet of four quadrants: front, back, left view, right view. At the
+	                top row the arms are spread to the sides."
+	                "toon": "a stylized hand-painted cartoon style", a look for the picture.
+	             -  Ctrl+V anywhere but in the words adds the picture you copied to the example
+	                pictures (or press "Paste").
+	             -  each picture under the big one remembers the words and settings you last had
+	                while it was the chosen one: click it and they come back. The seed stays as
+	                you set it (empty: a new surprise each time).
+	             -  "Save" (beside "Copy", above the picture) saves the picture, with what you
+	                painted on it, into the project's folder in "exports" and shows it in File
+	                Explorer. Hovering an example picture shows it larger in the picture's corner.
+	
+	             With Qwen-Image 2.1, the built-in image generator:
+	             -  "Resolution": 1K, 1.5K or 2K, how large the pictures are (a square one: 1024,
+	                1536 or 2048 pixels a side; hover a button for the pixels of your Shape). Larger
+	                pictures hold finer detail and take longer: with the Turbo on an RTX 3060 about 13
+	                seconds at 1K, 35 at 1.5K and 75 at 2K. While a picture is drawn, the progress
+	                line says its size, so you always see what you are rendering at.
+	             -  "Transparent background" (under "More", off by default): the object comes out on its own,
+	                with no background around it, and the 3D step then uses the object's own
+	                outline. Leave it off for a picture on a plain background. Now and then the
+	                model cuts the object out by itself all the same: such a picture is shown on white.
+	             -  "Tileable" (under "More", off by default): for 2D textures. The picture comes out so
+	                that it repeats without a seam, side by side and one above the other; it takes no
+	                longer. Describe a surface ("old brick wall texture, seen straight on, flat even
+	                lighting"): a single object or a view with a horizon repeats badly however well its
+	                edges meet. While it is on, a small slider beside it slides the picture round by
+	                tenths of its size - what leaves one side comes back at the other - so you see its
+	                edges meet inside it, and the mouse wheel over the picture shows it from afar among
+	                copies of itself (turn the wheel the other way to come back). "Re-Render Viewport"
+	                makes pictures from the picture as it shows, slid or not, and what it makes lies
+	                where your picture lies: the offset is only how you look at them, it is never
+	                baked into a new picture. (Left to itself the model lays a tileable picture a few
+	                pixels off the one it was made from; Spellcast3D moves it back onto it.) Not with
+	                FLUX.3 Klein.
+	                "R", between the switch and the slider, turns the picture a quarter clockwise: the
+	                turned picture is added to the row under the viewport and chosen (the one before
+	                stays there), every pixel as it was - four turns give the first picture again. Use
+	                it to render a texture from another direction: turn, then "Re-Render Viewport" or
+	                Smart Mask. A Shape that is not square turns with the picture.
+	                Nothing is added to your words for it: "grass texture" is sent as you typed it.
+	                A prop with Tileable on is a texture, not an object: its picture on the left says
+	                "tileable", "Generate 3D" passes it by and the later stages leave it alone. Untick
+	                Tileable to make a 3D model from its picture after all. A new prop always starts
+	                with Tileable off.
+	             -  the model you picked (Turbo, Full or FLUX.3 Klein) starts loading as soon as you
+	                open Images; pick another and that one loads in its place.
+	             -  up to 10 example pictures: drop several at once (or click "Add
+	                examples"); the x on one removes it. The new pictures follow their look:
+	                the object, its shapes, colours and style. With several, each is used a bit
+	                smaller, so they all fit your graphics card.
+	             -  There is no "Avoid" field and no guidance setting: Qwen-Image 2.1 is made to
+	                be used without them (it is how Qwen says the model should be run), and each
+	                step is then one pass through the model instead of two. Put what you want
+	                into the description itself: "a plain wooden chair" rather than a chair
+	                with "carvings" to avoid. An "Avoid" text a prop already has (from Forge Neo
+	                or an earlier version) is kept, but Qwen-Image does not use it.
+	             -  "Steps" (under More) starts at 25, which suits most pictures. Qwen's own
+	                reference is 40: slower, sometimes finer detail. (A prop from an earlier
+	                version that still had that version's 20 steps gets 25 as well.)
+	             -  Generate takes about 50 to 55 seconds per 1024 x 1024 picture with the
+	                default 25 steps on an RTX 3060 12 GB (it depends on the graphics card);
+	                earlier versions needed about 2 minutes there. More Steps take longer, and
+	                the page shows the time left while it draws. Example pictures make it
+	                longer, and each Variation adds about as much again. Stop ends it within
+	                seconds. The Variations of one Generate are all finished together at the
+	                very end, so a Stop before then keeps none of them.
+	             -  Next to its name, a "Research licence" chip: the model is under Qwen's
+	                research license, but the pictures you make are yours, also for commercial
+	                work (Qwen, 21 Sep 2026). Click the chip for the license and for how to
+	                switch to Forge Neo. More in 'README - LICENSE.txt'.
+	             With Forge Neo, you pick the image model (and sampler, guidance...), "Avoid"
+	             under the description says what the picture should not show, and
+	             "Text + Image" takes one example picture, with "How closely to follow
+	             the example".
+	
+	             Pictures of the object from several sides give a better 3D model:
+	             -  import them together (choose or drop them all at once, up to 16). Name each
+	                file after its side and it becomes that view: bear_front.png, bear_back.png
+	                (or rear), bear_left.png, bear_right.png, bear_side.png (left or right,
+	                whichever is free), or angles: bear_0, bear_90, bear_180, bear_270. Files whose
+	                names don't say take the views still free, in name order: Front, ← Left, Back,
+	                Right →. The Front picture becomes the big one. If a side had to be guessed or
+	                the prop's earlier views were replaced, a message says which picture became
+	                which view. Replaced views come back with Ctrl+Z;
+	             -  or slice one picture that shows every side (a turnaround sheet): press
+	                "Slice into views" in the row of buttons above the picture, pick a view in that
+	                row (Front, Back, ← Left, Right →), then drag a box around that view on the
+	                picture (hold Shift for a square); the next view is picked for you. The drag
+	                may begin in the empty room beside the picture: the box then starts at the
+	                picture's edge, and it never leaves the picture. "4 quadrants" and "4 in a row"
+	                (beside it) cut the whole picture at once: "4 quadrants" into Front and Back
+	                on top with ← Left and Right → under them, "4 in a row" into Front, Back,
+	                ← Left, Right → from left to right. Their boxes stay a little inside the
+	                picture's edges and apart from each other, so the frame or the cross an image
+	                generator likes to draw between the views is left out.
+	                The prop's small picture in the list then shows its Front slice.
+	             "← Left" is the picture where the object faces left, "Right →" the one where it
+	             faces right: the arrow points where the object looks. Click a slice's label to change its view or remove it; while
+	             slicing, the square button above the label moves the slice (press and drag) and
+	             the bin beside the label removes it. The bin button in the row above the picture
+	             removes every slice of it; Ctrl+Z undoes, Escape stops slicing. "Copy" in that
+	             row copies the picture, to paste it somewhere else.
+	             With two or more views, one must be the Front: the 3D model faces it.
+	             Views sliced from one sheet keep the sheet's proportions; separate pictures
+	             (photos from any distance) are scaled to the same height. A bit of the next view
+	             caught at a slice's edge is ignored; a part floating beside the object (an orb,
+	             a sword held apart) is kept.
+	             The views are used while the big picture is one of theirs. Click another picture
+	             under it and the 3D model is made from that picture alone; click one of the
+	             views' pictures again to use them all again.
+	
+	-  3D:       each prop's picture becomes a textured 3D model. The side the picture shows is
+	             the model's front (it faces +Z).
+	             Shape, at the top of the settings, picks who makes this prop's shape: Pixal3D
+	             (faster, follows the picture closely) or Hi3D (finer carved detail, slower). Each
+	             prop has its own; a new prop starts with the one you picked last (Pixal3D at first).
+	             The colours come from Pixal3D either way. Hi3D's AI models
+	             (11.4 GB) come with the 3D step's installation; while they are not on this PC the
+	             panel says so and offers "Download (11.4 GB)" - pick Pixal3D meanwhile.
+	             While Hi3D is picked (or made the model shown), "Powered by Hi3D 1.0" stands next
+	             to Shape, a link to Hi3D's website: its license (the Hi3D Open License Agreement)
+	             asks for it. The shapes it makes are yours; see 'README - LICENSE.txt'.
+	             A prop with two or more views is made from all of them (at the prop's Quality, High
+	             like any other; High takes about two and a half times as long as Standard). That
+	             needs Pixal3D's multi-view models: a one-time 22 GB download that the 3D panel of
+	             such a prop offers ("Download (22 GB)"); it runs in the background while you work.
+	             Until then only the Front view is used (the panel says so). Once they are there,
+	             such a model says "Made from the front view only" and gets an amber dot: "Make 3D
+	             again" (or "Generate 3D" in Images, for every prop) makes it from all its views.
+	             All the props of one press go through each step of the work together, props made
+	             from views first: each part of Pixal3D is read once and used for every prop,
+	             which is what keeps a job inside a smaller graphics card. So the models appear
+	             near the end of a job rather than one by one, and the tile of a prop that is
+	             waiting for the next step shows a still bar.
+	             A first rough shape that comes out as a solid block is drawn again by itself (up
+	             to 3 tries). If a model still looks stretched toward you, the panel says "This
+	             model may be stretched": try another Seed, or add more views.
+	             "+ Import 3D model" adds a 3D model you already have as a new prop: choose the
+	             model file together with its textures (or one .zip, or drop its whole folder).
+	             Spellcast3D guesses what each texture is (colour, normal map, roughness...) and lists
+	             them under "Detected maps". A "?" means it is not sure: pick the right kind there,
+	             or "Flip green" for a normal map whose bumps look dented, then press "Apply changes".
+	             The .glb / .fbx / .obj buttons save the 3D model into the exports folder.
+	             No clean low-poly model is made on the way: that waits for "Retopo All" in Retopo.
+	
+	-  Omni-Texture (optional):  the 3D model's colours painted anew, sharper; its shape
+	             stays the same. Tick the box beside each prop on the left that needs it (tick it
+	             again to leave the prop as it is), then press "Omni-Texture the chosen". A click
+	             on a prop itself only opens it. Qwen-Image 2.1 paints the model seen from 8 sides
+	             (front, back, the four corners, top and bottom), several sides together in one
+	             large picture so that they agree with each other (usually four in a picture, so
+	             two pictures a prop), and they are laid back onto the model: about 4 minutes a
+	             prop on an RTX 3060. It takes the shape from the 3D model and the look from the
+	             prop's own front picture (the one its 3D model was made from), so the result can
+	             differ from the colours the 3D stage gave the model. "Original | Omni-Texture" at the viewport's top right switches
+	             between the model as the 3D stage made it and the result.
+	             Nothing is painted until you press "Omni-Texture the chosen": going on to Retopo
+	             or to Project textures never starts it, and a prop you ticked but did not paint
+	             keeps the colours it has.
+	             On the right, "Painted views" lists the pictures that went onto the model. Hover one
+	             to see its share alone; Alt + click it to see what Qwen-Image was given and what
+	             it answered; the x in its corner takes that picture off the model (Ctrl+Z brings it
+	             back, Ctrl+Y takes it off again). The x beside the words "Painted views" takes the
+	             whole Omni-Texture off: the prop shows and uses its 3D model's own texture again, and
+	             Ctrl+Z brings the Omni-Texture back as it was.
+	             Something came out wrong? Take the mask marker at the viewport's bottom right (the
+	             dashed frame with a brush stroke in it) and paint over that part of the model: it
+	             shows in magenta. Everything outside a square goes black meanwhile: only that square
+	             is sent. The view is locked while the mask marker is up - nothing turns or zooms it -
+	             so first turn the model until the part faces you, then take the marker. (From any
+	             other side the mask would no longer cover all it covered, and Qwen-Image would see
+	             what you meant to hide.) To move again, put the marker down with Esc or Orbit. Then
+	             press "Render Masked": Qwen-Image repaints what you masked as you see it at that
+	             moment, the marker is put down, and the view stays where it is when the result arrives.
+	             It is shown your view with the mask, its depth, and the prop's own picture of the
+	             side you look from (front, back, left or right; the one it has otherwise) - not
+	             the model's present texture, which it would simply paint back. When you look from
+	             behind the side that picture shows (a prop made from one picture, turned round),
+	             the picture is given mirrored, so the prop faces the way you see it. Only what
+	             you masked (and a few pixels around it) is drawn anew: everywhere else the
+	             drawing is held to your view, so the result is your view with that part restored.
+	             Each such repaint joins the list on the right, with its own x; click it and the
+	             "Edge fade" slider sets how far its edge blends into what is around it.
+	             While the mask marker is up, the x to its left discards the mask (Ctrl+Z brings
+	             it back).
+	             Above the mask marker stand the same tools as in Projection, for small fixes by
+	             hand: a marker of any colour and a clone stamp (see Projection below), and on top
+	             Orbit, which puts the brush down. What they paint is saved as you paint. Ctrl+Z
+	             and Ctrl+Y step back and forth through your strokes, the repaints and the pictures
+	             taken off.
+	             You like a prop as it is and only want one part fixed, a face for example? Open
+	             it without ticking its box: the same tools work on its 3D model as the 3D stage
+	             made it, "Render Masked" included, and no Omni-Texture is needed. If you
+	             Omni-Texture that prop later, what you painted and had painted again stays on top
+	             of the new texture, and its pictures stay in the list on the right.
+	             Projection bakes the Omni-Texture of the props chosen here, and whatever you
+	             painted or had painted again on a prop that was not OmniTextured; the others
+	             keep the colours the 3D stage gave them.
+	
+	-  Retopo:   each prop gets clean low-poly meshes with UVs, and you pick the one it keeps. At
+	             the top, "Retopologize with" picks how (hover a method for a reminder); every new
+	             prop starts with TriFlow until you pick another one for it:
+	
+	             Instant Meshes  quads. Runs on the processor. "Shape it by hand in the viewer" opens
+	                             its interactive viewer: change the mesh with the panel on the right,
+	                             or paint guide strokes on the model, then press its "Accept" to keep
+	                             that mesh for the prop, picked. The viewer's texture buttons show the
+	                             detailed model's maps: "All" = lit like in a game, by small lights
+	                             that circle the model, "None" = the bare shape, or one map at a time.
+	             LATO.2          AI that lays out triangles the way an artist would. Runs on the
+	                             graphics card. It places 200 to 10,000 vertices: a size outside
+	                             that is made with the nearest of the two (the page says so).
+	             TriFlow         AI that lays out artist-like triangles too, paired so they read as
+	                             quads (you set how strongly they pair; it is asked for two triangles
+	                             per vertex, and 500 at least: a size under 0.25 is made with 250
+	                             vertices, as the page says). Under a thousand vertices it comes close
+	                             to the size rather than exactly on it (0.25 gave about 300 vertices
+	                             on a rifle, 0.3 about 350). Runs on the graphics card. A model gives
+	                             it only so many triangles (a thin one fewer): a size above that is
+	                             made with all of them, and a line under the prop's name says so. Free
+	                             for NON-COMMERCIAL use: it carries a "Non-commercial" mark, and while
+	                             it is picked a line links to its license. Don't use it for work you
+	                             sell or are paid for (see 'README - LICENSE.txt').
+	
+	             How big: the boxes on each prop's picture on the left say how many thousand
+	             vertices its clean meshes get, one clean mesh per box (up to three; an empty
+	             box makes none). A new prop has one box filled with 2: one clean mesh of about
+	             2,000 vertices, whatever you typed on the prop before it. Type 4, 22 and 6 to
+	             get three to compare. For fewer than a
+	             thousand, type a decimal with a dot or a comma: 0.3, .3, 0,3 and ,3 all mean
+	             300 vertices, 0.25 means 250 (two decimals at most; from 0.1, which is 100
+	             vertices, to 99). Very small meshes keep the main shape and lose the details.
+	             Nothing is retopologized by itself: the AI model is loaded as you arrive here, and
+	             "Retopo All", at the viewport's bottom left, makes the clean meshes every prop
+	             lacks, one method after the other (all the TriFlow props, then all the LATO.2
+	             props, then the Instant Meshes ones), each tool loaded only once. Once everything
+	             is made, it offers to make it all again.
+	             Under the model, one box per size: click one to see that clean mesh (the camera
+	             stays where it is) and pick it - a green check marks the one picked. "Low" shows it
+	             with its edges, "High" the detailed model. A prop with one size has its clean mesh
+	             picked as soon as it is made, and so has one whose boxes you bring down to a single
+	             size that is made: there is nothing to choose. A prop with its clean mesh picked
+	             gets its big green check on the left. "Project textures" waits until every prop
+	             that has a 3D model has its pick (a prop without one, or a tileable texture, holds
+	             nobody back). Not happy? Another "Seed" gives a different
+	             take on the same model: press "Make it again" (it makes that prop's clean meshes
+	             anew).
+	             Each method keeps the clean meshes it made for a prop: pick TriFlow, make them, try
+	             LATO.2, then pick TriFlow again and its clean meshes are back, with their numbers and
+	             your pick, without making them again. The method picked is the one the prop uses
+	             from here on (Projection, saving). Only clean meshes under 50,000 vertices are kept
+	             this way; bigger ones stay on screen, "to do" again (an amber dot), until the other
+	             method's replace them. A new 3D model makes all of them old.
+	
+	             "Project textures" bakes every prop once each has a clean mesh picked; until then it
+	             is greyed out and says which props still need a pick or their clean meshes.
+	
+	-  Projection:  "Bake textures" copies the detailed model's surface - colour, normals
+	             (the small bumps), roughness, metallic, ambient occlusion, glow - onto the
+	             clean model's UVs. It runs on the processor (any graphics card works) and
+	             takes about 15 seconds to a few minutes. The buttons under the preview show the
+	             result: All, None, or one map at a time; "High | Low" switches between the
+	             detailed and the clean model.
+	             "Normal map for": OpenGL for Blender, Unity, Godot; DirectX for Unreal, 3ds Max.
+	             If the retopo or the 3D model changes afterwards, it says "bake again".
+	             Small fixes by hand: in a column at the viewport's bottom right, a marker of any
+	             colour (the rainbow circle: a click opens the palette, Alt + click on the model picks
+	             a colour from it) and a clone stamp (Ctrl+click the model where to copy from, then
+	             paint the copy elsewhere); Orbit, at the column's foot, puts the brush down. The
+	             slider sets the brush's size (or hold Shift and move sideways over the model); with
+	             a pen, "P" lets its pressure set the size and "F" how strongly the paint covers.
+	             What you paint goes into the colour map and is saved as you paint; Ctrl+Z takes
+	             strokes back. "Bake again" makes the maps anew, without the painting.
+	             The .glb (everything in one file), .fbx (textures inside) and .obj (with its
+	             .mtl and texture maps) buttons save the prop into its own folder in the
+	             project's exports folder and open it in File Explorer; "Export all" saves
+	             every finished prop there, each in its own folder. Closed that window? The Export
+	             stage (the last one) has an "Open the exports folder" button.
+	             Saving a prop whose clean mesh TriFlow made reminds you that it is for
+	             non-commercial use only.
+	
+	The big button only does what each prop still needs: a prop that already has a fresh
+	result is left as it is. In 3D and Projection, the button above it (for example
+	"Bake 3 props") does that stage's work for every prop that needs it and stays in the
+	stage; in Omni-Texture and Retopo that button sits at the viewport's bottom left. Click
+	a prop to work on it; its little badge says whether it waits, is being
+	worked on, is done, or needs redoing (an amber dot: something before it changed).
+	A prop drawn as a small deck of cards has several views (front, sides, back).
+	A prop can always be redone from the middle of the page.
+	
+	Moving the 3D models around works like in Blender, 3ds Max, Maya or Unity, in every stage:
+	    wheel                 zoom (toward the mouse)
+	    middle drag           orbit       (also Alt + middle drag, Alt + left drag)
+	    Shift + middle drag   pan         (also right drag)
+	    Ctrl + middle drag    zoom        (also Alt + right drag)
+	    left drag             orbit (in Instant Meshes' viewer the left button paints guide strokes)
+	    F                     frame the model
+	
+	When you go to another stage, the whole page swipes down (or up) to it. For short, plain
+	fades instead: Settings (the gear at the top right) > Advanced > Animations > "Reduced".
+
+	Faster pictures: in the Images stage's panel on the right, switch on "Faster image
+	generation" (the Omni-Texture stage's panel has the same switch). It makes
+	ALL pictures and Omni-Texture repaints about 20 to 40 % quicker, with a shortcut in the
+	image generator's arithmetic: small details (an eye, a buckle, a roof's edge) can then
+	come out differently, and some instructions may be ignored - a sheet of four views, for
+	example, can come out with two. It asks before it changes, is off
+	unless you turn it on, and stays as you leave it.
+
+	Faster 3D models (RTX 30xx and newer): in the 3D stage, open "More" in the panel on the
+	right and switch on "Faster 3D generation". Each of ALL 3D models then takes a few
+	seconds less, but a seed no longer gives the model the original Pixal3D makes: its rough
+	shape comes out a little differently, and the model that grows from it is another one,
+	sometimes better, sometimes worse. It asks before it changes, is off unless you turn it on,
+	and stays as you leave it. Older cards do not have it: they cannot compute the original's
+	numbers either way.
+
+	Projects: you start in an "Untitled" project and everything is saved as you go. To give it
+	a name, click its name at the top left and choose "Save as...". The same menu starts a new
+	project and opens your recent ones.
+
+	Why one stage at a time?  Loading an AI model takes 30 seconds to 3 minutes, and only one
+	fits into your video memory. So: all images first, then all 3D models, then all retopo,
+	then all bakes. Spellcast3D starts and stops the tools for you. To free the memory right
+	away (for a game or another program), open Settings (the gear at the top right) >
+	Debugging and press "Stop - free memory" next to the tool.
+
+-------------------------------------------------------------------------------
+
+	WHERE ARE MY FILES
+
+	Everything you make is saved in the 'projects' folder:
+
+		projects\<your project>\props\<prop>\images\     the generated pictures
+		projects\<your project>\props\<prop>\mesh\       the 3D model  (.glb)
+		                         (for a prop with views, mesh\views\ holds them as Pixal3D saw them)
+		projects\<your project>\props\<prop>\retopo\     the low-poly models with UVs, one folder per size
+		                         (4k\, 0.25k\...; .obj: retopo.obj from Instant Meshes, lato2.obj from
+		                         LATO.2, triflow.obj from TriFlow; retopo.obj next to them: the one
+		                         shaped by hand in Instant Meshes' viewer)
+		projects\<your project>\props\<prop>\projection\ the baked model and its texture maps
+		                         (bake_NNN\ holds the .glb, .fbx, export\*.obj and maps\*.png)
+
+	A project you have not named yet is in a folder called untitled-<date and time>;
+	"Save as..." renames it. The props' folders are named with short codes (like p_1a2b3c).
+	The finished models you save go to the 'exports' folder, next to 'projects':
+
+		exports\<your project>\Wooden_barrel\    one folder per prop, with its saved files:
+		    Wooden_barrel.glb / .fbx / .obj + .mtl + Wooden_barrel_<map>.png   (Projection)
+		    Wooden_barrel_high.glb / .fbx / .obj ...                            (the 3D model)
+
+	The .glb / .fbx / .obj buttons (3D and Projection) and "Export all" save there and open
+	the folder in File Explorer: drag the files into your game engine from there. Saving
+	again replaces the files. Two props with the same name get Wooden_barrel_2, _3...
+	Renaming the project renames its exports folder too. Files saved before props had their
+	own folders lie straight in exports\<your project>\; saving a file again moves it into
+	its prop's folder.
+
+-------------------------------------------------------------------------------
+
+	THE MODELS FOLDER
+
+	The 'models' folder next to 'projects' holds the AI models. Updates and reinstalls never
+	touch it, and whatever you put there is not downloaded again. (models\README.txt says
+	the same, in more detail.)
+
+	Qwen-Image 2.1 (the built-in image generator) keeps its AI models (about 11 GB with the
+	default model size) in:
+
+		models\qwen-image
+
+	Spellcast3D downloads them there by itself, only in the size spellcast3d-config.ini picks.
+	If you already have them (from another copy of Spellcast3D), copy them there before the
+	first start; the ones in your HuggingFace download folder (on the same drive) are found by
+	themselves.
+
+	Forge Neo (when spellcast3d-config.ini picks it) does NOT come with an image model - you
+	choose one. Download a checkpoint (.safetensors), for example an SDXL model from
+	civitai.com or huggingface.co, and put it into:
+
+		models\checkpoints
+
+	Then press Refresh next to the model list (or start Spellcast3D again).
+	LoRAs go into models\loras. Models such as Flux or Qwen-Image also need their VAE and
+	text-encoder files: models\vae and models\text-encoders (read when the image
+	generator starts).
+
+	Pixal3D (the 3D step) keeps its AI models (about 27 GB, and an 11 GB faster-loading copy
+	of four of them that Spellcast3D makes itself) in:
+
+		models\pixal3d
+
+	Spellcast3D downloads them there by itself. If you already have them, for example from
+	StableProjectorz's Pixal3D, copy what is INSIDE its MODELS folder (dinov3, RMBG-2.0,
+	hub, torch) into models\pixal3d before the first start: only what is missing is then
+	downloaded. An older copy of Spellcast3D kept them in code\pixal3d\MODELS; they are
+	moved into models\pixal3d at the first start (on the same drive, nothing is copied).
+	The optional multi-view models (22 GB more, see 3D above, and 11 GB for their copy) go
+	there too, once you press "Download (22 GB)" in the 3D stage.
+
+	Hi3D's (11.4 GB, the 3D stage's Shape) go into models\hi3d, with Pixal3D's: one folder each
+	for Hi3Dv1.0, dinov2-large, clip-vit-large-patch14 and trellis2-shape-encoder (see
+	models\README.txt). Those in your HuggingFace download folder (on the same drive) are not
+	downloaded again.
+
+	LATO.2 and TriFlow (the Retopo stage's AI methods) keep theirs in models\lato2 (4.8 GB)
+	and models\triflow (1.3 GB). They are downloaded the same way; the ones already in your
+	HuggingFace download folder (on the same drive) are not downloaded again.
+
+	Using Forge Neo, and already have a folder full of image models (from another Forge, A1111
+	or ComfyUI)? Don't copy them - point Spellcast3D to that folder: click the settings button
+	(top right) and add the folder under Advanced > "Extra model folders" (shown while Forge Neo
+	is the image generator). Or create (or edit) the file
+
+		code\settings.json
+
+	with Notepad, like this:
+
+		{
+		  "forge": {
+		    "ckpt_dirs": ["D:/AI/models/Stable-diffusion"]
+		  }
+		}
+
+	Use forward slashes  /  in the path (or double back-slashes  \\ ).
+	Several folders are fine:  ["D:/models/sdxl", "E:/more models"]
+	Restart Spellcast3D afterwards.
+
+	Every model has its own license - read 'README - LICENSE.txt' if you want to sell your work.
+
+-------------------------------------------------------------------------------
+
+	UPDATING
+
+	Close Spellcast3D (its black window), then double click:
+
+		tools\update.bat
+
+	It downloads the newest version and re-installs only the parts that changed.
+	(It refuses to start while Spellcast3D is still open.)
+	Your 'projects' and 'models' folders, code\settings.json and spellcast3d-config.ini are kept.
+
+	Using Forge Neo, from a version before October 2026? From the October 2026 update on, the
+	built-in image generator for new copies is Qwen-Image 2.1. Your copy keeps Forge Neo: the
+	update makes spellcast3d-config.ini with Forge Neo switched on, so nothing big is
+	downloaded. To try Qwen-Image 2.1, switch its line on in that file (see THE CONFIG FILE
+	above) and start Spellcast3D again: it downloads it (about 11.5 GB) and keeps Forge Neo,
+	your image models and your projects.
+
+	3D models made before the September 2026 update stay as they were. Make them again
+	("Make 3D again" in the 3D stage, then Retopo and Projection again) to get these fixes:
+	-  the model faces the front (+Z); older ones (and those made in Pixal3D's own page)
+	   face the other way,
+	-  the hidden second copy of the surface inside the model is removed (it doubled the
+	   triangles and could make the baked model look inside out). Not always all of it:
+	   where it can't be told apart from the visible surface safely, it stays rather than
+	   risk a hole (a few percent of a furry bear, for example). Still, on a furry model a
+	   small pit seen only through a narrow gap can lose its bottom,
+	-  the second and later models made in one session no longer grow long fins toward the
+	   camera (a bug in one of Pixal3D's helper libraries put some points far out of place).
+
+-------------------------------------------------------------------------------
+
+	SOMETHING WENT WRONG?
+
+	-  Read the black window: it says what happened and what to do.
+
+	-  The logs are in the  code\logs  folder:
+		install.log                          the installer (first start, the tools installing
+		                                     in the background, updates)
+		hub.log                              Spellcast3D itself (the page, jobs)
+		qwen.log, forge.log, pixal3d.log,    each tool while it runs
+		imesh.log, lato2.log, triflow.log
+		multiview-download.log               the download of the multi-view models
+
+	-  The Images stage says spellcast3d-config.ini is not right, and there is no image
+	   generator: it names the line to fix. Keep exactly one backend line switched on
+	   (backend = qwen or backend = forge), save, close Spellcast3D and start it again.
+
+	-  Qwen-Image 2.1 runs out of video memory: make fewer variations at once or use fewer
+	   example pictures, close other programs that use the graphics card (games, browsers with
+	   3D tabs, other AI tools), or pick a smaller model size in spellcast3d-config.ini
+	   (quality = Q3_K_M).
+
+	-  "Not enough memory" / the PC freezes while making a mesh:
+	   close other programs (games, a browser with many tabs, other AI tools). Pixal3D keeps a
+	   prop's half-finished work in memory and on disk, in a "temp" folder inside the project;
+	   it needs room for both.
+	   A prop that does not fit into the graphics card's free memory gets a little less detail
+	   by itself, and only fails ("This prop needs more video memory than the card has free")
+	   when even that is not enough: close other programs that use the graphics card, or lower
+	   Quality. Pixal3D never borrows the PC's own memory for the graphics card ("shared GPU
+	   memory"): that is very slow and can freeze the PC. To allow it anyway (it is off by
+	   default), create or edit code\settings.json with Notepad, as for the model folders under
+	   THE MODELS FOLDER, so that it holds:
+
+		{
+		  "pixal3d": {"allow_spill": true}
+		}
+
+	-  The 3D stage says "This computer can't make 3D models from pictures": your graphics card
+	   is older than an RTX 30xx. Images, retopology, baking and importing your own 3D models
+	   ("Import 3D model" in the 3D stage) still work on it.
+
+	-  TriFlow is very slow or runs out of video memory: it can use about 10 GB of it on big
+	   props (the Retopo stage says so on a card with less). Close other programs that use the
+	   graphics card, or pick LATO.2 or Instant Meshes for that prop.
+	   LATO.2 and TriFlow need a GTX 1060 or newer; Instant Meshes runs on any computer.
+
+	-  The black window shows only what matters while the tools install (pip's hundreds of
+	   "Requirement already satisfied" lines are kept in code\logs\install.log). To see
+	   every line, set the environment variable SPELLCAST_VERBOSE_INSTALL=1 before starting
+	   (in a command window: set SPELLCAST_VERBOSE_INSTALL=1, then run-spellcast3d.bat).
+	-  Nothing helps? Reinstall all the tools: close Spellcast3D, delete the folder
+
+		code\venvs
+
+	   and start run-spellcast3d.bat again. Your projects and the downloaded AI models are kept,
+	   and so are most of the installer's downloads, so this is much quicker than the first start.
+
+	-  Still stuck? Come to the Discord and post the log the error message names (install.log
+	   for installing and updating, hub.log for the page and its jobs, or the tool's log).
+
+
+Any questions? Join the Discord: https://discord.gg/aWbnX2qan2
+
+
+Igor Aherne
+
+https://stableprojectorz.com
+Discord: https://discord.gg/aWbnX2qan2
+Support the project (the Donate button at the top of the page): https://stableprojectorz.com/thanks
+
+October 2026

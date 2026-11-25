@@ -1,0 +1,70 @@
+{
+  "wheel": "pyfqmr_triflow-0.5.0+triflow-cp311-cp311-win_amd64.whl",
+  "sha256": "79ea6e4ba93330e5a30dd47cfba7116d1879b0244c00a53ea85ec5244f69beda",
+  "size_bytes": 125639,
+  "built": "2026-09-26T00:08:30+00:00",
+  "build_seconds": 21,
+  "source_repo": "https://github.com/DerKleineLi/pyfqmr-triflow (branch triflow)",
+  "source_commit": "c93a7671ba4a2163dd3c7ea6ab6b52ad0167cc72",
+  "source_commit_why": "the gitlink of third_party/pyfqmr-triflow in IgorAherne/triflow @ 873a2cdf68b0a1ec243635bbf9170c87556b2f2b",
+  "source_license": "MIT (Copyright Kramer84); LICENSE is inside the wheel: pyfqmr_triflow-0.5.0+triflow.dist-info/licenses/LICENSE",
+  "patches": "none (built out of tree from a `git archive` export; the clone/submodule stays untouched)",
+  "python": "CPython 3.11.9 (spellcast3d tools/python), throw-away build venv",
+  "msvc": "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35213 for x64 (Visual Studio Community 2022 17.14, toolset 14.44.35207), setuptools default flags, dynamic CRT /MD",
+  "windows_sdk": "10.0.26100.0",
+  "cuda": "none (CPU only)",
+  "build_deps": {
+    "setuptools": "80.9.0",
+    "wheel": "0.45.1",
+    "Cython": "3.2.4",
+    "numpy": "2.2.6"
+  },
+  "pyd_dll_imports": {
+    "pyfqmr_triflow/Simplify.cp311-win_amd64.pyd": [
+      "python311.dll",
+      "MSVCP140.dll",
+      "KERNEL32.dll",
+      "VCRUNTIME140_1.dll",
+      "VCRUNTIME140.dll",
+      "api-ms-win-crt-runtime-l1-1-0.dll",
+      "api-ms-win-crt-stdio-l1-1-0.dll",
+      "api-ms-win-crt-math-l1-1-0.dll",
+      "api-ms-win-crt-heap-l1-1-0.dll"
+    ]
+  },
+  "build_command": "python -m pip wheel <git-archive export> --no-deps --no-build-isolation -v -w <out>  (inside vcvars64, DISTUTILS_USE_SDK=1, _CL_=/Brepro, _LINK_=/Brepro, SOURCE_DATE_EPOCH=1776178718; driver: code/release/wheels/pyfqmr-triflow/build_pyfqmr_triflow_win.py)",
+  "reproducible": "bit-identical when rebuilt with the same tools from the same --work path (verified: two builds, same sha256); a different work path changes the .pyd layout",
+  "runtime_requirements": {
+    "install": "pip install --no-deps <this wheel>",
+    "import_needs": [
+      "numpy"
+    ]
+  },
+  "wheel_files": [
+    "pyfqmr_triflow/Simplify.cp311-win_amd64.pyd",
+    "pyfqmr_triflow/Simplify.h",
+    "pyfqmr_triflow/Simplify.pyx",
+    "pyfqmr_triflow/__init__.py",
+    "pyfqmr_triflow-0.5.0+triflow.dist-info/licenses/LICENSE",
+    "pyfqmr_triflow-0.5.0+triflow.dist-info/METADATA",
+    "pyfqmr_triflow-0.5.0+triflow.dist-info/WHEEL",
+    "pyfqmr_triflow-0.5.0+triflow.dist-info/top_level.txt",
+    "pyfqmr_triflow-0.5.0+triflow.dist-info/RECORD"
+  ],
+  "build_log": "release/cache/wheels/logs/pyfqmr_triflow-build.log (on the build PC)",
+  "verified": {
+    "when": "2026-09-26",
+    "how": "not installed: wheel unpacked on PYTHONPATH, pixal3d venv python (numpy 2.2.6, trimesh, scipy); code/release/wheels/pyfqmr-triflow/smoke_pyfqmr_triflow.py (custom quadrics + target_vertex_ids as TriFlow drives it)",
+    "mesh": "Stanford_Bunny_sample.stl (112402 faces, scaled to the 512 voxel frame)",
+    "checks_passed": "9/9",
+    "faces_out": {
+      "plain_qem_target_4000": 4000,
+      "custom_quadrics_qem_cap_12": 9660
+    },
+    "mean_dist_to_target_roots": {
+      "plain": 6.7076,
+      "custom": 1.5128
+    },
+    "results": "release/cache/wheels/logs/pyfqmr_triflow-smoke.json (on the build PC)"
+  }
+}
