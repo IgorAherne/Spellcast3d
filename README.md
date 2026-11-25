@@ -44,9 +44,9 @@ Pick one per prop on the Images page, under *Model*:
 
 | Model | Speed (1024 x 1024, RTX 3060) | Notes |
 |---|---|---|
-| **Qwen-Image 2.1 Turbo** | about 15 s | the default; installed at the first start |
-| **Qwen-Image 2.1 Full** | about 31 s | sometimes finer detail; a 4.2 GB download, on request |
-| **FLUX.3 Klein** | about 30 s | follows *long prompts* best, no transparent background; a 6.8 GB download, on request |
+| **Qwen-Image 2.1 Turbo** | ~15 s | the default; installed at the first start |
+| **Qwen-Image 2.1 Full** | ~31 s | sometimes finer detail; a 4.2 GB download, on request |
+| **FLUX.3 Klein** | ~30 s | follows *long prompts* best, no transparent background; a 6.8 GB download, on request |
 
 All three take your words and up to 10 example pictures, and can redraw the picture in the viewport with
 marks you paint over it. Resolutions: 1K, 1.5K and 2K.
@@ -69,11 +69,11 @@ Updates and reinstalls never touch it, and models you already have are not downl
 
 | Folder | What | Size |
 |---|---|---|
-| `models\qwen-image` | Qwen-Image 2.1 | about 11 GB (+4.2 GB for Full) |
+| `models\qwen-image` | Qwen-Image 2.1 | ~11 GB (+4.2 GB for Full) |
 | `models\flux3-klein` | FLUX.3 Klein, optional | 6.8 GB |
 | `models\checkpoints` | your image models for Forge Neo | yours |
-| `models\pixal3d` | Pixal3D | about 27 GB, plus up to 14 GB of faster-loading copies |
-| `models\pixal3d` | multi-view models, optional | 22 GB, plus up to 14 GB of copies |
+| `models\pixal3d` | Pixal3D | ~27 GB, + up to 14 GB of faster-loading copies |
+| `models\pixal3d` | multi-view models, optional | 22 GB, + up to 14 GB of copies |
 | `models\hi3d` | Hi3D, optional | 11.4 GB |
 | `models\lato2` | LATO.2 | 4.8 GB |
 | `models\triflow` | TriFlow | 1.3 GB |
@@ -109,5 +109,5 @@ Building from source, rebuilding the wheels and making a release: [`DEVELOPERS.m
 
 ## Community
 
-[Discord](https://discord.gg/aWbnX2qan2)
+[Discord](https://discord.gg/aWbnX2qan2)</br>
 [Website](https://stableprojectorz.com)
