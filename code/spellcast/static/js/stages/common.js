@@ -284,7 +284,7 @@ export const donateCorner = () => h('a', {
   title: 'Support Spellcast3D (opens in a new tab)',
 }, icon('heart'), 'Donate');
 
-const DISCORD_URL = 'https://discord.gg/aWbnX2qan2';
+const DISCORD_URL = 'https://discord.gg/yg4dABJpyZ';
 
 /**
  * "Join Discord": under Donate in the last two stages (Projection and Export, where the work is done), and under

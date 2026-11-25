@@ -508,7 +508,7 @@ YOUR WORK
 
 Any questions, or info about alternatives? Write to Igor on Discord:
 
-https://discord.gg/aWbnX2qan2
+https://discord.gg/yg4dABJpyZ
 https://stableprojectorz.com
 
 October 2026

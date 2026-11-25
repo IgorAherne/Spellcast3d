@@ -113,5 +113,5 @@ Building from source, rebuilding the wheels and making a release: [`DEVELOPERS.m
 
 ## Community
 
-[Discord](https://discord.gg/aWbnX2qan2)</br>
+[Discord](https://discord.gg/yg4dABJpyZ)</br>
 [Website](https://stableprojectorz.com)
