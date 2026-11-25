@@ -42,7 +42,7 @@ export function mountHeader(host) {
   const installSlot = h('div', { class: 'install-slot' });
   host.append(
     h('div', { class: 'brand' },
-      h('img', { src: '/static/favicon.svg', alt: '', width: 26, height: 26 }),
+      h('img', { src: '/static/img/logo.png', alt: '', width: 26, height: 26 }),
       h('span', null, 'Spellcast', h('b', null, '3D'))),
     menuWrap,
     h('span', { class: 'tagline', title: TAGLINE }, TAGLINE),   // the title: when it is cut short
