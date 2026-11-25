@@ -12,16 +12,16 @@ Highly optimized by Claude Fable 5.2 over many iterations.
 
 | Stage | What it does | Tool |
 |---|---|---|
-| Images | render or import images or character sheets | **Qwen-Image 2.1** (built in), optionally FLUX.3 Klein or Forge Neo |
+| Images | render or import images or character sheets</br>create tileable textures | Qwen-Image 2.1 Turbo (built in)</br>FLUX.3 Klein / Forge Neo (optional) |
 | 3D | picture (or several views) -> textured high-poly model | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
-| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>custom-trained Marigold Albedo LoRA |
+| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>Custom-trained Marigold Albedo LoRA |
 | Retopo | clean low-poly mesh with UVs | [TriFlow](https://github.com/IgorAherne/triflow), [LATO.2](https://github.com/IgorAherne/LATO2-stableprojectorz) or [Instant Meshes](https://github.com/IgorAherne/instant-meshes-py) |
-| Projection | bakes the detailed textures onto the clean mesh -> GLB, FBX, OBJ + maps | Spellcast3D's own baker |
+| Projection | bakes the detailed textures onto the clean mesh</br>Export GLB, FBX, OBJ + PBR maps | Spellcast3D's own baker |
 
 ## Requirements
 
 - Windows 10 or 11, 64-bit
-- NVIDIA graphics card with 8 GB of video memory or more, GTX 10xx series or newer (RTX 30xx and newer are
+- NVIDIA graphics card with 8 GB of video memory or more, GTX 10xx series or newer</br>(RTX 30xx and newer are
   the fastest)
 - 16 GB of RAM
 - About 92 GB of free disk space: downloads libraries, AI models
@@ -103,11 +103,11 @@ notices some of them ask for.
 | LATO.2 | [MIT](https://github.com/IgorAherne/LATO2-stableprojectorz/blob/master/LICENSE) |
 | Instant Meshes | [BSD-3-Clause](https://github.com/IgorAherne/instant-meshes-py/blob/master/LICENSE.txt) |
 
-## For developers
+## For developers and LLMs
 
 Building from source, rebuilding the wheels and making a release: [`DEVELOPERS.md`](DEVELOPERS.md).
 
 ## Community
 
-- Discord: https://discord.gg/aWbnX2qan2
-- Website: https://stableprojectorz.com
+[Discord](https://discord.gg/aWbnX2qan2)
+[Website](https://stableprojectorz.com)
