@@ -15,7 +15,7 @@ So - the more 3D props you create at once, the more time you save.
 |---|---|---|
 | Images | render or import images or character sheets</br>create tileable textures | Qwen-Image 2.1 Turbo (built in)</br>FLUX.3 Klein / Forge Neo (optional) |
 | 3D | picture (or several views) -> textured high-poly model | [Pixal3D](https://github.com/IgorAherne/Pixal3D), optionally [Hi3D](http://hi3d.ai/) for the shape |
-| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>our albedo LoRA, trained with [Marigold V2](https://github.com/huawei-bayerlab/marigold-v2)'s recipe |
+| Omni-Texture | optional: repaints the model's colours, sharper, from 8 sides | Qwen-Image 2.1</br>Our albedo LoRA, ([Marigold V2](https://github.com/huawei-bayerlab/marigold-v2)'s recipe) |
 | Retopo | clean low-poly mesh with UVs | [TriFlow](https://github.com/IgorAherne/triflow), [LATO.2](https://github.com/IgorAherne/LATO2-stableprojectorz) or [Instant Meshes](https://github.com/IgorAherne/instant-meshes-py) |
 | Projection | bakes the detailed textures onto the clean mesh</br>Export GLB, FBX, OBJ + PBR maps | Spellcast3D's own baker |
 
@@ -97,8 +97,8 @@ notices some of them ask for.
 | Part | Licence |
 |---|---|
 | Spellcast3D, including its baker | [AGPL-3.0](LICENSE) |
-| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) (renders/generations can be used commercially: [Qwen's statement](https://x.com/QwenDevs/status/2101917379785838660)) |
-| [Spellcast3D Albedo LoRA](https://huggingface.co/IgorAherne/spellcast3d-marigold-albedo-qwen-image-2.1) | [Qwen Research License](https://huggingface.co/IgorAherne/spellcast3d-marigold-albedo-qwen-image-2.1/blob/main/LICENSE) (renders/generations can be used commercially) |
+| Qwen-Image 2.1 | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/d26bb61231c349cf6b7896fa83353113880e1ba3/LICENSE) (renders/generations can be used commercially:</br>[Qwen's statement](https://x.com/QwenDevs/status/2101917379785838660)) |
+| Spellcast3D Albedo LoRA | [Qwen Research License](https://huggingface.co/IgorAherne/spellcast3d-marigold-albedo-qwen-image-2.1/blob/main/LICENSE) (renders/generations can be used commercially) |
 | FLUX.3 Klein (optional) | [FLUX Kommunity License](https://huggingface.co/unsloth/flux-3-image-klein-GGUF/blob/12ef13ce920d53f45fe805093910c899668b9e76/LICENSE.md) |
 | Forge Neo (optional) | [AGPL-3.0](https://github.com/IgorAherne/stable-diffusion-webui-forge/blob/neo/LICENSE), and the licence of each image model you use with it |
 | Pixal3D | [MIT](https://github.com/IgorAherne/Pixal3D/blob/master/LICENSE); parts it downloads: [RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0), [nvdiffrast](https://github.com/NVlabs/nvdiffrast/blob/main/LICENSE.txt), [nvdiffrec](https://github.com/NVlabs/nvdiffrec/blob/main/LICENSE.txt), [DINOv3](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
