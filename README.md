@@ -60,13 +60,14 @@ first start and switch the backend:
 backend = forge
 ```
 
-The same file sets the size of the built-in models (`quality`, `text_encoder`): a bigger size is a
-little finer and needs more memory. The file explains each setting.
+The same file sets the size of the built-in models (`quality`, `text_encoder`).</br>
+A bigger size is a little finer and needs more memory. The file explains each setting.
 
 ## Models and disk space
 
 AI models (neural nets) live in the `models` folder.</br>
-Updates and reinstalls never touch it, and models you already have are not downloaded again if you put them there first (see [`models/README.txt`](models/README.txt)).
+Updates and reinstalls never touch it.</br> 
+ALready have neural nets? Put them there first to skip download (see [`models/README.txt`](models/README.txt)).
 
 | Folder | What | Size |
 |---|---|---|
@@ -84,7 +85,8 @@ Finished props are saved into the `exports` folder, one folder per prop.
 ## Updating
 
 Close Spellcast3D and run `tools\update.bat`</br>
-It downloads the newest version and reinstalls only what changed. Your projects, your settings and the `models` folder are kept.
+It downloads the newest version and reinstalls only what changed.</br>
+Your projects, your settings and the `models` folder are kept.
 
 ## Licences
 
