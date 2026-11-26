@@ -135,5 +135,12 @@ Never amend or force-push a released commit: users update from it.
 | `python prepare_release.py build [--from-worktree] [--out DIR] [--no-zip]` | assemble and zip the release; `--from-worktree` packs uncommitted files, for testing only |
 | `python prepare_release.py clean [--yes]` | remove caches, logs and the staging folder |
 
-A release leaves `code\tests` out of its files. A release keeps its `.git`, so **whatever git tracks is
-in every released copy**: keep private notes and one-off tools in git-ignored files.
+The unpacked folder shows an artist only `code`, `models`, `run-browser`, `tools`, the two text files and
+`spellcast3d-config.ini`. `code/spellcast/install/layout.py` lists what the repository's root shows (`SHOWN`)
+and what a release leaves out of its files (`LEAVES_OUT`: the tests, git's own files, `README.md`,
+`DEVELOPERS.md`, `LICENSE`, `prepare_release.py`); a new file in the root must be added to one of the two,
+and `check` says so. `LICENSE` stays in the root for GitHub, and `code/LICENSE` is its copy for the artist.
+`.git` is hidden. A copy unpacked from an earlier release gets the same folder at its next update.
+
+A release keeps its `.git`, so **whatever git tracks is in every released copy**: keep private notes and
+one-off tools in git-ignored files.

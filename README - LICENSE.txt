@@ -50,7 +50,7 @@ SPELLCAST3D ITSELF
 	GNU Affero General Public License v3 (AGPL-3.0), Copyright (c) 2026 Igor Aherne.
 	Free to use, change and share, also commercially. If you share a changed version,
 	or let people use it over a network, share your source code under the same license.
-	Full text: LICENSE (in this folder).
+	Full text: code\LICENSE
 
 	One exception: the few files that run TriFlow are under the MIT license instead
 	(section 7).

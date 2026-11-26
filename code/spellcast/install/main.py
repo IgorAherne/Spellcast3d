@@ -37,8 +37,8 @@ from pathlib import Path
 from typing import Iterator, NamedTuple, NoReturn
 
 from .. import config, gpu, paths
-from . import models, preflight, progress, sdcpp, state, venvs
-from .components import (COMPONENTS, LOG_HINT, Component, Qwen, install_profilers, missing_profilers,
+from . import layout, models, preflight, progress, sdcpp, state, venvs
+from .components import (COMPONENTS, LOG_HINT, Component, Qwen, git_exe, install_profilers, missing_profilers,
                          pixal3d_calibration_work, profilers_pending, profilers_work)
 from .progress import Progress
 from .runner import Ctx, InstallError, Output
@@ -262,12 +262,19 @@ def main(argv: list[str] | None = None) -> int:
 
 def _tidy(out: Output) -> None:
     """After the components (also when none needed work): NVIDIA's CUDA DLLs that Qwen-Image took from the cudart zip
-    become links to PyTorch's once a venv has them (sdcpp.share_cuda_dlls). A few stat calls when there is nothing to
-    do. Never fails the run."""
+    become links to PyTorch's once a venv has them (sdcpp.share_cuda_dlls), and a copy that came from an earlier
+    release shows in its folder what today's release does (layout.tidy: tools\\update.bat runs this installer after
+    its git steps). A few stat calls when there is nothing to do. Never fails the run."""
     try:
         sdcpp.share_cuda_dlls(out.line)
     except OSError as e:
         out.log_only(f"Could not link the CUDA files of stable-diffusion.cpp to PyTorch's ({e}); next time.")
+    gone, problem = layout.tidy(git_exe())
+    if gone:
+        out.line(f"Tidied the Spellcast3D folder: it no longer shows {', '.join(gone)}, which only developers need. "
+                 f"The license text is in code\\LICENSE.")
+    if problem:
+        out.log_only(f"Tidying the Spellcast3D folder: {problem}")
 
 
 def locked(lock_file: Path) -> bool:

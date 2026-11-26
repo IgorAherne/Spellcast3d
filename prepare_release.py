@@ -15,7 +15,8 @@
         (another project's release folder, a wheel just built). `check` asks the same of everything Spellcast3D
         ships and installs. Exits non-zero when one needs AVX2.
     python prepare_release.py build        [--from-worktree] [--allow-unpushed] [--out DIR] [--no-zip]
-        Assemble release/staging/spellcast3d/ and zip it to release/spellcast3d-<version>-windows.zip.
+        Assemble release/staging/spellcast3d/ and zip it to release/spellcast3d-<version>-windows.zip. The folder
+        shows an artist what they use and nothing else (code/spellcast/install/layout.py).
     python prepare_release.py clean        [--yes] [--venvs] [--tools] [--submodules]
         Remove __pycache__, logs and staging from the dev tree. Dry-run unless --yes.
 
@@ -51,6 +52,7 @@ ROOT = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True      # importing spellcast.paths must not leave __pycache__ in the tree
 sys.path.insert(0, str(ROOT / "code"))
 from spellcast import paths  # noqa: E402  (stdlib only)
+from spellcast.install import layout  # noqa: E402  (stdlib only)
 from spellcast.install import models as tool_models  # noqa: E402  (stdlib only)
 from spellcast.install import sdcpp  # noqa: E402  (stdlib only)
 from spellcast.install import submodules as nested  # noqa: E402  (stdlib only)
@@ -95,12 +97,16 @@ OWN_WHEELS = TRIFLOW_WHEELS + IMESH_WHEELS
 WHEEL_BUILD_SCRIPTS = {"torchsparse": "code/release/wheels/torchsparse/build_torchsparse_win.bat",
                        "pyfqmr_triflow": "code/release/wheels/pyfqmr-triflow/build_pyfqmr_triflow_win.bat",
                        "xatlas": "code/release/wheels/xatlas/build_xatlas_win.py"}
-# Tracked folders an artist's copy does without: the tests (code/spellcast/profiling stays: the [profiling] switches
-# of the config file start it). The committed build checks them out of its clone with a sparse checkout, which
-# update.bat's fetch + reset --keep keeps (git status stays clean, new files in them stay out); --from-worktree does
-# not copy them.
-RELEASE_LEAVES_OUT = ("code/tests/",)
-SPARSE_PATTERNS = ("/*", *(f"!/{folder}" for folder in RELEASE_LEAVES_OUT))      # git sparse-checkout --no-cone
+# What an artist's copy does without (spellcast/install/layout.py, which the installer shares): the tests, git's own
+# files in the root, and what is written for GitHub's pages and for developers - so the unpacked folder shows only
+# layout.SHOWN and the config file (code/spellcast/profiling stays: the [profiling] switches of the config file
+# start it). The committed build leaves them out of its clone with a sparse checkout, which update.bat's fetch +
+# reset --keep keeps (git status stays clean, new files in them stay out); --from-worktree does not copy them.
+RELEASE_LEAVES_OUT = layout.LEAVES_OUT
+SPARSE_PATTERNS = layout.SPARSE_PATTERNS
+# The licence's text for the artist: the root's LICENSE (GitHub reads it there) is left out of their folder.
+LICENSE_COPY = "code/LICENSE"
+ZIP_HIDDEN, ZIP_FOLDER = 0x02, 0x10     # MS-DOS attribute bits of a zip entry
 # The developers' own: their hand-over notes, their record of the work and their one-off tools (a folder ends with
 # "/"). They lie beside the code and are never tracked - the repository is public, and a release keeps its .git, so
 # a tracked file is in every copy whatever the checkout leaves out (check_files, verify_staging).
@@ -139,7 +145,7 @@ CONFIG_TEMPLATE = paths.CONFIG_TEMPLATE.relative_to(ROOT).as_posix()
 RELEASE_MUST_HAVE = (
     "run-browser/run-spellcast3d.bat", "run-browser/support & donations.txt",
     "tools/environment.bat", "tools/spellcast-internal.bat", "tools/update.bat",
-    "HOW TO USE - INSTRUCTIONS.txt", "README - LICENSE.txt", "LICENSE",
+    "HOW TO USE - INSTRUCTIONS.txt", "README - LICENSE.txt", LICENSE_COPY,
     "code/install.py", "code/requirements-hub.txt", "code/spellcast/__init__.py",
     "code/spellcast/defaults.json", "code/spellcast/static/index.html",
     "tools/python/python.exe", "tools/git/cmd/git.exe",
@@ -162,8 +168,9 @@ IGNORE_PROBES: tuple[tuple[str, bool], ...] = (
     *((name + "x.py" if name.endswith("/") else name, True) for name in DEVELOPERS_OWN),
     ("prepare_release.py", False), ("tools/environment.bat", False), ("tools/update.bat", False),
     ("tools/spellcast-internal.bat", False), ("run-browser/run-spellcast3d.bat", False),
-    ("code/install.py", False), ("code/spellcast/paths.py", False),
-    ("code/spellcast/install/venv.py", False), ("code/spellcast/static/lib/app.js", False),
+    ("code/install.py", False), ("code/spellcast/paths.py", False), (LICENSE_COPY, False),
+    ("code/spellcast/install/venv.py", False), ("code/spellcast/install/layout.py", False),
+    ("code/spellcast/static/lib/app.js", False),
     ("code/spellcast/static/vendor/three.module.js", False), ("code/release/manifest.json", False),
     ("code/whl/instant_meshes_brush-0.1.0-cp311-cp311-win_amd64.whl", False),
     ("code/whl/instant_meshes_brush.json", False), ("code/requirements-hub.txt", False),
@@ -391,8 +398,8 @@ def submodules() -> list[tuple[str, str]]:
 
 
 def left_out(path: str) -> bool:
-    """Is this repo-relative path in one of the folders the release leaves out (RELEASE_LEAVES_OUT)."""
-    return any(path.startswith(folder) for folder in RELEASE_LEAVES_OUT)
+    """Does the release leave this repo-relative path out of its files (RELEASE_LEAVES_OUT)."""
+    return layout.left_out(path)
 
 
 def listed_files(repo: Path) -> list[str]:
@@ -1412,7 +1419,17 @@ def check_files(r: Report) -> None:
         r.ok("no tracked or to-be-added file is over 95 MB")
     if not (ROOT / "LICENSE").is_file():
         r.fail("LICENSE is missing: Spellcast3D's own code needs a license text with a copyright line "
-               "(GitHub shows it; 'README - LICENSE.txt' points to it).")
+               "(GitHub shows it).")
+    elif license_copy_differs(ROOT):
+        r.fail(f"{LICENSE_COPY} is not a copy of LICENSE. An artist's folder leaves the root's LICENSE out, and "
+               f"'README - LICENSE.txt' points to the copy. Run: copy /y LICENSE {LICENSE_COPY.replace('/', chr(92))}")
+    undecided = undecided_root_entries(listed_files(ROOT))
+    for name in undecided:
+        r.fail(f"{name} is in the repository's root, and code/spellcast/install/layout.py does not say whether an "
+               f"artist's folder shows it (SHOWN) or leaves it out (LEAVES_OUT). Add it to one of the two.")
+    if not undecided:
+        r.ok(f"an artist's folder shows {len(layout.SHOWN)} of the root's entries and the config file; "
+             f"{sum('/' not in entry for entry in RELEASE_LEAVES_OUT)} more are left out of it")
     for name in AUTHOR_TEXTS:
         path = ROOT / name
         if path.is_file() and "to be confirmed" in path.read_text(encoding="utf-8", errors="replace").lower():
@@ -1435,6 +1452,21 @@ def check_files(r: Report) -> None:
     if not bad:
         r.ok(f".gitignore: {len(IGNORE_PROBES)} probe paths behave (tools/python, venvs, projects ignored; "
              "hub code, .bat files and the wheel kept)")
+
+
+def license_copy_differs(root: Path) -> bool:
+    """Is LICENSE_COPY missing, or another text than the root's LICENSE (line endings aside)."""
+    try:
+        return ((root / LICENSE_COPY).read_bytes().replace(b"\r\n", b"\n")
+                != (root / "LICENSE").read_bytes().replace(b"\r\n", b"\n"))
+    except OSError:
+        return True
+
+
+def undecided_root_entries(files: Iterable[str]) -> list[str]:
+    """The root's entries among these repo-relative files that layout.py neither shows to an artist nor leaves out."""
+    decided = {*layout.SHOWN, *(entry for entry in RELEASE_LEAVES_OUT if "/" not in entry)}
+    return sorted({path.split("/", 1)[0] for path in files} - decided)
 
 
 def license_text_gaps(text: str) -> list[str]:
@@ -1661,7 +1693,8 @@ def stage_committed(staging: Path, allow_unpushed: bool) -> None:
     run([git_exe(), "-C", staging, "remote", "set-url", "origin", origin])
     print(f"Leaving {', '.join(RELEASE_LEAVES_OUT)} out of the working tree (sparse checkout; still in git)")
     run([git_exe(), "-C", staging, "sparse-checkout", "set", "--no-cone", *SPARSE_PATTERNS],
-        what="Leaving the tests and the developers' tools out (git sparse-checkout)")
+        what="Leaving the tests and the developers' files out (git sparse-checkout)")
+    layout.hide(staging / ".git")       # as Git for Windows does itself, unless the developer's own config says no
     for path, sha in pinned.items():
         got = git(staging / path, "rev-parse", "HEAD").strip()
         if got != sha:
@@ -1756,6 +1789,14 @@ def verify_staging(staging: Path, strict: bool) -> None:
         junk += [f"{name} (in the release's .git)" for name in DEVELOPERS_OWN
                  if git(staging, "ls-tree", "--name-only", "HEAD", "--", name).strip()]
     junk += [str(Path(dp).relative_to(staging)) for dp, dirs, _ in os.walk(staging) if "__pycache__" in dirs][:5]
+    # The folder an artist opens shows what they use and the config file; git's data is there, out of sight.
+    has_git = (staging / ".git").is_dir()
+    shown = {*layout.SHOWN, CONFIG_NAME, *([".git"] if has_git else [])}
+    folder_bad = [f"{p.name} lies in the release's folder, which shows an artist only "
+                  f"{', '.join(sorted(shown - {'.git'}))}. Name it in code/spellcast/install/layout.py."
+                  for p in sorted(staging.iterdir()) if p.name not in shown and p.name not in junk]
+    if has_git and os.name == "nt" and not layout.hidden(staging / ".git"):
+        folder_bad.append(".git is not hidden (Windows' Hidden flag), so File Explorer would list it.")
     # cmd.exe misreads .bat files with bare LF line endings (labels, blocks).
     lf_bats = [p.relative_to(staging).as_posix() for d in ("run-browser", "tools") for p in (staging / d).glob("*.bat")
                if re.search(rb"(?<!\r)\n", p.read_bytes())]
@@ -1763,6 +1804,8 @@ def verify_staging(staging: Path, strict: bool) -> None:
         print(f"  [{'FAIL' if strict else 'WARN'}] missing from the release: {f}")
     for j in junk:
         print(f"  [FAIL] must not be in the release: {j}")
+    for f in folder_bad:
+        print(f"  [FAIL] {f}")
     for b in lf_bats:
         print(f"  [FAIL] {b} has LF line endings; cmd.exe needs CRLF. Add '*.bat text eol=crlf' to a "
               ".gitattributes (or set git config core.autocrlf true), then build again.")
@@ -1772,7 +1815,7 @@ def verify_staging(staging: Path, strict: bool) -> None:
                     for p in nested.byte_identity_problems(git_exe(), staging / TRIFLOW, prefix=TRIFLOW + "/")][:15]
     for g in git_bad:
         print(f"  [FAIL] {g}")
-    if junk or lf_bats or git_bad or (missing and strict):
+    if junk or folder_bad or lf_bats or git_bad or (missing and strict):
         raise ReleaseError(f"{staging} is not a valid release (see above).")
     if missing:
         print("  [WARN] this staging folder is incomplete and must not be shipped")
@@ -1796,7 +1839,8 @@ def print_sizes(staging: Path) -> None:
 
 
 def make_zip(src: Path, zip_path: Path) -> None:
-    """Zip src's contents (src itself is the zip root) to zip_path."""
+    """Zip src's contents (src itself is the zip root) to zip_path. What is hidden in src (.git, and the .git file of
+    each tool's checkout) is marked hidden in the zip: File Explorer, 7-Zip and WinRAR unpack it hidden again."""
     tmp = zip_path.with_name(zip_path.name + ".part")
     print(f"\nZipping into {zip_path}")
     done_bytes = done_files = 0
@@ -1807,11 +1851,18 @@ def make_zip(src: Path, zip_path: Path) -> None:
             dirnames.sort()
             here = Path(dirpath)
             arc_dir = here.relative_to(src).as_posix()
-            if not dirnames and not filenames and arc_dir != ".":
-                z.writestr(zipfile.ZipInfo(arc_dir + "/"), "")     # git needs some empty dirs (refs/tags...)
+            is_hidden = arc_dir != "." and layout.hidden(here)
+            # A folder has an entry of its own when it is empty (git needs some: refs/tags...) or hidden.
+            if arc_dir != "." and (is_hidden or not dirnames and not filenames):
+                entry = zipfile.ZipInfo.from_file(here, arc_dir + "/", strict_timestamps=False)
+                entry.external_attr |= ZIP_FOLDER | (ZIP_HIDDEN if is_hidden else 0)
+                z.writestr(entry, "")
             for name in sorted(filenames):
                 path = here / name
-                z.write(path, path.relative_to(src).as_posix())
+                arc_name = path.relative_to(src).as_posix()
+                z.write(path, arc_name)
+                if layout.hidden(path):
+                    z.getinfo(arc_name).external_attr |= ZIP_HIDDEN     # (written when the zip is closed)
                 done_files += 1
                 done_bytes += path.stat().st_size
                 if time.monotonic() - last >= 1.0:
@@ -1841,6 +1892,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     verify_staging(staging, strict=not args.from_worktree)
     version = read_version(staging)
     print_sizes(staging)
+    print("An artist sees in the unpacked folder: "
+          + ", ".join(sorted((p.name for p in staging.iterdir() if not layout.hidden(p)), key=str.lower)))
     if args.no_zip:
         print(f"\nDone (not zipped): {staging}")
         return 0

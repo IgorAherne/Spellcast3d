@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .. import config, forge_config, gpu, paths
 from ..forge_config import forge_version_uid
-from . import models, progress, sdcpp, state, submodules, venvs
+from . import layout, models, progress, sdcpp, state, submodules, venvs
 from .runner import Ctx, InstallError
 
 # Bump only when a step shared by ALL components changes (venvs.ensure, how pip is run): it reinstalls
@@ -1101,7 +1101,7 @@ class Pixal3D(Component):
     def _checkout_hi3d(self, ctx: Ctx) -> None:
         """Hi3D's code, the submodule code/hi3d, checked out when .gitmodules names it and it is not (an update made
         without `git submodule update`). Without it Pixal3D works on: a warning, and the next start tries again."""
-        if not hi3d_submodule() or (paths.HI3D_DIR / models.HI3D_CODE_LANDMARK).exists():
+        if (paths.HI3D_DIR / models.HI3D_CODE_LANDMARK).exists() or not hi3d_submodule():
             return
         try:
             checkout_submodule(ctx, paths.HI3D_DIR, models.HI3D_CODE_LANDMARK, "Hi3D")
@@ -1402,10 +1402,10 @@ class _PinnedModels(Component):
 
 
 def hi3d_submodule() -> bool:
-    """Whether .gitmodules names code/hi3d (Hi3D's code is a submodule of this checkout)."""
-    try:
-        text = (paths.ROOT / ".gitmodules").read_text(encoding="utf-8")
-    except OSError:
+    """Whether .gitmodules names code/hi3d (Hi3D's code is a submodule of this checkout). A release's folder leaves
+    that file to git (install/layout.py), which is asked for it then."""
+    text = layout.tracked_text(".gitmodules", git_exe())
+    if text is None:
         return False
     rel = re.escape(paths.HI3D_DIR.relative_to(paths.ROOT).as_posix())
     return re.search(rf"^\s*path\s*=\s*{rel}\s*$", text, re.MULTILINE) is not None
@@ -1413,8 +1413,8 @@ def hi3d_submodule() -> bool:
 
 def hi3d_work() -> str | None:
     """What an installed Pixal3D still has to do for Hi3D, or None: check out its code (its AI models are the 3D
-    stage's own download, never the installer's). A stat call."""
-    if hi3d_submodule() and not (paths.HI3D_DIR / models.HI3D_CODE_LANDMARK).exists():
+    stage's own download, never the installer's). A stat call while the code is there."""
+    if not (paths.HI3D_DIR / models.HI3D_CODE_LANDMARK).exists() and hi3d_submodule():
         return "Hi3D's code is not checked out in code\\hi3d yet"
     return None
 
