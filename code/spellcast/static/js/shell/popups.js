@@ -4,6 +4,7 @@
 
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
+import { tipShows } from './tooltips.js';
 
 let openMenu = null;   // {el, anchor, close}
 
@@ -91,10 +92,12 @@ let tipFor = null;
 
 /**
  * Shows `text` next to `anchor` (right of it, or above with side: 'top') until hideTip(anchor).
- * kind: '' (a short tooltip), 'note' (a sentence explaining a button), 'refusal' (why it said no).
+ * kind: '' (a short tooltip), 'note' (a sentence explaining a button), 'refusal' (why it said no), 'problem'
+ * (what went wrong; it looks like a short tooltip). The first two show only while the viewer keeps tooltips on
+ * (tooltips.js).
  */
 export function showTip(anchor, text, side = 'right', kind = '') {
-  if (!text) return hideTip(anchor);
+  if (!text || !tipShows(kind)) return hideTip(anchor);
   tip ||= h('div', { class: 'tip-pop', role: 'tooltip', id: 'tip-pop' });
   tip.textContent = text;
   tip.dataset.side = side;

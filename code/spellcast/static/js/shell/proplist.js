@@ -205,7 +205,8 @@ export function createPropList(handlers) {
       onkeydown: (e) => {
         if ((e.key === 'Enter' || e.key === ' ') && e.target === tileEl) { e.preventDefault(); pick(t.id); }
       },
-      onmouseenter: () => { showTip(pic, t.tip); peekNow(t); },
+      // (A failed prop's words are no tooltip: they show also for a viewer who turned tooltips off.)
+      onmouseenter: () => { showTip(pic, t.tip, 'right', t.badgeKind === 'error' ? 'problem' : ''); peekNow(t); },
       onmouseleave: () => { hideTip(pic); hidePeek(); },
       // Reached with the keyboard (not by a click, which says where the pointer is anyway).
       onfocus: () => { if (tileEl.matches(':focus-visible')) peekNow(t); },

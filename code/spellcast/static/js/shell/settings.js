@@ -1,5 +1,5 @@
 // Settings: Advanced (Forge Neo's extra model folders, GPU sharing; GET/PATCH /api/settings - and the
-// animations, which this browser keeps) and Debugging (each tool's state with Start / Stop, its live
+// animations and the tooltips, which this browser keeps) and Debugging (each tool's state with Start / Stop, its live
 // log, the video memory in use). The tools start and stop by themselves; Debugging is where to look
 // when something seems stuck. Last, folded away, the Omni-Texture test (omnilab.js): a 3D model from a file,
 // OmniTextured without Images and 3D first.
@@ -14,6 +14,7 @@ import { attempt, confirmDialog, modal, toast, toastError } from '../ui.js';
 import { licenseChip } from '../licenses.js';
 import { logTail, openLogsFolder } from './logtail.js';
 import { motionPref, setMotionPref } from './anim.js';
+import { setTooltips, tooltipsOn } from './tooltips.js';
 import { omniTextureLab } from './omnilab.js';
 
 export const TOOLS = ['qwen', 'forge', 'pixal3d', 'imesh', 'lato2', 'triflow'];
@@ -38,6 +39,7 @@ export async function openSettings(section = 'advanced') {
   store.settings = s;
   let gpuExclusive = s.gpu_exclusive !== false;
   let motion = motionPref();
+  let tooltips = tooltipsOn();
   const dirs = h('textarea', {
     class: 'input mono', rows: 3, spellcheck: 'false',
     placeholder: 'D:\\AI\\models\\Stable-diffusion',
@@ -63,7 +65,10 @@ export async function openSettings(section = 'advanced') {
           + 'card is stopped and its video memory freed. Turn this off only with 24 GB of video memory or more.'),
         field('Animations', segmented(MOTION, motion, (v) => { motion = v; }),
           'Full slides the whole page up or down from one stage to the next. Reduced keeps every move short and '
-          + 'plain: the stages cross-fade. Only this browser remembers the choice.'))),
+          + 'plain: the stages cross-fade. Only this browser remembers the choice.'),
+        toggle(tooltips, (v) => { tooltips = v; }, 'Show tooltips',
+          'The explanations that appear when the pointer rests on a button or a picture, also why a button '
+          + 'cannot be pressed. Errors are still shown. Only this browser remembers the choice.'))),
     h('details', { class: 'fold settings-fold', open: section === 'diagnostics' },
       h('summary', null, 'Debugging'),
       diag.el),
@@ -82,8 +87,10 @@ export async function openSettings(section = 'advanced') {
         label: 'Save', kind: 'primary',
         onclick: async (close) => {
           const ckpt = dirs.value.split(/\r?\n/).map((l) => l.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
-          const moved = motion !== motionPref();
-          if (moved) setMotionPref(motion);
+          // What this browser keeps: applied at once, no restart.
+          const moved = motion !== motionPref() || tooltips !== tooltipsOn();
+          if (motion !== motionPref()) setMotionPref(motion);
+          if (tooltips !== tooltipsOn()) setTooltips(tooltips);
           // Only what the artist changed is written, so settings.json keeps following the defaults otherwise.
           const patch = {};
           const restart = [];   // running tools that only see the change after a restart

@@ -18,6 +18,7 @@ import { createColumn } from './column.js';
 import { createBench } from './bench.js';
 import { createStatusLine } from './statusline.js';
 import { initMotion, swipe } from './anim.js';
+import { initTooltips } from './tooltips.js';
 import { hideTip, menuOpen } from './popups.js';
 
 const state = {
@@ -359,6 +360,7 @@ function onKey(e) {
 /** Builds the props column and the workbench into `host`; the views fill in once a project is open. */
 export async function mountShell(host) {
   initMotion();
+  initTooltips();
   statusLine = createStatusLine({ go: (s) => goto(s) });
   list = createPropList({ select, pick, check, sizes });
   column = createColumn({ list, statusLine }, {
