@@ -118,6 +118,34 @@ def test_an_island_that_would_overlap_stays_as_it_was() -> None:
     assert flap == [int(v) for v in vmap[tris[-2]]]
 
 
+def test_an_island_given_up_after_its_first_triangle_goes_back_whole() -> None:
+    """A crumb of two triangles: the first lies flat below the border, the second would land on a flap of the grid's
+    island - it fits nowhere and has no neighbour left to lie across, so the crumb goes back as the unwrapper made
+    it, its laid triangle too, and nothing of the try is left in the atlas."""
+    at = Atlas()
+    corner = vertex(at.positions, 0, 0)
+    x1, x2 = at.point([-1.0, -1.0, -1.0]), at.point([-2.0, -1.0, -1.0])
+    at.vmap += [x1, x2]
+    at.uv += [np.array([-2.0, 0.5]) * SCALE, np.array([-2.0, -1.0]) * SCALE]      # the flap: left of the corner
+    at.tris.append([corner, len(at.vmap) - 2, len(at.vmap) - 1])
+    assert signed_area(np.asarray(at.uv), np.asarray(at.tris[-1])) > 0
+    a, b = vertex(at.positions, 0, 0), vertex(at.positions, 1, 0)
+    p, q = at.point([0.5, 0.3, 0.05]), at.point([-0.6, 0.2, 0.1])
+    at.island([[b, a, p], [a, q, p]], {a: (5.0, 5.0), b: (5.2, 5.0), p: (5.1, 5.1), q: (4.9, 5.1)})
+    positions, vmap, tris, uv = at.arrays()
+    assert charts(tris, len(vmap)) == 2
+
+    new_vmap, new_tris, new_uv, joined = uv_islands.join_small_charts(positions, vmap, tris, uv)
+
+    assert joined == 0
+    assert np.array_equal(new_vmap, vmap) and np.array_equal(new_tris, tris) and np.array_equal(new_uv, uv)
+    # Without the flap the same crumb is laid whole: it was the flap that stopped it.
+    flap = len(tris) - 3
+    keep = np.arange(len(tris)) != flap
+    _, _, _, joined = uv_islands.join_small_charts(positions, vmap, tris[keep], uv)
+    assert joined == 1
+
+
 def test_a_crumb_beside_a_crumb_follows_it_in_the_next_pass() -> None:
     at = Atlas()
     b, a, p = folded_crumb(at)
@@ -177,6 +205,38 @@ def test_xatlas_packs_a_joined_sliver_with_its_island_in_packing_units() -> None
     assert np.isclose((scaled.max(axis=0) - scaled.min(axis=0)).max(), uv_islands.PACK_SPAN)
     assert packed_charts(scaled) == 1
     assert packed_charts(new_uv) == 2
+
+
+def test_the_join_gives_the_same_atlas_every_time() -> None:
+    at = Atlas()
+    b, a, p = folded_crumb(at)
+    q = at.point([0.2, 0.1, 0.1])
+    at.island([[a, q, p]], {a: (7.0, 7.0), q: (7.05, 7.0), p: (7.0, 7.05)})
+    first = uv_islands.join_small_charts(*at.arrays())
+    second = uv_islands.join_small_charts(*at.arrays())
+    assert first[3] == second[3] == 2
+    assert all(np.array_equal(one, other) for one, other in zip(first[:3], second[:3]))
+
+
+def test_chart_groups_deal_whole_charts_into_sets() -> None:
+    """The sets xatlas packs the joined atlas again from: every triangle in one set, a chart never cut, the biggest
+    charts first and one to each set in turn, no more sets than charts."""
+    at = Atlas()
+    folded_crumb(at)
+    far = [at.point([50.0 + i, 50.0, 0.0]) for i in range(4)]
+    at.island([[far[0], far[1], far[2]], [far[1], far[3], far[2]]], {v: (8.0 + i, 8.0) for i, v in enumerate(far)})
+    _, vmap, tris, _ = at.arrays()
+    chart = uv_islands.chart_labels(tris, len(vmap))
+    assert chart.max() + 1 == 3
+
+    sets = uv_islands.chart_groups(tris, len(vmap), groups=2)
+
+    assert len(sets) == 2 and all(np.all(np.diff(one) > 0) for one in sets)
+    assert np.array_equal(np.sort(np.concatenate(sets)), np.arange(len(tris)))
+    assert not set(chart[sets[0]]) & set(chart[sets[1]])
+    assert len(sets[0]) == 2 * SIDE * SIDE + 1 and len(sets[1]) == 2      # the grid and the crumb; the pair
+    assert len(uv_islands.chart_groups(tris, len(vmap))) == 3            # PACK_GROUPS is more than the charts
+    assert [len(one) for one in uv_islands.chart_groups(tris, len(vmap), groups=1)] == [len(tris)]
 
 
 def test_nothing_small_changes_nothing() -> None:

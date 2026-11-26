@@ -1136,6 +1136,23 @@ def test_the_unwrap_joins_small_islands_and_packs_the_atlas_again(fakes: Fakes,
     assert int(uv_islands.chart_labels(got_faces.numpy(), len(got_vmap)).max()) + 1 == 1
     assert len(got_vmap) == len(positions)                  # the sliver's corners: two of the grid's, one new
 
+    # Two islands after the join: xatlas gets a mesh per set of islands (uv_islands.chart_groups) and the
+    # triangles come back in their order.
+    far = torch.tensor([[60.0, 60.0, 0.0], [61.0, 60.0, 0.0], [60.0, 61.0, 0.0]])
+    more_positions = torch.cat([positions, far])
+    more_vmap = torch.cat([vmap, torch.arange(len(positions), len(positions) + 3, dtype=torch.int32)])
+    more_faces = torch.cat([faces[:5], torch.tensor([[len(vmap), len(vmap) + 1, len(vmap) + 2]], dtype=torch.int32),
+                            faces[5:]])
+    more_uvs = torch.cat([uvs, torch.tensor([[8.0, 8.0], [9.0, 8.0], [8.0, 9.0]])])
+    LOG.clear()
+    got_vmap, got_faces, got_uvs = glbmod.join_islands(fakes.cumesh, more_positions, more_vmap, more_faces, more_uvs)
+    added = [entry for entry in LOG if entry[0] == "xatlas.add_mesh"]
+    assert [entry[2] for entry in added] == [(len(faces), 3), (1, 3)]         # the grid with its sliver; the far one
+    assert (got_vmap.dtype, got_faces.dtype, got_uvs.dtype) == (torch.int32, torch.int32, torch.float32)
+    assert torch.equal(got_vmap[got_faces.long()], more_vmap[more_faces.long()])
+    assert int(uv_islands.chart_labels(got_faces.numpy(), len(got_vmap)).max()) + 1 == 2
+    assert got_uvs.shape == (len(got_vmap), 2) and len(got_vmap) == len(more_positions)
+
     class Refuses(FakeAtlas):
         def pack_charts(self, **options: Any) -> None:
             raise RuntimeError("xatlas: no room")

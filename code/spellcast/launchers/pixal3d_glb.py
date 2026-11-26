@@ -184,21 +184,35 @@ def join_islands(cumesh: Any, positions: Any, vmap: Any, faces: Any, uvs: Any) -
             positions.numpy(), vmap.numpy(), faces.numpy(), uvs.numpy())
         if joined == 0:
             return vmap, faces, uvs
+        # xatlas packs it again as a few meshes of whole islands (uv_islands.chart_groups): it reads the charts of
+        # several meshes side by side, and those of one mesh of 300k triangles in ten times the time.
+        points = np.ascontiguousarray(positions.numpy()[joined_vmap], dtype=np.float32)
+        units = np.ascontiguousarray(uv_islands.packing_units(joined_uvs), dtype=np.float32)
         atlas = cumesh.Atlas()
-        atlas.add_mesh(torch.from_numpy(np.ascontiguousarray(positions.numpy()[joined_vmap], dtype=np.float32)),
-                       torch.from_numpy(np.ascontiguousarray(joined_faces, dtype=np.int32)),
-                       uvs=torch.from_numpy(np.ascontiguousarray(uv_islands.packing_units(joined_uvs),
-                                                                 dtype=np.float32)))
+        parts = []
+        for triangles in uv_islands.chart_groups(joined_faces, len(joined_vmap)):
+            corners, local = np.unique(joined_faces[triangles], return_inverse=True)
+            parts.append((triangles, corners))
+            atlas.add_mesh(torch.from_numpy(points[corners]),
+                           torch.from_numpy(np.ascontiguousarray(local.reshape(-1, 3), dtype=np.int32)),
+                           uvs=torch.from_numpy(units[corners]))
         atlas.compute_charts(use_input_mesh_uvs=True)
         atlas.pack_charts()
-        xref, packed_faces, packed_uvs = atlas.get_mesh(0)
+        packed_vmap, packed_uvs = [], []
+        packed_faces = torch.empty((len(joined_faces), 3), dtype=torch.int32)
+        for index, (triangles, corners) in enumerate(parts):
+            xref, part_faces, part_uvs = atlas.get_mesh(index)
+            packed_faces[torch.from_numpy(triangles)] = part_faces + sum(len(part) for part in packed_vmap)
+            packed_vmap.append(torch.from_numpy(joined_vmap[corners])[xref.long()])
+            packed_uvs.append(part_uvs)
+        packed_vmap, packed_uvs = torch.cat(packed_vmap).to(vmap.dtype), torch.cat(packed_uvs)
     except Exception as exc:
         print(f"[spellcast] Note: the small UV islands were left as xatlas made them ({type(exc).__name__}: {exc}).",
               flush=True)
         return vmap, faces, uvs
     print(f"[spellcast] Joined {joined:,} small UV islands onto their neighbours "
           f"({time.perf_counter() - started:.1f} s).", flush=True)
-    return torch.from_numpy(joined_vmap)[xref.long()].to(vmap.dtype), packed_faces, packed_uvs
+    return packed_vmap, packed_faces, packed_uvs
 
 
 def host_trees() -> bool:
