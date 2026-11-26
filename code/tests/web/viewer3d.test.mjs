@@ -2,7 +2,7 @@
 // start evenly spread on a sphere round the model and go round it on great circles at right angles to each other
 // (not all round the equator), at a distance tied to the model's size; they never bunch up, pass near every side of
 // the model in a turn, are the same for a seed, and their glows are never picked by a ray. Then the viewer itself, on
-// models already in its cache: a model shown in another's place keeps the camera, and a held view.
+// models already in its cache: a model shown in another's place keeps the camera.
 //   node --test code/tests/web/viewer3d.test.mjs
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -20,7 +20,8 @@ registerHooks({
   },
 });
 const THREE = await import('three');
-const { OrbitLights, orbitPaths, orbitPlace } = await import(new URL('js/viewer3d.js', STATIC));
+const { LENS_REACH, LensCamera, OrbitLights, orbitPaths, orbitPlace } = await import(new URL('js/viewer3d.js', STATIC));
+const { depthRow, lineOfSight } = await import(new URL('js/paint3d.js', STATIC));
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -120,16 +121,34 @@ test('the lights go round the model at the same multiple of its radius, whatever
   assert.ok(ratios[0] > 1.2, 'outside the model');
 });
 
-test('dark and without glows until lit; lit, every light shines alike and shows its glow', () => {
+test('dark and without glows until lit; lit, each fades as a lamp does within its reach, the two of a pair unlike, every model lit alike', () => {
   const { lights } = boxScene(2);
   assert.equal(lights.lights.length, 6);
-  assert.ok(lights.lights.every((l) => l.isPointLight && l.intensity === 0 && l.decay === 0 && !l.castShadow));
+  assert.ok(lights.lights.every((l) => l.isPointLight && l.intensity === 0 && l.decay === 2 && !l.castShadow));
   assert.ok(lights.glows.every((g) => !g.visible));
   lights.light(true);
-  assert.ok(lights.lights.every((l) => l.intensity > 0 && l.intensity === lights.lights[0].intensity));
+  const radius = Math.sqrt(3);                       // half the box's diagonal
+  const strong = lights.lights[0].intensity;
+  // Opposite lights of one strength would cancel each other's shading out: one of each pair is twice the other.
+  assert.deepEqual(lights.lights.map((l) => Math.round((l.intensity / strong) * 100) / 100), [1, 0.5, 1, 0.5, 1, 0.5]);
+  for (const k of [0, 2, 4]) {
+    assert.ok(lights.lights[k].position.clone().add(lights.lights[k + 1].position).length() < 1e-9, 'a pair: opposite each other');
+  }
+  // A light reaches past the model's centre, not across the whole model: the far side is the others'.
+  const reach = lights.lights[0].distance;
+  const away = lights.lights[0].position.length();
+  assert.ok(lights.lights.every((l) => l.distance === reach) && reach > away && reach < away + radius);
   assert.ok(lights.glows.every((g) => g.visible));
+  // A model ten times the size: lit as brightly at the same share of its size (a lamp's light falls off by the
+  // distance squared), the lights' reach ten times as far.
+  const big = boxScene(20).lights;
+  big.light(true);
+  assert.ok(near(big.lights[0].intensity / strong, 100, 1e-6) && near(big.lights[0].distance / reach, 10, 1e-9));
   lights.light(false);
   assert.ok(lights.lights.every((l) => l.intensity === 0) && lights.glows.every((g) => !g.visible));
+  // Fitted to another model while lit, they keep shining, by that model's size.
+  big.fit(boxScene(2).box);
+  assert.ok(near(big.lights[0].intensity, strong, 1e-9) && near(big.lights[0].distance, reach, 1e-9));
 });
 
 test('a ray through a glow finds the model, never the glow; a glow near the camera stays a dot', () => {
@@ -177,7 +196,7 @@ function rig(urls) {
 }
 const modelAt = () => viewer.current.children[0].position.toArray();
 
-test('a model shown with keepView stands where the last one stood and the camera stays - also when a model still loading had taken that one off the screen', async () => {
+test('a model shown with keepView stands where the last one stood and the camera stays - the one on screen staying there until it is loaded', async () => {
   rig(['a.glb', 'b.glb']);
   assert.equal(await viewer.show('a.glb', 'glb'), true);
   const place = modelAt();
@@ -186,31 +205,88 @@ test('a model shown with keepView stands where the last one stood and the camera
   assert.equal(await viewer.show('b.glb', 'glb', { keepView: true }), true);
   assert.deepEqual([modelAt(), viewer.camera.position.toArray()], [place, camera]);
   // A model not in the cache is asked for, and another before it is there: a job's end does this (the old result
-  // under its new address, then the new result).
+  // under its new address, then the new result). The model on screen stays there meanwhile.
   const superseded = viewer.show('not-loaded.glb', 'glb', { keepView: true });
-  assert.equal(viewer.current, null, 'nothing on screen while it loads');
+  assert.equal(viewer.current, viewer.cache.get('b.glb'), 'the model on screen stays while the next one loads');
   assert.equal(await viewer.show('a.glb', 'glb', { keepView: true }), true);
   assert.deepEqual([modelAt(), viewer.camera.position.toArray()], [place, camera]);
   assert.equal(await superseded, false);
+  // Another object's model (no keepView) takes the one on screen off while it loads; a model shown with keepView
+  // after it still stands where that one stood.
+  const other = viewer.show('not-loaded.glb', 'glb');
+  assert.equal(viewer.current, null, 'nothing on screen while it loads');
+  assert.equal(await viewer.show('b.glb', 'glb', { keepView: true }), true);
+  assert.deepEqual([modelAt(), viewer.camera.position.toArray()], [place, camera]);
+  assert.equal(await other, false);
   // Without keepView a model is framed anew.
-  assert.equal(await viewer.show('b.glb', 'glb'), true);
+  assert.equal(await viewer.show('a.glb', 'glb'), true);
   assert.notDeepEqual(viewer.camera.position.toArray(), camera);
 });
 
-test('a held view: the controls are off and nothing frames the model, until it is let go or another model is shown', async () => {
+test('the camera\'s lens: its perspective turned down and inside out about the point orbited, what lies there keeping its place', () => {
+  const camera = new LensCamera(32, 1.5, 0.1, 100);
+  camera.position.set(0, 0, 4);                      // looks down -z at the origin, the point it turns about
+  camera.updateMatrixWorld();
+  const half = Math.tan(THREE.MathUtils.degToRad(16));
+  const at = (x, y, z) => new THREE.Vector3(x, y, z).project(camera);
+  const close = (a, b) => near(a, b, 1e-6);
+  assert.deepEqual(camera.lens(), { tan: half, wide: 0, far: 100 });
+  camera.zoom = 2;
+  assert.ok(close(camera.lens().tan, half / 2), 'zoomed in twice, it spans half the angle');
+  camera.zoom = 1;
+  const usual = at(1, 0.5, 0);
+  const usualBehind = at(1, 0.5, -1);
+  // None: what lies at the origin's depth stays where it was, and depth no longer moves anything.
+  camera.perspective = 0;
+  camera.updateMatrixWorld();
+  assert.ok(close(camera.lens().tan, 0) && close(camera.lens().wide, half * 4));
+  assert.ok(close(at(1, 0.5, 0).x, usual.x) && close(at(1, 0.5, 0).y, usual.y));
+  assert.ok(close(at(1, 0.5, -1).x, at(1, 0.5, 1).x));
+  // Inverse: the farther, the larger; nothing shows deeper than LENS_REACH of the way to where the lines meet.
+  camera.perspective = -1;
+  camera.updateMatrixWorld();
+  const { tan, wide, far } = camera.lens();
+  assert.ok(close(tan, -half) && close(wide, half * 8) && close(far, LENS_REACH * 8));
+  assert.ok(close(at(1, 0.5, 0).x, usual.x) && close(at(1, 0.5, 0).y, usual.y));
+  assert.ok(at(1, 0.5, -1).x > at(1, 0.5, 0).x && at(1, 0.5, 0).x > at(1, 0.5, 1).x);
+  const behind = at(1, 0.5, -1);                     // depth 5: half the picture's height there is wide + tan * 5
+  assert.ok(close(behind.x, 1 / (1.5 * (wide + tan * 5))) && close(behind.y, 0.5 / (wide + tan * 5)));
+  assert.ok(close(at(0, 0, 4 - 0.1).z, -1) && close(at(0, 0, 4 - far).z, 1) && at(0, 0, 1).z < at(0, 0, 0).z);
+  // A place in the picture is one straight line of sight, and they all meet at depth wide / -tan = 8.
+  const from = new THREE.Vector3(0.5, -0.5, -1).unproject(camera);
+  const along = new THREE.Vector3(0.5, -0.5, 1).unproject(camera).sub(from);
+  const meet = from.clone().addScaledVector(along, (4 - 8 - from.z) / along.z);
+  assert.ok(close(meet.x, 0) && close(meet.y, 0));
+  assert.ok(close(new THREE.Vector3(0.5, -0.5, 0).unproject(camera).sub(from).normalize().dot(along.clone().normalize()), 1));
+  // The viewer sets it, and sets it back.
   rig(['a.glb', 'b.glb']);
-  await viewer.show('a.glb', 'glb');
-  viewer.camera.position.set(1, 2, 3);
-  const camera = viewer.camera.position.toArray();
-  viewer.holdView(true);
-  assert.equal(viewer.controls.enabled, false);
-  assert.equal(viewer.frame(), false, '"reset the view"');
-  assert.equal(viewer.frame({ keepDirection: true }), false, 'the F key');
-  assert.deepEqual(viewer.camera.position.toArray(), camera);
-  viewer.holdView(false);
-  assert.equal(viewer.controls.enabled, true);
-  assert.equal(viewer.frame(), true);
-  viewer.holdView(true);
-  await viewer.show('b.glb', 'glb');
-  assert.deepEqual([viewer.held, viewer.controls.enabled], [false, true], 'a hold is for the model that was on screen');
+  viewer.camera = camera;
+  viewer.dirty = false;
+  viewer.setPerspective(1);
+  assert.ok(viewer.dirty && close(at(1, 0.5, -1).x, usualBehind.x) && close(at(1, 0.5, 0).x, usual.x));
+});
+
+test('the painter reads the camera through its lens: a pointer\'s line of sight, and how deep a point lies', () => {
+  const camera = new LensCamera(32, 1.5, 0.1, 100);
+  camera.position.set(1, 2, 4);
+  camera.lookAt(0, 0, 0);                            // the point it turns about
+  const close = (a, b) => near(a, b, 1e-6);
+  for (const perspective of [1, 0, -2]) {
+    camera.perspective = perspective;
+    camera.updateMatrixWorld();
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const deep = (point) => point.clone().sub(camera.position).dot(forward);
+    for (const point of [new THREE.Vector3(0.4, -0.3, 0.2), new THREE.Vector3(-0.6, 0.5, -0.4)]) {
+      assert.ok(close(depthRow(camera).dot(new THREE.Vector4(point.x, point.y, point.z, 1)), deep(point)), perspective);
+      const seen = point.clone().project(camera);
+      const { origin, direction, far } = lineOfSight(camera, seen.x, seen.y);
+      const to = point.clone().sub(origin);
+      assert.ok(close(direction.length(), 1) && close(to.clone().cross(direction).length(), 0), 'it runs through the point');
+      assert.ok(close(deep(origin), camera.near) && to.dot(direction) > 0 && to.dot(direction) < far);
+    }
+    // It ends where the camera stops seeing: its far plane, or an inverse lens's reach before that.
+    const { origin, direction, far } = lineOfSight(camera, 0.3, -0.2);
+    assert.ok(close(deep(origin.addScaledVector(direction, far)), camera.lens().far), perspective);
+  }
+  assert.ok(camera.lens().far < 10, 'the inverse lens sees less deep than the camera\'s far plane');
 });

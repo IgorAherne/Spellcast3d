@@ -54,7 +54,10 @@ paints them in one go and they agree in colour. A view's camera then looks at it
            Where no camera painted, the model's own texture stays, retinted to the paintings' tone (match_tone);
            stats "own": the share of the texture that is mostly its own
     {"cmd": "look", "eye": [x, y, z], "forward": [..], "up": [..], "tan": <the tangent of half the picture's angle>,
-     "mask": <png: the texture's texels the artist masked, white>, "size": 1024}
+     "mask": <png: the texture's texels the artist masked, white>, "size": 1024,
+     "wide": <optional: the page's lens is bent ("Inverse perspective") - half the picture's side at depth z from
+              the eye is wide + tan * z, tan then 0 or below as well (omnitexture_views.BentLens)>,
+     "smooth": <optional, true: the depth map without the model's facets (the page's "No Facets")>}
         -> a repaint of what the artist masked, through the page's own camera (omnitexture_repaint; a load with
            "plan": false: nothing is shared out between the stage's cameras): look_depth.png (the model's depth
            from there, as a view's), look_viewport.png (the model as it is textured now, the masked surface in
@@ -65,33 +68,43 @@ paints them in one go and they agree in colour. A view's camera then looks at it
     {"cmd": "left", "picture": <Qwen-Image's picture of what "look" showed it>}
         -> {"left": how much of the mask's shape is still in the picture, in levels (mask_left): a picture that
             shows a patch of one colour where the magenta was, instead of the surface restored, reads high}
-    {"cmd": "repaint", "picture": <Qwen-Image's picture, or its albedo>, "colour", "keep", "layer": as "project",
-     "fade": <optional: how many times as far its edge fades into what is around it; 1>,
-     "tone": <optional: false for a picture that is in the texture's tone already, a "keep" of before>}
-        -> the picture onto the masked texels this camera sees, brought to the tone of the texture around them
-           first; the edge of the repainted surface is blended in 3D as a seam between views is
-           -> {"painted": texels, "matched": texels the tone was read from}; then "finish" with "tone": false
-    {"cmd": "fades", "repaints": [{"mask", "picture", "eye", "forward", "up", "tan", "size", "fade", "layer",
-                                   "hand_paint", "unpainted"}, ..], "outs": [<glb or null per repaint>] or null}
+    {"cmd": "repaint", "picture": <Qwen-Image's picture>, "keep", "layer": as "project",
+     "fade": <optional: how many times as far its edge fades into what is around it; 1>}
+        -> the picture onto the masked texels this camera sees, as it was painted (no lighting taken off, no tone
+           matched: it restores a view of the textured model); the edge of the repainted surface is blended in 3D
+           as a seam between views is -> {"painted": texels}; then "finish" with "tone": false
+    {"cmd": "fades", "repaints": [{"mask", "picture", "eye", "forward", "up", "tan", "wide", "size", "fade",
+                                   "hidden", "layer", "hand_paint", "unpainted"}, ..],
+     "outs": [<glb or null per repaint>] or null}
         -> the repaints put onto the model as loaded, one after the other, each as "look" ("pictures": false) and
-           "repaint" (its picture, "tone": false: in the texture's tone already) with its fade, then what was
+           "repaint" (its kept picture) with its fade - a "hidden" one puts nothing on -, then what was
            painted by hand on its step over it ("hand_paint": its paint layer, below); the model after each
-           written to its "out" where there is one (and, before its hand paint, to its "unpainted"), the "layer"s
-           where asked. What a fade does not change is kept from call to call (each repaint's look, picture and
-           weights per fade, by its place in the list; a paint layer while its file stays the same): a change of
-           one repaint's fade costs its blend, laying the pictures on and the models (the page's edge fade).
+           written to its "out" where there is one (and, before its hand paint, to its "unpainted"), quickly and
+           without loss (model_with's quick), the "layer"s where asked. What a change does not change is kept from
+           call to call (each repaint's look, picture and weights per fade, by its camera and files; a paint layer
+           while its file stays the same): a change of one repaint costs its blend, laying the pictures on and the
+           models (the page's edge fade, its eye on a picture, a picture taken off).
            Without "outs" only that is made ready (the page picked a repaint). "ahead": the repaint whose weights
            at the slider's other fades are worked out meanwhile -> {"painted": [..]}
+    {"cmd": "texture", "glb": <another model of the prop loaded: the same surface>}
+        -> that model in the loaded one's place, for "fades" to put the repaints onto: its file and its texture
+           are read, the surface and what is kept of the repaints stay (the painted views hidden, or shown
+           again: the repaints go onto the other texture) -> {"texture": [w, h]}
     {"cmd": "blur", "pictures": [paths], "side": px, "out": <folder>, "size": 1024}   (needs no "load")
         -> the pictures with their details blurred away (blur(): the settings' test) -> {"pictures": [paths]}
     {"cmd": "mirror", "picture": <path>, "out": <path>}   (needs no "load")
         -> the picture flipped left to right, saved as "out" (a repaint's example seen from behind) -> {"picture"}
+    {"cmd": "fit", "picture": <path>, "out": <path>, "most": px, "step": px}   (needs no "load")
+        -> the picture made ready for the lighting pass (fit(): a repaint's example, before its lighting is taken
+           off) -> {"picture", "size": [width, height]}
     {"cmd": "hand_paint", "model": <the step's glb as it was made>, "layer": <its paint layer .png>,
      "patch": <raw RGBA of the texture's size>, "width", "height", "out": <the step's glb>}   (needs no "load")
         -> what the page's hand painted since its last save (the patch: alpha 0 where nothing changed) into the
            step's paint layer - an RGBA picture of the texture's size, alpha 255 where painted by hand, a later
            paint over an earlier one -, and "out" the model with that layer over its texture (its alpha the
-           model's own), encoded once from the model as made -> {"painted": texels, "texture": [w, h]}
+           model's own), encoded once from the model as made -> {"painted": texels, "texture": [w, h]}.
+           Without "patch", "width" and "height": only "out", the model with the layer as it is (a step's hand
+           paint on another model of the prop: its painted views hidden, or shown again) -> {"texture": [w, h]}
 
 The mask is ours alone: Qwen-Image paints the whole model from picture 1 and the start, and the mask picks what of
 it goes onto the model - every surface this camera sees facing it at FACING or more (smoothed normals), the same
@@ -136,9 +149,10 @@ from omnitexture_repaint import Look, Repaints
 from omnitexture_sheets import Sheet, lay_out
 from omnitexture_tone import (LAYER_GREY, keep_colour, laid_over, match_tone, on_clay, recolour, to_bytes,
                                tone_table)
-from omnitexture_views import FACING, VIEWS, Camera, Lens, Sight, see
+from omnitexture_views import VIEWS, Camera, PageLens, Sight, faced, page_lens, see
 
 WEBP_QUALITY = 95
+QUICK_PNG = 3                # zlib level of a PNG texture written quickly (a third of level 6's time, 6 % larger)
 SEAM = 0.008                 # of the texture's width: the texels a seam's blend is across (16 at 2048, 8 at 1024)
 DEPTH_TOLERANCE = 0.003      # of the model's diagonal: a texel this close behind the surface a pixel sees is seen
                              # (an exact ray test caught on the bumps of a generated surface: texels went unpainted)
@@ -153,10 +167,12 @@ class RequestError(Exception):
     """The request itself is malformed: a bug in whoever wrote it."""
 
 
-def _lens(eye: list[float], forward: list[float], up: list[float], tan: float, size: int) -> Lens:
-    lens = Lens.looking(eye, forward, up, tan, size)
+def _lens(asked: dict[str, Any]) -> PageLens:
+    """The page's lens that a "look", or one of the repaints of "fades", names (the module doc)."""
+    lens = page_lens(asked["eye"], asked["forward"], asked["up"], float(asked["tan"]), int(asked.get("size", 1024)),
+                     float(asked.get("wide") or 0.0))
     if lens is None:
-        raise RequestError("the camera's forward and up are one line, or its angle is none")
+        raise RequestError("the camera's forward and up are one line, or its picture spans nothing")
     return lens
 
 
@@ -280,7 +296,7 @@ class Prop:
         """In view k's window: the model and CUT_REACH around it (another view's arm may reach into the window)."""
         return grow(np.isfinite(self.depths[k]), CUT_REACH)
 
-    def targets(self, cam: Camera | Lens, mask: np.ndarray,
+    def targets(self, cam: Camera | PageLens, mask: np.ndarray,
                 depth: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """The texels a camera's picture may go onto, given its mask and depths -> their indices into self.texel,
         their places in the picture (px, py) and how squarely the camera faces them. Every texel is kept test by
@@ -297,21 +313,21 @@ class Prop:
         # Seen, not behind: no farther than the nearest surface any of the four pixels around its place sees (the
         # four its colour is read between). Against its own pixel alone, the surface hidden just behind the
         # outline of a nearer one took that one's colours: the picture shone through along the outline. The four
-        # lie up to a pixel apart: on a surface slanted to the FACING limit that is most of two pixels' sides in
-        # depth, more than DEPTH_TOLERANCE in a small picture.
+        # lie up to a pixel apart: on a surface slanted to the limit (faced) that is most of two pixels' sides in
+        # depth - times what an inverse lens allows the deeper more -, more than DEPTH_TOLERANCE in a small picture.
         step = cam.step(z[at])
-        tolerance = np.maximum(DEPTH_TOLERANCE * self.scene.diag, 2.0 * step)
+        tolerance = np.maximum(DEPTH_TOLERANCE * self.scene.diag, 2.0 * step * cam.larger(z[at]))
         a, b, c, d = four_around(px[at], py[at], w, h)
         flat = depth.reshape(-1)
         ok &= z[at] <= np.minimum(np.minimum(flat[a], flat[b]), np.minimum(flat[c], flat[d])) + tolerance
-        # Away from every snap: none of the four is beside one. A surface slanted to the FACING limit steps most
-        # of two pixels' sides in depth from pixel to pixel: never a snap, however small the picture.
+        # Away from every snap: none of the four is beside one. A surface slanted to the limit steps as far from
+        # every pixel to the next: never a snap (snaps), however small the picture.
         pixel = float(np.median(step)) if np.ndim(step) and np.size(step) else float(np.max(step, initial=0.0))
         beside = snaps(depth, max(SNAP * self.scene.diag, 2.0 * pixel)).reshape(-1)
         ok &= ~(beside[a] | beside[b] | beside[c] | beside[d])
         at = at[ok]
         facing = cam.facing(self.point[todo[at]], self.normal[todo[at]])
-        squarely = facing >= FACING
+        squarely = faced(cam, facing, z[at])
         at = at[squarely]
         return todo[at], px[at], py[at], facing[squarely]
 
@@ -566,21 +582,34 @@ class Prop:
         return image, pairs, (mine[~both], colours[~both])
 
     # ---- a repaint of what the artist masked, through the page's camera (omnitexture_repaint) ---------------------
-    def look(self, eye: list[float], forward: list[float], up: list[float], tan: float, mask: Path,
-             size: int = 1024, pictures: bool = True) -> dict[str, Any]:
-        return self.repaints.look(_lens(eye, forward, up, tan, size), mask, pictures)
+    def look(self, asked: dict[str, Any], pictures: bool = True) -> dict[str, Any]:
+        return self.repaints.look(_lens(asked), Path(asked["mask"]), pictures, bool(asked.get("smooth")))
 
     def left(self, picture: Path) -> dict[str, Any]:
         return self.repaints.left(self._looked("left"), picture)
 
-    def repaint(self, picture: Path, colour: Path | None = None, keep: Path | None = None,
-                layer: Path | None = None, fade: float = 1.0, tone: bool = True) -> dict[str, Any]:
-        return self.repaints.repaint(self._looked("repaint"), picture, colour, keep, layer, fade, tone)
+    def repaint(self, picture: Path, keep: Path | None = None, layer: Path | None = None,
+                fade: float = 1.0) -> dict[str, Any]:
+        return self.repaints.repaint(self._looked("repaint"), picture, keep, layer, fade)
 
     def fades(self, repaints: list[dict[str, Any]], outs: list[str] | None, ahead: int | None = None) -> dict[str, Any]:
-        lenses = [_lens(asked["eye"], asked["forward"], asked["up"], float(asked["tan"]), int(asked.get("size", 1024)))
-                  for asked in repaints]
-        return self.repaints.fades(repaints, lenses, outs, ahead)
+        return self.repaints.fades(repaints, [_lens(asked) for asked in repaints], outs, ahead)
+
+    def retexture(self, glb_path: Path) -> dict[str, Any]:
+        """The module doc's "texture": another model of this prop in the loaded one's place - its file and its
+        texture, nothing painted; the surface, and what "fades" keeps of the repaints, stay."""
+        data = glb_path.read_bytes()
+        picture, kind = open_base_colour(data)
+        if picture.size != (self.res, self.res):
+            raise BakeError(f"That model's texture is {picture.width} x {picture.height} pixels, not this one's "
+                            f"{self.res} x {self.res}.")
+        self.data, self.kind, self.texture = data, kind, pixels(picture)
+        self.own = self.texture[..., :3].reshape(-1, 3)
+        self.paint = self.own.copy()
+        self.done[:] = self.filled[:] = self.seen_done[:] = False
+        self.settled = False
+        self.repaints.loaded_anew()
+        return {"texture": [self.res, self.res]}
 
     def _looked(self, command: str) -> Look:
         if self.repaints.at is None:
@@ -687,11 +716,11 @@ class Prop:
         layer[take] = to_bytes(grown)
         Image.fromarray(layer.reshape(res, res, 3)).save(path, "WEBP", quality=LAYER_QUALITY, method=2)
 
-    def write_model(self, out: Path, pixels: np.ndarray, compress: int = 6) -> None:
+    def write_model(self, out: Path, pixels: np.ndarray, quick: bool = False) -> None:
         """The 3D model with `pixels` (res x res x 3, bytes) as its base colour, its other maps and the geometry as
-        they were. compress: the PNG's zlib level."""
+        they were. quick: as model_with's."""
         out.parent.mkdir(parents=True, exist_ok=True)
-        replace_files({out: model_with(self.data, self.kind, self.texture, pixels, compress)})
+        replace_files({out: model_with(self.data, self.kind, self.texture, pixels, quick)})
 
     def hand_paint(self, layer: Path) -> np.ndarray:
         """A step's paint layer (read_layer), read again only when its file changed."""
@@ -750,18 +779,22 @@ class Prop:
         return to_bytes(np.where(inside[..., None], colour, fill.push_pull(grown, weight)))
 
 
-def model_with(data: bytes, kind: str, texture: np.ndarray, pixels: np.ndarray, compress: int = 6) -> bytes:
+def model_with(data: bytes, kind: str, texture: np.ndarray, pixels: np.ndarray, quick: bool = False) -> bytes:
     """The 3D model (`data`, a GLB whose base colour is `texture` as stored, in the format `kind`) with `pixels`
-    (h x w x 3, bytes) as its base colour, in that format (WebP at WEBP_QUALITY; PNG at zlib level `compress`) and
-    with that texture's alpha; its other maps and the geometry as they were."""
+    (h x w x 3, bytes) as its base colour, in that format (WebP at WEBP_QUALITY, PNG) and with that texture's
+    alpha; its other maps and the geometry as they were.
+    quick: the artist waits for this model (a repaint put on again) - WebP without loss at its least effort, PNG
+    at QUICK_PNG: a quarter of the time to write, every pixel as given, the texture some four times the size."""
     if texture.shape[2] == 4:
         pixels = np.concatenate([pixels, texture[..., 3:]], axis=2)
     buffer = io.BytesIO()
     picture = Image.fromarray(pixels)
-    if kind == "webp":
+    if kind == "webp" and quick:
+        picture.save(buffer, "WEBP", lossless=True, exact=True, quality=0, method=0)
+    elif kind == "webp":
         picture.save(buffer, "WEBP", quality=WEBP_QUALITY, method=4)
     else:
-        picture.save(buffer, "PNG", compress_level=compress)
+        picture.save(buffer, "PNG", compress_level=QUICK_PNG if quick else 6)
     return glb.set_base_color_image(data, buffer.getvalue())
 
 
@@ -810,6 +843,17 @@ def paint_by_hand(model: Path, layer: Path, patch: Path, width: int, height: int
     Image.fromarray(held, "RGBA").save(kept, "PNG", compress_level=1)
     replace_files({layer: kept.getvalue(), out: model_with(data, kind, texture, painted)})
     return {"painted": int(np.count_nonzero(held[..., 3])), "texture": [width, height]}
+
+
+def painted_by_hand(model: Path, layer: Path, out: Path) -> dict[str, Any]:
+    """The module doc's "hand_paint" without a patch: `out` is the model as made (`model`) with the paint layer as
+    it is over its texture - a step's hand paint on another model of the prop."""
+    data = model.read_bytes()
+    picture, kind = open_base_colour(data)
+    texture = pixels(picture)
+    painted = lay_hand_paint(np.array(texture[..., :3]), read_layer(layer, *picture.size))
+    replace_files({out: model_with(data, kind, texture, painted, quick=True)})
+    return {"texture": list(picture.size)}
 
 
 def blur(pictures: list[Path], side: int, out: Path, size: int = 1024, first: int = 3) -> list[str]:
@@ -864,19 +908,47 @@ def mirror(picture: Path, out: Path) -> str:
     return str(out)
 
 
+def fit(picture: Path, out: Path, most: int, step: int) -> dict[str, Any]:
+    """The picture made ready for the lighting pass, saved as `out`: on white where it is see-through, its longer
+    side `most` px at the most, on a canvas whose sides are multiples of `step` (the pass takes no others) - the
+    picture in the canvas's middle, undistorted, the rest in the colour of its corner."""
+    from PIL import ImageOps
+
+    with Image.open(picture) as opened:
+        shown = ImageOps.exif_transpose(opened)             # as the engine's launcher reads it
+        if shown.mode in ("RGBA", "LA", "P"):
+            shown = shown.convert("RGBA")
+            shown = Image.alpha_composite(Image.new("RGBA", shown.size, (255, 255, 255, 255)), shown)
+        shown = shown.convert("RGB")
+    if max(shown.size) > most:
+        scale = most / max(shown.size)
+        shown = shown.resize((max(1, round(shown.width * scale)), max(1, round(shown.height * scale))),
+                             Image.Resampling.LANCZOS)
+    width, height = (-(-side // step) * step for side in shown.size)
+    canvas = Image.new("RGB", (width, height), shown.getpixel((0, 0)))
+    canvas.paste(shown, ((width - shown.width) // 2, (height - shown.height) // 2))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out)
+    return {"picture": str(out), "size": [width, height]}
+
+
 def _blur(request: dict[str, Any]) -> dict[str, Any]:
     return {"pictures": blur([Path(p) for p in request["pictures"]], int(request["side"]), Path(request["out"]),
                              int(request.get("size", 1024)))}
 
 
 def _hand_paint(request: dict[str, Any]) -> dict[str, Any]:
-    return paint_by_hand(Path(request["model"]), Path(request["layer"]), Path(request["patch"]),
-                         int(request["width"]), int(request["height"]), Path(request["out"]))
+    model, layer, out = (Path(request[key]) for key in ("model", "layer", "out"))
+    if not request.get("patch"):
+        return painted_by_hand(model, layer, out)
+    return paint_by_hand(model, layer, Path(request["patch"]), int(request["width"]), int(request["height"]), out)
 
 
 # What is asked without a loaded prop: command -> its answer.
 WITHOUT_LOAD = {"blur": _blur, "hand_paint": _hand_paint,
-                "mirror": lambda request: {"picture": mirror(Path(request["picture"]), Path(request["out"]))}}
+                "mirror": lambda request: {"picture": mirror(Path(request["picture"]), Path(request["out"]))},
+                "fit": lambda request: fit(Path(request["picture"]), Path(request["out"]), int(request["most"]),
+                                           int(request["step"]))}
 
 
 # What a loaded prop is asked (the module doc): command -> its answer.
@@ -887,13 +959,12 @@ COMMANDS: dict[str, Callable[[Prop, dict[str, Any]], dict[str, Any]]] = {
                                               _path(r, "keep"), r.get("views"), _path(r, "painting")),
     "project": lambda prop, r: prop.project(int(r["index"]), Path(r["picture"]), _path(r, "colour"),
                                             _path(r, "keep"), _path(r, "layer")),
-    "look": lambda prop, r: prop.look(r["eye"], r["forward"], r["up"], float(r["tan"]), Path(r["mask"]),
-                                      int(r.get("size", 1024)), r.get("pictures") is not False),
+    "look": lambda prop, r: prop.look(r, r.get("pictures") is not False),
     "left": lambda prop, r: prop.left(Path(r["picture"])),
-    "repaint": lambda prop, r: prop.repaint(Path(r["picture"]), _path(r, "colour"), _path(r, "keep"),
-                                            _path(r, "layer"), float(r.get("fade") or 1.0),
-                                            r.get("tone") is not False),
+    "repaint": lambda prop, r: prop.repaint(Path(r["picture"]), _path(r, "keep"), _path(r, "layer"),
+                                            float(r.get("fade") or 1.0)),
     "fades": lambda prop, r: prop.fades(list(r["repaints"]), r.get("outs"), r.get("ahead")),
+    "texture": lambda prop, r: prop.retexture(Path(r["glb"])),
     "finish": lambda prop, r: prop.finish(Path(r["out"]), bool(r.get("debug")), r.get("tone") is not False,
                                           _path(r, "hand_paint"), _path(r, "unpainted")),
 }

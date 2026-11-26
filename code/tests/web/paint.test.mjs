@@ -849,7 +849,7 @@ test('a tool asked for on a model that is not the stage\'s to paint yet comes up
   bar.destroy();
 });
 
-test('a brush taken up while another map shows goes to the lit view and says why: the brushes paint the base colour alone', async () => {
+test('a brush taken up in the lit view goes to Base colour; any other view stays, one that does not show the paint with a word on why', async () => {
   const { viewer } = standInViewer(TEX);
   const bar = createPaintBar({ save: async () => null });
   const marker = bar.el.children[2].children[0].children[2];
@@ -864,17 +864,19 @@ test('a brush taken up while another map shows goes to the lit view and says why
       viewer, project: 'Demo', propId: 'p_1', glb: 'omnitexture/ot_001/omnitexture.glb',
       select: (view) => { went.push(view); viewer.view = view; },
     });
-    for (const view of ['all', 'basecolor']) {
-      viewer.view = view;
-      marker.click();
-      bar.pick(null);
-    }
-    assert.deepEqual([went, said()], [[], []], 'the paint shows there: the view stays');
+    viewer.view = 'all';
+    marker.click();
+    assert.deepEqual([went, viewer.view, said()], [['basecolor'], 'basecolor', []], 'from the lit view: the base colour, flat');
+    bar.pick(null);
+    assert.equal(viewer.view, 'basecolor', 'the brush put down: the view stays');
+    marker.click();
+    bar.pick(null);
+    assert.deepEqual([went, said()], [['basecolor'], []], 'already there: nothing moves, nothing is said');
     viewer.view = 'roughness';
     marker.click();
-    assert.deepEqual(went, ['all']);
+    assert.deepEqual([went, viewer.view], [['basecolor'], 'roughness'], 'another view is the artist\'s: it stays');
     assert.equal(said().length, 1);
-    assert.match(said()[0], /^The brushes paint the base colour only, so the view went to “All” to show it\. Roughness and Metallic can’t be painted yet\./);
+    assert.match(said()[0], /^The brushes paint the base colour only: it shows in “Base colour” and “All”, not in this view\. Roughness and Metallic can’t be painted yet\./);
     assert.equal(marker.classList.contains('on'), true);
     bar.pick(null);
     viewer.view = 'metallic';
@@ -901,12 +903,11 @@ test('the tool bar: the hint left of its glass, the tools in a column over its r
 
   const mine = document.createElement('button');
   mine.setAttribute('aria-label', 'Mask marker');
-  const slot = document.createElement('button');
   const calls = [];
   const bar = createPaintBar({
     overlay: {
-      button: mine, colour: '#ff00ff', hint: 'Mask: paint over what to make again', slot, wipe: 'Discard the mask',
-      up: () => calls.push('up'), down: () => calls.push('down'),
+      button: mine, colour: '#ff00ff', hint: 'Mask: paint over what to make again', wipe: 'Discard the mask',
+      up: () => calls.push('up'), down: () => calls.push('down'), stroke: () => calls.push('stroke'),
     },
     changed: (layer) => calls.push(layer),
     undo: (which) => {
@@ -930,9 +931,8 @@ test('the tool bar: the hint left of its glass, the tools in a column over its r
   const [hint, glass] = row.children;
   assert.deepEqual([row.className, hint.className, glass.className], ['pt-row', 'pt-hint', 'pt-bar'], 'the hint left of the glass');
   assert.equal(hint.children.length, 2, 'in two lines');
-  assert.equal(glass.children[0], slot, 'the stage\'s slot at the glass\'s left end');
-  assert.deepEqual(glass.children.slice(1).map((node) => node.className), ['pt-status', 'range pt-size', 'pt-flag', 'pt-flag']);
-  assert.deepEqual(glass.children.slice(3).map((node) => node.textContent), ['P', 'F']);
+  assert.deepEqual(glass.children.map((node) => node.className), ['pt-status', 'range pt-size', 'pt-flag', 'pt-flag']);
+  assert.deepEqual(glass.children.slice(2).map((node) => node.textContent), ['P', 'F']);
 
   const { viewer } = standInViewer(TEX);
   await bar.bind({ viewer, project: 'Demo', propId: 'p_1', glb: 'omnitexture/x.glb', select() {} });
@@ -953,6 +953,7 @@ test('the tool bar: the hint left of its glass, the tools in a column over its r
   assert.equal(viewer.holdLight, true);
 
   strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  assert.deepEqual(calls.splice(1, 1), ['stroke'], 'the stage hears of the stroke as it begins');
   assert.deepEqual(calls, ['up', 'overlay']);
   assert.equal(bar.pending(), false, 'nothing of an overlay stroke is saved');
   assert.equal((await bar.session().readOverlay()).data[8 * TEX + 8], 255);

@@ -97,7 +97,8 @@ uniform sampler2D islands;
 uniform sampler2D mask;
 uniform sampler2D snap;
 uniform mat4 viewProj;
-uniform vec3 camPos;
+uniform mat4 fromClip;
+uniform vec4 depthOf;
 uniform vec2 screenSize;
 uniform vec3 colour;
 uniform vec2 cloneOffset;
@@ -143,7 +144,9 @@ void main() {
 	vec2 st = ndc * 0.5 + 0.5;
 	float cover = texture( mask, st ).r;
 	if ( cover <= 0.0 ) discard;
-	vec3 toCam = normalize( camPos - vWorld );
+	// Back along this point's own line of sight: a bent lens (viewer3d.js LensCamera) has no one eye to look from.
+	vec4 nearer = fromClip * vec4( ndc, -1.0, 1.0 );
+	vec3 toCam = normalize( nearer.xyz / nearer.w - vWorld );
 	float face = dot( normalize( vFace ), toCam );
 	float lean = dot( normalize( vNormal ), toCam );
 	if ( twoSided > 0.5 ) {
@@ -153,7 +156,8 @@ void main() {
 	if ( face <= 0.0 ) discard;
 	vec2 px = st * screenSize;
 	vec4 s = texelFetch( snap, min( ivec2( px ), ivec2( screenSize ) - 1 ), 0 );
-	if ( s.z <= 0.0 || clip.w > s.z + 1.5 * s.w + s.z * 2e-4 ) discard;   // something else is in front
+	float depth = dot( depthOf, vec4( vWorld, 1.0 ) );
+	if ( s.z <= 0.0 || depth > s.z + 1.5 * s.w + s.z * 2e-4 ) discard;   // something else is in front
 	float w = cover * smoothstep( 0.0, ${FACING_SOFT}, lean );
 	if ( w <= 0.0 ) discard;
 	vec4 old = texelFetch( before, texel, 0 );
@@ -193,6 +197,19 @@ const SNAP_FRAGMENT = `
 varying vec2 vUv;
 varying float vDepth;
 void main() { gl_FragColor = vec4( vUv, vDepth, fwidth( vDepth ) ); }`;
+
+// The model as the camera sees it, small (Session.sight): green where it is, red as far as the overlay covers it
+// (Omni-Texture's box for the mask's words goes beside the mask, off the model: stages/maskbar.js).
+const SIGHT_VERTEX = `
+varying vec2 vUv;
+void main() {
+	vUv = uv;
+	gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}`;
+const SIGHT_FRAGMENT = `
+uniform sampler2D overlay;
+varying vec2 vUv;
+void main() { gl_FragColor = vec4( texture( overlay, vUv ).r, 1.0, 0.0, 1.0 ); }`;
 
 // One dab of the stroke's mask: a disc, antialiased, its opacity the pen's (kept as the largest per pixel).
 const DAB_VERTEX = `
@@ -253,6 +270,27 @@ function target(width, height, options = {}) {
  * The model's paintable part: the meshes whose own material has the one base colour texture (a bake has exactly
  * one), or null with why not.
  */
+/**
+ * The line of sight through a place of the camera's picture (x, y: -1 .. 1): where it starts on the near plane, its
+ * direction, and how far along it the camera sees. From its two ends, whatever the lens: a bent one has no one eye,
+ * and an inverse one sees less deep than its far plane.
+ */
+export function lineOfSight(camera, x, y) {
+  const origin = new THREE.Vector3(x, y, -1).unproject(camera);
+  const direction = new THREE.Vector3(x, y, 1).unproject(camera).sub(origin);
+  const far = direction.length();
+  return { origin, direction: direction.divideScalar(far), far };
+}
+
+/**
+ * The row that gives a world point (x, y, z, 1) its depth before the camera, along its view (the camera looks down
+ * its own -z). Clip w is that depth through a camera's own lens only.
+ */
+export function depthRow(camera, row = new THREE.Vector4()) {
+  const view = camera.matrixWorldInverse.elements;
+  return row.set(-view[2], -view[6], -view[10], -view[14]);
+}
+
 export function paintableParts(views) {
   const maps = new Set();
   const parts = [];
@@ -407,7 +445,9 @@ class Session {
     // The model's triangles at their UV places.
     this.uniforms = {
       before: { value: this.before.texture }, islands: { value: this.islands.texture }, mask: { value: null },
-      snap: { value: null }, viewProj: { value: new THREE.Matrix4() }, camPos: { value: new THREE.Vector3() },
+      // The camera of the stroke: world -> clip, its inverse, and what gives a world point's depth in view.
+      snap: { value: null }, viewProj: { value: new THREE.Matrix4() }, fromClip: { value: new THREE.Matrix4() },
+      depthOf: { value: new THREE.Vector4() },
       screenSize: { value: new THREE.Vector2(1, 1) }, colour: { value: new THREE.Color() },
       cloneOffset: { value: new THREE.Vector2() }, twoSided: { value: this.twoSided ? 1 : 0 },
     };
@@ -418,6 +458,7 @@ class Session {
       depthWrite: false, blending: THREE.NoBlending,
     });
     this.snapMaterials = new Map();
+    this.sightTarget = this.sightScene = this.sightMaterials = null;   // (sight: made on first use)
     this.paintScene = new THREE.Scene();      // the gutter first, then the islands over it: one pass, one mip update
     this.exactScene = new THREE.Scene();      // the islands alone, for their mask
     this.snapScene = new THREE.Scene();
@@ -830,6 +871,54 @@ class Session {
     return { width: size, height: size, data };
   }
 
+  /**
+   * The model as the camera sees it now, `width` x `height` pixels (the viewport's shape) -> {width, height, model,
+   * cover}: a byte per pixel each, rows from the top - 1 where the model is, and how far the overlay covers it there
+   * (0 .. 255; 0 without an overlay). Refused as readAll is.
+   */
+  async sight(width, height) {
+    if (!this.intact()) throw lostError();
+    if (this.sightTarget?.width !== width || this.sightTarget?.height !== height) {
+      this.sightTarget?.dispose();
+      this.sightTarget = target(width, height, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    }
+    if (!this.sightScene) {
+      this.sightScene = new THREE.Scene();
+      const materials = new Map();
+      for (const { mesh, own } of this.parts) {
+        if (!materials.has(own.side)) {
+          materials.set(own.side, new THREE.ShaderMaterial({
+            uniforms: { overlay: { value: null } }, vertexShader: SIGHT_VERTEX, fragmentShader: SIGHT_FRAGMENT, side: own.side,
+          }));
+        }
+        this.sightScene.add(follower(mesh.geometry, materials.get(own.side), mesh));
+      }
+      this.sightMaterials = [...materials.values()];
+    }
+    for (const m of this.sightMaterials) m.uniforms.overlay.value = this.overlay?.texture || null;
+    this.pivot.updateWorldMatrix(true, true);
+    follow(this.sightScene);
+    this.pass(this.sightTarget, this.sightScene, true);
+    const rgba = new Uint8Array(width * height * 4);
+    const losses = this.losses;
+    const release = this.hold();
+    try {
+      await this.renderer.readRenderTargetPixelsAsync(this.sightTarget, 0, 0, width, height, rgba);
+    } finally {
+      release();
+    }
+    if (this.losses !== losses || !this.intact()) throw lostError();
+    const model = new Uint8Array(width * height);
+    const cover = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0, from = (height - 1 - y) * width, to = y * width; x < width; x++) {   // (GL's rows from the bottom)
+        model[to + x] = rgba[(from + x) * 4 + 1] ? 1 : 0;
+        cover[to + x] = rgba[(from + x) * 4];
+      }
+    }
+    return { width, height, model, cover };
+  }
+
   /** All of a layer's target as RGBA8 in the PNG's row order (readAll). */
   async readWhole(rt) {
     if (!this.intact()) throw lostError();
@@ -884,11 +973,12 @@ class Session {
     this.canvas.removeEventListener('webglcontextlost', this.onLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     this.stored = null;
-    for (const rt of [this.paint, this.before, this.islands, this.overlay, this.shown]) rt?.dispose();
+    for (const rt of [this.paint, this.before, this.islands, this.overlay, this.shown, this.sightTarget]) rt?.dispose();
     for (const list of Object.values(this.materials)) list.forEach((m) => m.dispose());
     this.compositeMaterial?.dispose();
     this.islandMaterial.dispose();
     this.snapMaterials.forEach((m) => m.dispose());
+    this.sightMaterials?.forEach((m) => m.dispose());
     this.paintScene.children.forEach((m) => m.geometry.dispose());
     this.quad.geometry.dispose();
   }
@@ -975,9 +1065,11 @@ export function createPainter(viewer, ui) {
     const pivot = viewer.current;
     if (!pivot) return null;
     const rect = canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(ndc, viewer.camera);
+    const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const { origin, direction, far } = lineOfSight(viewer.camera, x, y);
+    const ray = new THREE.Raycaster(origin, direction, 0, far);
+    ray.camera = viewer.camera;
     const meshes = (s ? s.parts : paintableParts(pivot.userData.views).parts || []).map((p) => p.mesh);
     return ray.intersectObjects(meshes, false)[0] || null;
   }
@@ -1064,7 +1156,8 @@ export function createPainter(viewer, ui) {
     const viewProj = new THREE.Matrix4().multiplyMatrices(viewer.camera.projectionMatrix, viewer.camera.matrixWorldInverse);
     const u = s.uniforms;
     u.viewProj.value.copy(viewProj);
-    u.camPos.value.setFromMatrixPosition(viewer.camera.matrixWorld);
+    u.fromClip.value.copy(viewProj).invert();
+    depthRow(viewer.camera, u.depthOf.value);
     u.screenSize.value.set(size.x, size.y);
     u.mask.value = mask.texture;
     u.snap.value = snap.texture;

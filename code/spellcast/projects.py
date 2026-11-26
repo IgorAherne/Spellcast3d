@@ -141,8 +141,10 @@ STAGE_DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
         # (each a glb in a folder of its own), oldest first: Ctrl+Z and Ctrl+Y on the page walk them
         # (omnitexture_step), "glb" is the one shown. A new mesh.glb makes it stale (apply_stage_patch).
         # repaints: what the steps' models hold of them (adapters/omnitexture.py: each the model it made, the model
-        # it went onto - "under" -, picture, layer, fade); bases: the results composed again from fewer of the views
-        # (a view taken off), each its model and the views it holds.
+        # it went onto - "under" -, picture, layer, fade, "hidden" when the artist hid it); bases: the results made
+        # again from the job's - composed from fewer of the views (a view taken off), each its model and the views
+        # it holds; or, "hidden", the 3D model's own texture while the artist hides the painted views: the views
+        # it lists are not on it, "shown" is the model that holds them.
         # A result without views is the 3D model's own texture (omnitexture_own): the artist masked or painted
         # the prop without an Omni-Texture job. painted: a hand painting was saved into one of the result's models.
         "outputs": {"glb": None, "source_mesh": None, "views": [], "projected": [], "layers": [], "sheets": [],
@@ -478,14 +480,16 @@ def retouch_folder(glb: str) -> str:
     return f"{glb.rsplit('/', 1)[0]}/{RETOUCH_FOLDER}"
 
 
-def repaint_record(glb: str, fade: float = 1.0, layer: str = REPAINT_LAYER, under: str | None = None) -> dict[str, Any]:
+def repaint_record(glb: str, fade: float = 1.0, layer: str = REPAINT_LAYER, under: str | None = None,
+                   hidden: bool = False) -> dict[str, Any]:
     """What a prop keeps of the repaint that made the model `glb` (omnitexture.repaints): that model, the model
     it went onto (`under`; None: no longer known), the picture that went on, the `layer` the page shows on the
     model while the pointer is over that picture, and how many times as far as a seam the repaint's edge fades
-    into what is around it."""
+    into what is around it. `hidden`: the artist hid it (the eye on its picture) - it keeps its place among the
+    repaints and puts nothing on: its model is the one it went onto, with what was painted by hand on its step."""
     folder = retouch_folder(glb)
     return {"glb": glb, "under": under, "picture": f"{folder}/{REPAINT_PICTURE}", "layer": f"{folder}/{layer}",
-            "fade": fade}
+            "fade": fade, **({"hidden": True} if hidden else {})}
 
 
 def _step_before(steps: list[str], step: str) -> str | None:
@@ -1131,7 +1135,8 @@ def _normalize(data: dict[str, Any], folder_name: str) -> dict[str, Any]:
                      else None if "under" in r else _step_before(steps, r["glb"]),
                      "picture": r["picture"],
                      "layer": r["layer"] if isinstance(r.get("layer"), str) else None,
-                     "fade": float(r["fade"]) if isinstance(r.get("fade"), (int, float)) else 1.0}
+                     "fade": float(r["fade"]) if isinstance(r.get("fade"), (int, float)) else 1.0,
+                     **({"hidden": True} if r.get("hidden") is True else {})}
                     for r in repaints if isinstance(r, dict) and isinstance(r.get("glb"), str)
                     and isinstance(r.get("picture"), str)]
                 bases = block["bases"] if isinstance(block["bases"], list) else []
@@ -1139,7 +1144,9 @@ def _normalize(data: dict[str, Any], folder_name: str) -> dict[str, Any]:
                     {"glb": b["glb"], "views": [
                         {"folder": v["folder"], **{key: v[key] if isinstance(v.get(key), str) else None
                                                    for key in ("picture", "layer")}}
-                        for v in b["views"] if isinstance(v, dict) and isinstance(v.get("folder"), str)]}
+                        for v in b["views"] if isinstance(v, dict) and isinstance(v.get("folder"), str)],
+                     **({"hidden": True, "shown": b["shown"]}
+                        if b.get("hidden") is True and isinstance(b.get("shown"), str) else {})}
                     for b in bases if isinstance(b, dict) and isinstance(b.get("glb"), str)
                     and isinstance(b.get("views"), list)]
                 if not block["repaints"] and not block["bases"]:
@@ -1776,15 +1783,15 @@ class ProjectStore:
         """A new Omni-Texture arrived: the prop's older omnitexture/ot_NNN folders go, but for the newest
         KEEP_OMNITEXTURES and those the prop still shows something of - its model, its painted views (a repaint
         keeps the views of the result it was made from), the steps Ctrl+Z walks back through and what their models
-        are made of (the repaints' and the results composed again). Best effort: a file another program holds open
-        stays."""
+        are made of (the repaints' and the results made again - with the one that holds the painted views while
+        they are hidden). Best effort: a file another program holds open stays."""
         folder = self.prop_dir(project, prop_id) / OMNITEXTURE_FOLDER
         bases = [made for made in block.get("bases") or [] if isinstance(made, dict)]
         shown = [block.get("glb"), *(block.get("steps") or []), *(block.get("views") or []),
                  *[sheet.get("folder") for sheet in block.get("sheets") or [] if isinstance(sheet, dict)],
                  *[made.get(key) for made in block.get("repaints") or [] if isinstance(made, dict)
                    for key in ("picture", "under")],
-                 *[made.get("glb") for made in bases],
+                 *[made.get(key) for made in bases for key in ("glb", "shown")],
                  *[view.get(key) for made in bases for view in made.get("views") or [] if isinstance(view, dict)
                    for key in ("picture", "layer")]]
         own = {PurePosixPath(path).parts[1] for path in shown

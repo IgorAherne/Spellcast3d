@@ -2,8 +2,8 @@
 // standin_card.mjs): its tools - Projection's marker and clone stamp, its own mask marker at the column's foot - and
 // the hand paint they leave, which is in its files before the page has the hub make the steps again (Render Masked, a
 // fade, a picture taken off, a job): the hub takes no paint while that is under way. A mask stroke is never saved, and
-// the mask outlives a model made again. While the mask marker is up the view holds still; "Render Masked" sends the
-// view as it is at the press.
+// the mask outlives a model made again. The view moves while the mask marker is up, the box beside the mask with
+// it; "Render Masked" sends the view as it is at the press.
 //   node --test code/tests/web/omnitexture.test.mjs
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -26,6 +26,7 @@ class FakeEl extends FakeNode {
     this.hidden = false;
     this.disabled = false;
     this.parentNode = null;
+    this.offsetWidth = this.offsetHeight = 0;
   }
 
   setAttribute(k, v) { this.attrs[k] = String(v); }
@@ -240,12 +241,13 @@ async function mount(props = [prop()]) {
   await settle();
   const label = (node) => node.getAttribute('aria-label');
   const tools = host.byClass('pt-tools')[0];
-  // The column's buttons, top to bottom (the stage's own tool stands with the x that wipes it).
-  const buttons = () => tools.children.flatMap((b) => (b.className === 'pt-own' ? b.children : [b]));
+  // The column's buttons, top to bottom (the stage's own tool stands with the x that wipes it, its lens with the
+  // glass of its slider).
+  const buttons = () => tools.children.flatMap((b) => (b.className === 'pt-own' ? b.children : [b]))
+    .filter((b) => b.tagName !== 'SPAN');
   const tool = (name) => buttons().find((b) => label(b) === name);
-  const locked = viewer.held;          // (as the view arrived)
   tool('Orbit').click();               // (the brush is the page's: a tool may still be up from the view before)
-  return { host, ctx, release, tools, buttons, tool, label, locked, update: () => OMNI.update(ctx) };
+  return { host, ctx, release, tools, buttons, tool, label, update: () => OMNI.update(ctx) };
 }
 
 // Where the artist looks from (the stand-in camera's place): as every test begins, and after going round the model.
@@ -275,29 +277,63 @@ async function waitsForThePaint(stage, then) {
 test('the Omni-Texture result has Projection\'s tools in the column, Orbit on top, its mask marker at the foot with the x that discards the mask, the hint left of the glass', async () => {
   const stage = await mount();
   const WIPE = 'Discard the mask (Ctrl+Z brings it back)';
-  assert.deepEqual(stage.buttons().map(stage.label), ['Orbit', 'Clone stamp', 'Marker of any colour', WIPE, 'Mask marker']);
+  assert.deepEqual(stage.buttons().map(stage.label),
+    ['Orbit', 'Clone stamp', 'Marker of any colour', WIPE, 'Mask marker', 'Inverse perspective']);
   // The mask marker is a tool like the stamp above it, with an icon of its own: not one more disc of colour.
   const [stamp, mask] = [stage.tool('Clone stamp'), stage.tool('Mask marker')];
   assert.deepEqual([mask.className, mask.children.length], [stamp.className, 1]);
   const [hint, glass] = stage.host.byClass('pt-row')[0].children;
   assert.equal(hint.className, 'pt-hint');
   assert.equal(glass.className, 'pt-bar');
-  assert.ok(glass.children[0].classList.contains('mk-render'), '"Render Masked" at the glass\'s left end');
-  assert.equal(glass.children[0].hidden, true, 'until something is masked');
+  assert.equal(glass.byClass('mk-render').length, 0, 'the glass holds the brush\'s settings alone');
   const cover = stage.host.byClass('mk-cover')[0];
+  const [ask] = cover.byClass('ot-ask');
   assert.equal(stage.tool(WIPE).hidden, true);
   stage.tool('Mask marker').click();
   assert.equal(cover.hidden, false, 'the black outside the square Render Masked sends');
   assert.equal(stage.tool(WIPE).hidden, false, 'the x beside the marker while it is up');
-  // Masked, "Render Masked" stands in the glass; the x discards the mask, and the button goes with it.
+  await settle();
+  assert.equal(ask.hidden, true, 'nothing masked: no box');
+  // Masked, a box beside the mask holds "Render Masked" - off the model (the stand-in's is 30 .. 70 px across), on
+  // the room to its left -; the x discards the mask, and the box goes with it.
   strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
-  assert.equal(glass.children[0].hidden, false);
+  await settle();
+  assert.equal(ask.hidden, false);
+  assert.ok(ask.byClass('mk-render').length === 1 && parseFloat(ask.style.left) < 30 - 16, ask.style.left);
   stage.tool(WIPE).click();
-  assert.equal(glass.children[0].hidden, true, 'nothing masked any more: nothing to render');
+  assert.equal(ask.hidden, true, 'nothing masked any more: nothing to render');
   assert.equal(await viewer.current.userData.paint.readOverlay().then((read) => Math.max(...read.data)), 0);
+  // Masked again, then the marker put down: the box goes (the side panel's "Render Masked" stands in).
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  assert.equal(ask.hidden, false);
   stage.tool('Orbit').click();
-  assert.equal(cover.hidden, true);
-  assert.equal(stage.tool(WIPE).hidden, true);
+  assert.deepEqual([cover.hidden, ask.hidden, stage.tool(WIPE).hidden], [true, true, true]);
+  OMNI.unmount();
+});
+
+test('the box beside the mask takes words of the artist\'s own, if any: they go with the mask, and Enter renders', async () => {
+  const stage = await mount();
+  stage.release();
+  stage.tool('Mask marker').click();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  const [ask] = stage.host.byClass('ot-ask');
+  const [field] = ask.byClass('mk-ask-input');
+  ask.byClass('mk-render')[0].click();
+  await settle();
+  assert.equal('words' in hub.job.params.retouch, false, 'none typed: none sent');
+  store.jobs = [];                                   // (the repaint done)
+  stage.update();
+  await settle();
+  stage.tool('Mask marker').click();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  field.value = '  rusty bolts along the edge ';
+  field.fire('input');
+  field.fire('keydown', { key: 'Enter', shiftKey: false, isComposing: false });
+  await settle();
+  assert.equal(hub.job.params.retouch.words, 'rusty bolts along the edge');
   OMNI.unmount();
 });
 
@@ -306,7 +342,8 @@ test('a mask stroke is never saved, and a stroke of the marker leaves the mask a
   stage.release();
   stage.tool('Mask marker').click();
   strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
-  assert.equal(stage.host.byClass('mk-render')[0].hidden, false, 'something masked: "Render Masked"');
+  await settle();
+  assert.equal(stage.host.byClass('ot-ask')[0].hidden, false, 'something masked: "Render Masked" beside it');
   OMNI.unmount();                                  // what is left to save goes as the view goes
   await settle();
   assert.deepEqual(changes(), [], 'nothing saved of the mask');
@@ -319,7 +356,9 @@ test('a mask stroke is never saved, and a stroke of the marker leaves the mask a
   const mask = (await session.readOverlay()).data;
   paintBase(stage, { x: 10, y: 10, w: 8, h: 8 });
   assert.deepEqual((await session.readOverlay()).data, mask, 'the mask as it was');
-  assert.equal(stage.host.byClass('mk-render')[0].hidden, false);
+  stage.tool('Mask marker').click();
+  await settle();
+  assert.equal(stage.host.byClass('ot-ask')[0].hidden, false);
   OMNI.unmount();
   await settle();
   assert.deepEqual(changes(), [`PUT ${API}/omnitexture/paint`], 'the marker\'s stroke');
@@ -548,6 +587,89 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
   OMNI.unmount();
 });
 
+test('the eye in a picture\'s middle hides it on the model and shows it again: a repaint alone, the painted views all together; Alt + click there is the picture\'s own', async () => {
+  const stage = await mount();
+  stage.release();
+  const eyes = () => stage.host.byClass('ot-eye');
+  const off = () => stage.host.byClass('ot-tile').map((tile) => tile.classList.contains('off'));
+  const shown = (omnitexture) => ({ prop: (store.project.props[0] = { ...prop(), omnitexture: { ...prop().omnitexture, ...omnitexture } }),
+    renamed: { [REPAINT]: MADE_AGAIN } });
+  const repaint = (hidden) => ({ glb: MADE_AGAIN, picture: 'omnitexture/ot_001/remove_001/picture.png', under: RESULT, fade: 1, hidden });
+  assert.deepEqual(off(), [false, false, false], 'two views and a repaint, all on the model');
+  assert.ok(eyes().slice(0, 2).every((eye) => stage.label(eye).startsWith('Hide the painted views - all of them')));
+  assert.equal(stage.label(eyes()[2]), 'Hide this repaint: the model shows what is under it');
+
+  // The repaint's eye: it alone is asked hidden; its tile stays, dim under the crossed eye, and is no longer picked.
+  hub.answer = () => shown({ glb: MADE_AGAIN, steps: [RESULT, MADE_AGAIN], repaints: [repaint(true)] });
+  eyes()[2].fire('click', { altKey: false });
+  await settle();
+  assert.deepEqual([changes(), hub.asked], [[`POST ${API}/omnitexture/hide`], { glb: REPAINT, repaint: REPAINT, hidden: true }]);
+  stage.update();
+  await settle();
+  assert.deepEqual(off(), [false, false, true]);
+  assert.equal(stage.label(eyes()[2]), 'Show this repaint on the model again');
+  const [picture] = stage.host.byClass('ot-repaint');
+  picture.fire('click', { altKey: false });
+  assert.equal(picture.classList.contains('picked'), false, 'no edge to fade while it is hidden');
+  assert.ok(picture.title.includes('hidden: it is not on the model'));
+  hub.answer = () => shown({ glb: MADE_AGAIN, steps: [RESULT, MADE_AGAIN], repaints: [repaint(false)] });
+  eyes()[2].fire('click', { altKey: false });
+  await settle();
+  assert.deepEqual(hub.asked, { glb: MADE_AGAIN, repaint: MADE_AGAIN, hidden: false }, 'shown again');
+
+  // A view's eye: all of them, whichever is clicked - and no view is taken off while they are hidden.
+  const base = { glb: MADE_AGAIN, steps: [MADE_AGAIN], repaints: [] };
+  const views = prop().omnitexture.views.map((view) => ({ folder: view.slice(0, view.lastIndexOf('/')), picture: view, layer: null }));
+  hub.answer = () => shown({ ...base, bases: [{ glb: MADE_AGAIN, views, hidden: true, shown: RESULT }] });
+  eyes()[1].fire('click', { altKey: false });
+  await settle();
+  assert.deepEqual(hub.asked, { glb: MADE_AGAIN, views: true, hidden: true });
+  stage.update();
+  await settle();
+  assert.deepEqual(off(), [true, true]);
+  assert.ok(eyes().every((eye) => stage.label(eye) === 'Show the painted views on the model again'));
+  assert.deepEqual(stage.host.byClass('ot-tile').flatMap((tile) => tile.byClass('ot-x')), [], 'no × on a hidden view');
+  eyes()[0].fire('click', { altKey: false });
+  await settle();
+  assert.deepEqual(hub.asked, { glb: MADE_AGAIN, views: true, hidden: false });
+
+  // Alt + click on an eye hides nothing: it shows what Qwen-Image was given, as on the picture around it.
+  const asked = changes().length;
+  const real = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    hub.calls.push(`GET ${String(path).split('?')[0]}`);
+    return { ok: true, status: 200, json: async () => ({ prompt: '', pictures: [] }) };
+  };
+  try {
+    eyes()[0].fire('click', { altKey: true });
+    await settle();
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.equal(changes().length, asked, 'nothing asked of the hub');
+  assert.ok(hub.calls.at(-1).endsWith('/omnitexture/ot_001/views/0-front/request.json'));
+  OMNI.unmount();
+});
+
+test('a picture\'s share shows on the model while the pointer is anywhere on its tile, its eye and its × too', async () => {
+  const stage = await mount([{ ...prop(), omnitexture: { ...prop().omnitexture,
+    layers: ['omnitexture/ot_001/views/0-front/layer.webp'] } }]);
+  const [front, back] = stage.host.byClass('ot-tile');
+  const layers = [];
+  const setLayer = viewer.setLayer;
+  viewer.setLayer = (url) => layers.push(url && url.split('?')[0]);
+  try {
+    front.fire('pointerenter');
+    front.fire('pointerleave');
+    back.fire('pointerenter');            // (a view without a layer of its own: nothing to show)
+    back.fire('pointerleave');
+  } finally {
+    viewer.setLayer = setLayer;
+  }
+  assert.deepEqual(layers, ['/files/Props/props/p_1/omnitexture/ot_001/views/0-front/layer.webp', null]);
+  OMNI.unmount();
+});
+
 test('a fade waits until the hand paint is in the files', async () => {
   const stage = await mount();
   paintBase(stage);
@@ -626,41 +748,136 @@ test('the × beside "Painted views" takes the whole Omni-Texture off: the prop s
   OMNI.unmount();
 });
 
-test('while the mask marker is up nothing moves the view, and the hint says so; put down - Orbit, Esc, another tool, a render, the view going - it moves again', async () => {
+test('the view moves while the mask marker is up as with any tool; the box leaves while it does and takes its place again once the view rests', async () => {
   const stage = await mount();
   stage.release();
-  const mask = stage.tool('Mask marker');
-  assert.equal(viewer.held, false);
-  for (const down of [() => stage.tool('Orbit').click(), () => keyDown('Escape'), () => stage.tool('Clone stamp').click(), () => OMNI.unmount()]) {
-    mask.click();
-    assert.equal(viewer.held, true);
-    const [first, keys] = stage.host.byClass('pt-hint')[0].children.map((line) => line.textContent);
-    assert.ok(first.startsWith('Mask marker: the view is locked') && keys.startsWith('Esc: put it down to move the view again')
-      && !keys.includes('orbit'), `${first} / ${keys}`);
-    down();
-    assert.equal(viewer.held, false);
-  }
-  // The marker went down with its view: the next one does not arrive locked. The other tools never lock it.
-  const again = await mount();
-  assert.equal(again.locked, false);
-  again.release();
-  again.tool('Marker of any colour').click();
-  assert.equal(viewer.held, false);
-  assert.ok(again.host.byClass('pt-hint')[0].children[1].textContent.includes('orbit'));
-  again.tool('Mask marker').click();
-  // A job takes the prop (one started elsewhere): the tools go, and the lock with them, until it is through.
-  store.jobs = [hubJob({ id: 'j_2', stage: 'omnitexture', status: 'running', prop_ids: ['p_1'], progress: { fraction: 0.2, message: '' }, errors: {} })];
-  again.update();
-  assert.equal(viewer.held, false);
-  store.jobs = [];
-  again.update();
-  await settle();
-  assert.equal(viewer.held, true);
+  stage.tool('Mask marker').click();
+  const [first, keys] = stage.host.byClass('pt-hint')[0].children.map((line) => line.textContent);
+  assert.ok(first.startsWith('Mask marker: paint over what to make again') && keys.includes('orbit'), `${first} / ${keys}`);
   strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
-  again.host.byClass('mk-render')[0].click();
   await settle();
-  assert.equal(again.tool('Mask marker').classList.contains('on'), false, '"Render Masked" puts the marker down');
-  assert.equal(viewer.held, false);
+  const [ask] = stage.host.byClass('ot-ask');
+  assert.equal(ask.hidden, false);
+  // The artist turns the model (Alt + drag, the wheel: the viewer's controls say so as they go).
+  const sights = viewer.renderer.reads;
+  lookFrom(SIDE);
+  viewer.controls.dispatchEvent(new Event('change'));
+  assert.equal(ask.hidden, true, 'out of the way while the view moves');
+  await settle();
+  assert.equal(ask.hidden, true, 'still moving, for all the page knows');
+  viewer.controls.dispatchEvent(new Event('change'));
+  await new Promise((resolve) => realTimeout(resolve, 260));
+  await settle();
+  assert.equal(ask.hidden, false, 'at rest: back, where the model and the mask now leave room');
+  assert.equal(viewer.renderer.reads, sights + 1, 'looked at once, when the view came to rest');
+  // The lens bent while masking moves the view too.
+  stage.tool('Inverse perspective').click();
+  assert.equal(ask.hidden, true);
+  await new Promise((resolve) => realTimeout(resolve, 260));
+  await settle();
+  assert.equal(ask.hidden, false);
+  stage.tool('Inverse perspective').click();
+  // With the marker down no box follows the view.
+  stage.tool('Orbit').click();
+  viewer.controls.dispatchEvent(new Event('change'));
+  await new Promise((resolve) => realTimeout(resolve, 260));
+  assert.equal(ask.hidden, true);
+  OMNI.unmount();
+});
+
+test('a tool taken up in the lit view shows the base colour; "Render Masked" puts the marker down', async () => {
+  const stage = await mount();
+  stage.release();
+  assert.equal(viewer.view, 'all');
+  stage.tool('Mask marker').click();
+  assert.equal(viewer.view, 'basecolor', 'the mask marker too: what is painted over shows flat');
+  // A job takes the prop (one started elsewhere): the tools go until it is through.
+  store.jobs = [hubJob({ id: 'j_2', stage: 'omnitexture', status: 'running', prop_ids: ['p_1'], progress: { fraction: 0.2, message: '' }, errors: {} })];
+  stage.update();
+  store.jobs = [];
+  stage.update();
+  await settle();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  stage.host.byClass('mk-render')[0].click();
+  await settle();
+  assert.equal(stage.tool('Mask marker').classList.contains('on'), false);
+  assert.equal(viewer.view, 'basecolor', 'the view stays where the tool left it');
+  OMNI.unmount();
+});
+
+test('"No Facets" in the box, left of "Render Masked": on, the repaint asks for a depth map without the model\'s facets, and stays on for the next', async () => {
+  const stage = await mount();
+  stage.release();
+  stage.tool('Mask marker').click();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  const [ask] = stage.host.byClass('ot-ask');
+  const [toggle, render] = ask.byClass('mk-ask-row')[0].children;
+  assert.deepEqual([toggle.textContent, toggle.getAttribute('aria-pressed'), render.textContent], ['No Facets', 'false', 'Render Masked']);
+  assert.equal(ask.byClass('mk-ask-input')[0].getAttribute('rows'), '3');
+  render.click();
+  await settle();
+  assert.equal('smooth' in hub.job.params.retouch, false, 'off: the depth map as the model is');
+  store.jobs = [];
+  stage.update();
+  await settle();
+  stage.tool('Mask marker').click();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  render.click();
+  await settle();
+  assert.equal(hub.job.params.retouch.smooth, true);
+  // The artist's setting, as the lens is: the next view of the stage has it on still.
+  OMNI.unmount();
+  const again = await mount();
+  const next = again.host.byClass('ot-ask')[0].byClass('mk-ask-row')[0].children[0];
+  assert.equal(next.getAttribute('aria-pressed'), 'true');
+  next.click();                                      // (off again for the tests that follow)
+  OMNI.unmount();
+});
+
+test('"Inverse perspective" under the mask marker bends the view, its slider says how far, "Render Masked" sends that lens, and it goes with the view', async () => {
+  const stage = await mount();
+  stage.release();
+  const bend = stage.tool('Inverse perspective');
+  const [glass] = stage.host.byClass('mk-lens');
+  const [slider] = glass.children;
+  assert.deepEqual([viewer.camera.perspective, bend.getAttribute('aria-pressed'), glass.hidden], [1, 'false', true]);
+  bend.click();
+  assert.deepEqual([viewer.camera.perspective, bend.getAttribute('aria-pressed'), glass.hidden], [-1, 'true', false],
+    'half way along its slider: as inverse as a camera is perspective');
+  slider.value = 25;
+  slider.fire('input');
+  assert.equal(viewer.camera.perspective, 0, 'a quarter of the way: no perspective left');
+  slider.value = 100;
+  slider.fire('input');
+  assert.equal(viewer.camera.perspective, -3);
+  // The lens stays the artist's while the mask marker is up.
+  stage.tool('Mask marker').click();
+  assert.deepEqual([bend.disabled, slider.disabled], [false, false]);
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  stage.host.byClass('mk-render')[0].click();
+  await settle();
+  const { tan, wide } = hub.job.params.retouch;
+  const half = Math.tan((viewer.camera.fov * Math.PI) / 360);
+  assert.ok(Math.abs(tan + 3 * half) < 1e-12 && Math.abs(wide - half * 2 * 4) < 1e-12, 'the bent lens goes with the camera');
+  store.jobs = [];                                   // (the repaint done)
+  stage.update();
+  await settle();
+  assert.equal(bend.disabled, false, 'the repaint done: the lens is the artist\'s again');
+  // Off again: a camera's own view.
+  bend.click();
+  assert.deepEqual([viewer.camera.perspective, glass.hidden], [1, true]);
+  bend.click();
+  assert.equal(viewer.camera.perspective, -3, 'on again: as far as it was');
+  // Another prop's view, or another stage's, starts from the usual view; the setting stays for the next visit here.
+  OMNI.unmount();
+  assert.equal(viewer.camera.perspective, 1);
+  const again = await mount();
+  assert.equal(viewer.camera.perspective, -3, 'back in the stage: the lens as the artist left it');
+  again.tool('Inverse perspective').click();
   OMNI.unmount();
 });
 
@@ -673,7 +890,7 @@ test('"Render Masked" sends the view as it is at the press, wherever the mask wa
   stage.tool('Orbit').click();
   lookFrom(SIDE);                                    // the marker down, the artist goes round the model
   mask.click();
-  assert.deepEqual(lookingFrom(), SIDE, 'the marker up again: the view stays, locked where it is');
+  assert.deepEqual(lookingFrom(), SIDE, 'the marker up again: the view stays where it is');
   stage.tool('Orbit').click();
   stage.host.byClass('mk-render')[0].click();
   await settle();

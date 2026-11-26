@@ -7,7 +7,8 @@ import {
   RETOPO_ORDER, STAGE_TOOLS, bakeFresh, carryPlan, effectiveViews, frontOnly, highPoly, meshFresh, meshSource, nameFromPrompt,
   planCount, asideHint, planSummary, reaches, retopoFresh, retopoMethod, retopoMissing, retopoPlan, retopoReady,
   retopoUsed, retopoVariant, rowPlan, omniBatch, omniChosen, omniRepaints,
-  omniOwn, omniStatus, omniTakeOff, omniTakenOff, omniTextured, omniViews, omnitextureFresh, omnitextureUsed, toolOf, viewsAside,
+  omniOwn, omniStatus, omniTakeOff, omniTakenOff, omniTextured, omniViews, omniViewsEye, omniViewsHidden, omnitextureFresh,
+  omnitextureUsed, toolOf, viewsAside,
   tileable, viewsSignature,
   warmAsk,
 } from '../../spellcast/static/js/stages/rules.js';
@@ -605,14 +606,35 @@ test('the repaints the model shown holds: each on the one before it, not those t
   // b, then c on it; d: c put on again onto a, b taken off
   const repaints = [made(steps[1], steps[0]), made(steps[2], steps[1]), made(steps[3], steps[0]), { glb: 7 }, null];
   const block = { glb: steps[1], steps, repaints };
-  assert.deepEqual(omniRepaints(block), [{ glb: steps[1], picture: 'b/s.glb.png', layer: 'b/s.glb.webp', fade: 2.5, fadable: true }]);
+  assert.deepEqual(omniRepaints(block), [{ glb: steps[1], picture: 'b/s.glb.png', layer: 'b/s.glb.webp', fade: 2.5, fadable: true, hidden: false }]);
   assert.deepEqual(omniRepaints({ ...block, glb: steps[2] }).map((r) => r.glb), [steps[1], steps[2]]);
   assert.deepEqual(omniRepaints({ ...block, glb: steps[3] }).map((r) => r.glb), [steps[3]]);
   assert.deepEqual(omniRepaints({ ...block, glb: steps[0] }), []);
   // one whose model under it is no longer known is still shown, but cannot be put on again
   const old = omniRepaints({ ...block, glb: 'z/s.glb', repaints: [made('z/s.glb', null, { layer: null, fade: 'x' })] });
-  assert.deepEqual(old, [{ glb: 'z/s.glb', picture: 'z/s.glb.png', layer: null, fade: 1, fadable: false }]);
+  assert.deepEqual(old, [{ glb: 'z/s.glb', picture: 'z/s.glb.png', layer: null, fade: 1, fadable: false, hidden: false }]);
   assert.deepEqual(omniRepaints({ steps, repaints: [made(steps[1], steps[0])] }), []);
+  // one the artist hid keeps its place among them
+  const hid = [made(steps[1], steps[0], { hidden: true }), made(steps[2], steps[1], { hidden: 'yes' })];
+  assert.deepEqual(omniRepaints({ glb: steps[2], steps, repaints: hid }).map((r) => [r.glb, r.hidden]), [[steps[1], true], [steps[2], false]]);
+});
+
+test('the painted views hidden: still listed, the eye shows them again, and none is taken off meanwhile', () => {
+  const st = 'omnitexture/ot_001';
+  const views = [`${st}/views/0-front/answer.png`, `${st}/views/1-back/answer.png`];
+  const bare = 'omnitexture/ot_002/omnitexture.glb';
+  const repaint = 'omnitexture/ot_003/omnitexture.glb';
+  const shown = { mesh: { glb: 'mesh/mesh.glb' }, omnitexture: { glb: `${st}/omnitexture.glb`, source_mesh: 'mesh/mesh.glb', views } };
+  const hidden = { ...shown, omnitexture: { ...shown.omnitexture, glb: repaint,
+    bases: [{ glb: bare, hidden: true, shown: `${st}/omnitexture.glb`, views: views.map((v) => ({ folder: v.slice(0, v.lastIndexOf('/')), picture: v })) }],
+    repaints: [{ glb: repaint, under: bare, picture: 'r.png' }] } };
+  assert.deepEqual([omniViewsHidden(shown.omnitexture), omniViewsHidden(hidden.omnitexture), omniViewsHidden(undefined)], [false, true, false]);
+  assert.deepEqual(omniViews(hidden.omnitexture).map((v) => v.side), ['front', 'back'], 'listed as before');
+  assert.deepEqual([omniTakeOff(shown).views, omniTakeOff(hidden).views, omniTakeOff(hidden).whole, omniTakeOff(hidden).repaints],
+    [true, false, true, true]);
+  // The eye: to hide them only while the 3D model is the one they were painted on; to show them again always.
+  const stale = (box) => ({ ...box, omnitexture: { ...box.omnitexture, stale: true } });
+  assert.deepEqual([shown, hidden, stale(shown), stale(hidden)].map(omniViewsEye), [true, true, false, true]);
 });
 
 test('a view taken off: the model composed again holds the others, each with its own picture and layer now', () => {

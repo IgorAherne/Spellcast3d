@@ -163,6 +163,9 @@
 	             back keeps what you can undo in Images.
 	             On the "New prop" cards, Ctrl+V takes a picture you copied as the prop's picture,
 	             as if you had dropped it there.
+	             The mouse wheel over the picture zooms in, toward the pointer, and back out to the
+	             whole picture; drag with the middle button to move it about. What you paint, mask
+	             or slice stays on the picture as it zooms.
 	
 	             In "Render Images":
 	             -  three buttons at the bottom: "Render From Scratch" (a new picture from your words, and
@@ -266,8 +269,11 @@
 	                lighting"): a single object or a view with a horizon repeats badly however well its
 	                edges meet. While it is on, a small slider beside it slides the picture round by
 	                tenths of its size - what leaves one side comes back at the other - so you see its
-	                edges meet inside it, and the mouse wheel over the picture shows it from afar among
-	                copies of itself (turn the wheel the other way to come back). "Re-Render Viewport"
+	                edges meet inside it. Zoomed all the way out, turn the mouse wheel on outwards and
+	                the picture shows from afar among copies of itself; turn it back to see the picture
+	                alone again. Both ways the wheel waits a moment at the whole picture, so a turn
+	                meant to stop there neither tiles the picture nor zooms into it as well.
+	                "Re-Render Viewport"
 	                makes pictures from the picture as it shows, slid or not, and what it makes lies
 	                where your picture lies: the offset is only how you look at them, it is never
 	                baked into a new picture. (Left to itself the model lays a tileable picture a few
@@ -404,29 +410,59 @@
 	             back, Ctrl+Y takes it off again). The x beside the words "Painted views" takes the
 	             whole Omni-Texture off: the prop shows and uses its 3D model's own texture again, and
 	             Ctrl+Z brings the Omni-Texture back as it was.
+	             The eye in the middle of a picture (it shows while the pointer is on the picture)
+	             hides that picture on the model without taking it off: it stays in the list, dim,
+	             under a crossed eye, and a click on that eye shows it again. The painted views go
+	             together: the eye on one of them hides or shows them all, and meanwhile the model
+	             shows its own texture in their place. Projection bakes the model as you see it.
 	             Something came out wrong? Take the mask marker at the viewport's bottom right (the
 	             dashed frame with a brush stroke in it) and paint over that part of the model: it
 	             shows in magenta. Everything outside a square goes black meanwhile: only that square
-	             is sent. The view is locked while the mask marker is up - nothing turns or zooms it -
-	             so first turn the model until the part faces you, then take the marker. (From any
-	             other side the mask would no longer cover all it covered, and Qwen-Image would see
-	             what you meant to hide.) To move again, put the marker down with Esc or Orbit. Then
-	             press "Render Masked": Qwen-Image repaints what you masked as you see it at that
-	             moment, the marker is put down, and the view stays where it is when the result arrives.
+	             is sent. The view still moves while the marker is up (Alt + drag, the middle and
+	             right buttons, the wheel), but what you see when you press Render is what is sent:
+	             seen from another side than you painted it from, the mask may no longer cover all
+	             it covered, and Qwen-Image then sees what you meant to hide. Once
+	             something is masked, a box beside it - in the empty room next to the model - asks
+	             whether you have anything to add: type it if you like ("a smooth armour plate with a
+	             few scratches"; Qwen-Image is told it after "remove the magenta-masked blob."), then
+	             press its "Render Masked" or Enter: Qwen-Image repaints what you masked as you see it
+	             at that moment, the marker is put down, and the view stays where it is when the
+	             result arrives. "No Facets", left of that button, blurs the depth picture Qwen-Image
+	             is shown until the model's flat faces and hard creases are gone from it, so it paints
+	             them rounded; it stays as you set it.
 	             It is shown your view with the mask, its depth, and the prop's own picture of the
 	             side you look from (front, back, left or right; the one it has otherwise) - not
-	             the model's present texture, which it would simply paint back. When you look from
+	             the model's present texture, which it would simply paint back. That picture's
+	             lighting is taken off first, so it is as flat as the texture: once per picture,
+	             before the first repaint from that side. When you look from
 	             behind the side that picture shows (a prop made from one picture, turned round),
 	             the picture is given mirrored, so the prop faces the way you see it. Only what
 	             you masked (and a few pixels around it) is drawn anew: everywhere else the
 	             drawing is held to your view, so the result is your view with that part restored.
-	             Each such repaint joins the list on the right, with its own x; click it and the
-	             "Edge fade" slider sets how far its edge blends into what is around it.
+	             It goes onto the model just as Qwen-Image painted it: unlike the stage's own views,
+	             no lighting is taken off it. While something is masked, the button at the bottom
+	             of the right panel reads "Render Masked" as well, so it cannot start a whole new
+	             Omni-Texture by mistake; with the marker put down (the box goes with it), that
+	             button renders the mask as you see it then, with the words you typed.
+	             A part that turns away from you - the cheeks of a face seen from the front - can be
+	             brought into sight with "Inverse perspective", the button under the mask marker. It
+	             bends the view round the model: what is farther shows larger, and the sides turn
+	             towards you. The slider to its left says how far (a quarter of the way there is no
+	             perspective left; beyond that it is inverse). "Render Masked" paints
+	             through that same bent view: the sides it shows you take the paint, down to what you
+	             see nearly edge on. A click on the button brings the usual view back, and
+	             the slider keeps its place for the next time. Turned far up, what lies close behind
+	             the part you look at grows very large or is cut away: turn it down a little then.
+	             Each such repaint joins the list on the right, with its own x and its own eye; click
+	             it beside the eye and the "Edge fade" slider sets how far its edge blends into what
+	             is around it.
 	             While the mask marker is up, the x to its left discards the mask (Ctrl+Z brings
 	             it back).
 	             Above the mask marker stand the same tools as in Projection, for small fixes by
 	             hand: a marker of any colour and a clone stamp (see Projection below), and on top
-	             Orbit, which puts the brush down. What they paint is saved as you paint. Ctrl+Z
+	             Orbit, which puts the brush down. Taking up any of them while "All" shows moves the
+	             view to "Base colour", where the paint shows flat; another view stays as it is.
+	             What they paint is saved as you paint. Ctrl+Z
 	             and Ctrl+Y step back and forth through your strokes, the repaints and the pictures
 	             taken off.
 	             You like a prop as it is and only want one part fixed, a face for example? Open
@@ -447,7 +483,9 @@
 	                             or paint guide strokes on the model, then press its "Accept" to keep
 	                             that mesh for the prop, picked. The viewer's texture buttons show the
 	                             detailed model's maps: "All" = lit like in a game, by small lights
-	                             that circle the model, "None" = the bare shape, or one map at a time.
+	                             that circle the model (each lights the side it passes, so the
+	                             light and the shade move over it), "None" = the bare shape, or one
+	                             map at a time.
 	             LATO.2          AI that lays out triangles the way an artist would. Runs on the
 	                             graphics card. It places 200 to 10,000 vertices: a size outside
 	                             that is made with the nearest of the two (the page says so).
@@ -507,7 +545,9 @@
 	             Small fixes by hand: in a column at the viewport's bottom right, a marker of any
 	             colour (the rainbow circle: a click opens the palette, Alt + click on the model picks
 	             a colour from it) and a clone stamp (Ctrl+click the model where to copy from, then
-	             paint the copy elsewhere); Orbit, at the column's foot, puts the brush down. The
+	             paint the copy elsewhere); Orbit, on top of the column, puts the brush down. Taking
+	             up a tool while "All" shows moves the view to "Base colour", where the paint shows
+	             flat; another view stays as it is. The
 	             slider sets the brush's size (or hold Shift and move sideways over the model); with
 	             a pen, "P" lets its pressure set the size and "F" how strongly the paint covers.
 	             What you paint goes into the colour map and is saved as you paint; Ctrl+Z takes
@@ -539,6 +579,8 @@
 	
 	When you go to another stage, the whole page swipes down (or up) to it. For short, plain
 	fades instead: Settings (the gear at the top right) > Advanced > Animations > "Reduced".
+	The explanations that appear when the pointer rests on a button can be switched off
+	there too: "Show tooltips".
 
 	Faster pictures: in the Images stage's panel on the right, switch on "Faster image
 	generation" (the Omni-Texture stage's panel has the same switch). It makes

@@ -373,18 +373,24 @@ function madeOf(block) {
   return { base: typeof model === 'string' ? model : null, repaints };
 }
 
+/** The record of the result the model shown lies on, when that was made again from the job's (block.bases), or undefined. */
+const baseOf = (block) => {
+  const { base } = madeOf(block);
+  return (Array.isArray(block.bases) ? block.bases : []).find((b) => b && b.glb === base);
+};
+
 /**
- * The painted views the model a prop's Omni-Texture (its `omnitexture` block) shows holds - not those taken off it
- * -, in the order they were painted. Per view its folder holds the painting, what went onto the model (with the
- * lighting taken off) and its layer: {folder, side, picture: what went onto the model, albedo: the lighting-off
- * picture or null, layer: its share of the texture alone or null, sheet: the folder of the sheet it was painted in
- * with others (what Qwen-Image was given lies there) or null, together: that sheet's sides}. Of a result composed
- * again without some (block.bases), the picture and the layer are its own. Paths are relative to the prop's folder.
+ * The painted views of the model a prop's Omni-Texture (its `omnitexture` block) shows - not those taken off it -,
+ * in the order they were painted: on it, or all of them hidden (omniViewsHidden). Per view its folder holds the
+ * painting, what went onto the model (with the lighting taken off) and its layer: {folder, side, picture: what
+ * went onto the model, albedo: the lighting-off picture or null, layer: its share of the texture alone or null,
+ * sheet: the folder of the sheet it was painted in with others (what Qwen-Image was given lies there) or null,
+ * together: that sheet's sides}. Of a result composed again without some (block.bases), the picture and the layer
+ * are its own. Paths are relative to the prop's folder.
  */
 export function omniViews(block) {
   if (!block?.glb) return [];
-  const { base } = madeOf(block);
-  const composed = (Array.isArray(block.bases) ? block.bases : []).find((b) => b && b.glb === base);
+  const composed = baseOf(block);
   const now = composed && new Map((Array.isArray(composed.views) ? composed.views : [])
     .filter((v) => v && typeof v.folder === 'string').map((v) => [v.folder, v]));
   const inFolder = (key) => new Map(pathsOf(block[key]).map((v) => [folderOf(v), v]));
@@ -413,9 +419,22 @@ export function omniViews(block) {
 }
 
 /**
+ * The artist hid the painted views of the model shown (the eye on one hides them all): it shows the 3D model's own
+ * texture in their place, under its repaints. The hub's adapters/omnitexture.py views_hidden reads the same.
+ */
+export const omniViewsHidden = (block) => !!block?.glb && baseOf(block)?.hidden === true;
+
+/**
+ * The eye on a prop's painted views (stages/omnitexture.js) is there: to hide them while the 3D model is the one they
+ * were painted on (the hub puts that model's own texture in their place), to show them again always.
+ */
+export const omniViewsEye = (box) => omniViewsHidden(box?.omnitexture) || omnitextureFresh(box);
+
+/**
  * The repaints the model shown holds - not those of steps taken back with Ctrl+Z, nor those taken off -, oldest
  * first: {glb: the model it made, picture, layer (or null), fade, fadable: the model it went onto is known, so the
- * hub can put it on again}. Paths are relative to the prop's folder.
+ * hub can put it on again, hidden: the artist hid it (the eye on it) - it is in its place, and not on the model}.
+ * Paths are relative to the prop's folder.
  */
 export function omniRepaints(block) {
   if (!block?.glb) return [];
@@ -425,6 +444,7 @@ export function omniRepaints(block) {
     layer: typeof r.layer === 'string' ? r.layer : null,
     fade: typeof r.fade === 'number' ? r.fade : 1,
     fadable: typeof r.under === 'string',
+    hidden: r.hidden === true,
   }));
 }
 
@@ -443,12 +463,12 @@ export const omniTakenOff = (box) => box?.omnitexture?.glb === TAKEN_OFF
  * the mask marker's walk is there), never on the only view, and on a view only while the 3D model is the one the
  * views were painted on (the hub composes the result again from it); the whole of a result that has painted views.
  * It waits while an Omni-Texture job of the prop waits or runs (`job`) or its Omni-Texture is being changed
- * (`changing`: a fade, a picture taken off).
+ * (`changing`: a fade, a picture hidden or taken off). No view is taken off while they are hidden.
  */
 export function omniTakeOff(box, { canRun = true, job = false, changing = false } = {}) {
   const views = omniViews(box?.omnitexture).length;
   return {
-    views: canRun && views > 1 && omnitextureFresh(box),
+    views: canRun && views > 1 && omnitextureFresh(box) && !omniViewsHidden(box.omnitexture),
     repaints: canRun,
     whole: canRun && views > 0,
     waits: !!job || !!changing,

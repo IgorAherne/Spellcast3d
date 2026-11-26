@@ -2,7 +2,8 @@
 
 The stage's cameras (VIEWS) see the model as its own pictures show it, since Qwen-Image draws it the way those do
 whatever the depth map says: level with it and flat. They are orthographic, so the most of the surface faces a
-camera squarely. A repaint looks through the page's own camera instead, a perspective one (Lens)."""
+camera squarely. A repaint looks through the page's own camera instead, a perspective one (Lens) - or that camera
+with its perspective turned down or inside out (BentLens), which shows more of a round shape's sides."""
 
 from __future__ import annotations
 
@@ -10,9 +11,16 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from omnitexture_masks import window_sum
 from omnitexture_tone import CLAY, GAMMA
 
-FACING = 0.5                 # the cosine a surface must face a camera with to be in its mask and take its picture
+# The cosine a surface must face a camera with to be in its mask and take its picture (`faced`): at less, the
+# picture holds under half the detail of it that it holds of a surface squarely faced.
+FACING = 0.5
+# How deep an inverse lens sees, of the way from its own plane to where its lines of sight meet: nearer to that
+# point a surface would fill the picture many times over. The page's viewer shows nothing beyond it either
+# (viewer3d.js LENS_REACH; a test holds the two together).
+LENS_REACH = 0.875
 MARGIN = 1.08                # the model's box fills the picture but this much
 RING_ELEVATION = 0.0         # degrees the six cameras around the model look down at it
 # From above and below at a slant, not straight down or up: the rest of the figure stays in sight, so Qwen-Image
@@ -32,6 +40,10 @@ VIEWS = (
 )
 AROUND = 6                   # the first of VIEWS are the cameras around the model
 DEPTH_FAR = 0.1              # the farthest surface's grey in the depth map (the nearest is white, the background black)
+# A repaint's "No Facets" (smooth_depth): the depth map blurred so far that the model's facets and the creases
+# between them are gone from it - by this share of the picture's side, so a larger picture loses as much.
+SMOOTH_SIDE = 1.0 / 100.0
+SMOOTH_PASSES = 3
 # The model as the page's bare clay (CLAY), lit, which the settings' test may show in the depth map's place:
 # Lambert, no shadows cast, the model's own normals, so its shapes show as light and shade.
 LIGHT = (0.4, 0.3, 1.0)      # towards the light, along the camera's right / up / back: slightly to the side, above
@@ -72,6 +84,11 @@ class Camera:
         """A pixel's side at that depth, in the model's units."""
         return 1.0 / self.ppu
 
+    def larger(self, depth: np.ndarray) -> float:
+        """How many times larger it shows what lies at `depth` than what lies at its own plane, where larger at
+        all: an inverse lens alone shows the deeper larger (BentLens)."""
+        return 1.0
+
 
 @dataclass
 class Lens:
@@ -85,17 +102,11 @@ class Lens:
     width: int
     height: int
 
-    @classmethod
-    def looking(cls, eye: list[float], forward: list[float], up: list[float], tan: float, size: int) -> Lens | None:
-        """The lens at `eye` looking along `forward`, `up` up, its square picture of `size` px spanning the half
-        angle of tangent `tan`; None when forward and up are one line, or the angle is none."""
-        f = np.asarray(forward, np.float64)
-        f /= max(np.linalg.norm(f), 1e-12)
-        r = np.cross(f, np.asarray(up, np.float64))
-        if np.linalg.norm(r) < 1e-9 or not np.isfinite(tan) or tan <= 0:
-            return None
-        r /= np.linalg.norm(r)
-        return cls(np.asarray(eye, np.float64), f, r, np.cross(r, f), size / 2.0 / float(tan), size, size)
+    reach = np.inf           # how deep it sees, from `eye` along `forward`
+
+    def origins(self) -> np.ndarray:
+        """Where each pixel's ray starts: at `eye`, all of them."""
+        return np.broadcast_to(self.eye, (self.width * self.height, 3))
 
     def rays(self) -> np.ndarray:
         """Each pixel's direction from `eye` (unit), row-major."""
@@ -117,6 +128,96 @@ class Lens:
 
     def step(self, depth: np.ndarray) -> np.ndarray:
         return depth / self.focal
+
+    def larger(self, depth: np.ndarray) -> float:
+        return 1.0
+
+
+@dataclass
+class BentLens:
+    """The page's camera with its perspective turned down or inside out ("Inverse perspective": viewer3d.js
+    LensCamera). Half its square picture's side at depth z - from `eye` along `forward` - is wide + tan * z, in
+    the model's units: every pixel looks from its own place on the plane through `eye` (`wide` across), along
+    its own line. tan 0: no perspective. Below 0: inverse - the lines meet behind the model, at depth
+    wide / -tan, so what is farther shows larger and the sides of a round shape face the camera. It sees no
+    deeper than LENS_REACH of the way there (`reach`). A Lens in all it is asked."""
+    eye: np.ndarray
+    forward: np.ndarray
+    right: np.ndarray
+    up: np.ndarray
+    tan: float
+    wide: float
+    width: int
+    height: int
+
+    @property
+    def reach(self) -> float:
+        return LENS_REACH * self.wide / -self.tan if self.tan < 0 else np.inf
+
+    def _across(self, scale: float) -> np.ndarray:
+        """Per pixel, row-major: its place in the picture - from -1 to 1 along `right` and `up` - times `scale`."""
+        u = (np.arange(self.width) + 0.5 - self.width / 2.0) / (self.width / 2.0) * scale
+        v = (self.height / 2.0 - np.arange(self.height) - 0.5) / (self.height / 2.0) * scale
+        return (u[:, None] * self.right)[None, :, :] + (v[:, None] * self.up)[:, None, :]
+
+    def origins(self) -> np.ndarray:
+        return (self.eye + self._across(self.wide)).reshape(-1, 3)
+
+    def rays(self) -> np.ndarray:
+        out = (self.forward + self._across(self.tan)).reshape(-1, 3)
+        return out / np.linalg.norm(out, axis=1, keepdims=True)
+
+    def place(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """As Lens.place; a point it cannot see - behind its plane, or deeper than its reach - is given no depth
+        (-1)."""
+        rel = points - self.eye
+        z = rel @ self.forward
+        seen = (z > 0) & (z <= self.reach)
+        scale = self.width / 2.0 / np.where(seen, self.wide + self.tan * z, 1.0)
+        return self.width / 2.0 + (rel @ self.right) * scale - 0.5, \
+            self.height / 2.0 - (rel @ self.up) * scale - 0.5, np.where(seen, z, -1.0)
+
+    def facing(self, points: np.ndarray, normals: np.ndarray) -> np.ndarray:
+        rel = points - self.eye
+        bend = self.tan / np.maximum(self.wide + self.tan * (rel @ self.forward), 1e-12)
+        along = self.forward + (bend * (rel @ self.right))[:, None] * self.right \
+            + (bend * (rel @ self.up))[:, None] * self.up          # the line of sight through each point
+        return -(normals * along).sum(axis=1) / np.linalg.norm(along, axis=1)
+
+    def step(self, depth: np.ndarray) -> np.ndarray:
+        return (self.wide + self.tan * depth) * 2.0 / self.width
+
+    def larger(self, depth: np.ndarray) -> np.ndarray:
+        return np.maximum(1.0, self.wide / (self.wide + self.tan * depth))
+
+
+PageLens = Lens | BentLens       # the page's camera, as a repaint looks through it
+
+
+def page_lens(eye: list[float], forward: list[float], up: list[float], tan: float, size: int,
+              wide: float = 0.0) -> PageLens | None:
+    """The page's camera at `eye` looking along `forward`, `up` up, its square picture of `size` px: a Lens
+    spanning the half angle of tangent `tan` or, with `wide`, a BentLens. None when forward and up are one line,
+    or the picture spans nothing."""
+    f = np.asarray(forward, np.float64)
+    f /= max(np.linalg.norm(f), 1e-12)
+    r = np.cross(f, np.asarray(up, np.float64))
+    if np.linalg.norm(r) < 1e-9 or not np.isfinite(tan) or not np.isfinite(wide) or wide < 0 \
+            or (tan <= 0 and wide == 0):
+        return None
+    r /= np.linalg.norm(r)
+    axes = np.asarray(eye, np.float64), f, r, np.cross(r, f)
+    if wide:
+        return BentLens(*axes, float(tan), float(wide), size, size)
+    return Lens(*axes, size / 2.0 / float(tan), size, size)
+
+
+def faced(cam: Camera | PageLens, cosine: np.ndarray, depth: np.ndarray) -> np.ndarray:
+    """Whether a camera's picture may go onto the surfaces it faces with `cosine` at `depth`: at FACING or more.
+    An inverse lens draws the deeper of them larger, the more so the further it is turned inside out, which
+    makes up for their slant: there the cosine counts times `larger`. So the sides of a round shape, which that
+    lens turns into sight, take its picture; by the lens alone, whatever else is in the picture."""
+    return cosine * cam.larger(depth) >= FACING
 
 
 def frame(positions: np.ndarray, azimuth: float,
@@ -173,6 +274,21 @@ def depth_grey(depth: np.ndarray) -> np.ndarray:
     return np.round(255.0 - (255.0 - 255.0 * DEPTH_FAR) * (depth - near) / max(far - near, 1e-9)).astype(np.uint8)
 
 
+def smooth_depth(depth: np.ndarray, sigma: float, most: float) -> np.ndarray:
+    """`depth` ((h, w); inf where the camera sees no model) blurred by about `sigma` pixels, in SMOOTH_PASSES box
+    blurs (a Gaussian, near enough), within the model alone: each pixel becomes the mean of the model's pixels
+    around it, so the background takes no depth and does not darken the model's rim. No pixel moves from its own
+    depth by more than `most`: a part that stands in front of another still does."""
+    model = np.isfinite(depth)
+    own = np.where(model, depth, 0.0)
+    r = max(1, round((np.sqrt(12.0 * sigma * sigma / SMOOTH_PASSES + 1.0) - 1.0) / 2.0))
+    counted = np.maximum(window_sum(model, r), 1.0)
+    out = own
+    for _ in range(SMOOTH_PASSES):
+        out = np.where(model, window_sum(out, r) / counted, 0.0)
+    return np.where(model, np.clip(out, own - most, own + most), np.inf)
+
+
 @dataclass
 class Met:
     """Where a camera's rays meet the model: per pixel whether it does (`hit`), and per such pixel, in order, its
@@ -195,9 +311,11 @@ class Met:
         return normal
 
 
-def cast(scene: Any, faces: np.ndarray, origins: np.ndarray, directions: np.ndarray) -> Met:
-    """The rays cast into the scene (spellbake.rays.Scene): the first surface each meets from its front."""
-    hits = scene.first_front_hit(origins, directions, np.inf)
+def cast(scene: Any, faces: np.ndarray, origins: np.ndarray, directions: np.ndarray,
+         limit: float | np.ndarray = np.inf) -> Met:
+    """The rays cast into the scene (spellbake.rays.Scene): the first surface each meets from its front, no
+    farther along it than `limit`."""
+    hits = scene.first_front_hit(origins, directions, limit)
     hit = hits.prim >= 0
     u, v = hits.u[hit], hits.v[hit]
     return Met(hit, faces[hits.prim[hit]], ((1.0 - u - v)[:, None], u[:, None], v[:, None]), hits.t[hit])
@@ -229,7 +347,7 @@ def see(cam: Camera, scene: Any, mesh: Any, smooth: np.ndarray, res: int) -> Sig
     depth = met.t                                # along forward, from the picture plane
     buffer = np.full(met.hit.size, np.inf)
     buffer[met.hit] = depth
-    facing = met.unit(smooth) @ -cam.forward >= FACING
+    facing = faced(cam, met.unit(smooth) @ -cam.forward, depth)
     own = met.unit(mesh.normals)
     return Sight(met.hit, np.flatnonzero(met.hit), row * res + col, facing, depth_grey(depth), lit_clay(own, cam),
                  normal_map(own, cam), buffer.reshape(cam.height, cam.width))

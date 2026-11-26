@@ -7,8 +7,9 @@
 // the 3D model (the switch at its top right); on the right, the pictures that went onto the model: with the pointer
 // over one the model shows that view's share alone, drawn as the view chosen under the viewport draws the model
 // (viewer3d.js setLayer); Alt + click on one shows what Qwen-Image was given for it and what it answered (showInputs);
-// its × takes it off the model again (takeOff: Ctrl+Z brings it back). Retopo reads the 3D model's shape either way;
-// Projection bakes the result's colours while it is used (rules.omnitextureUsed).
+// its × takes it off the model again (takeOff: Ctrl+Z brings it back), and the eye in its middle hides it there or
+// shows it again (setHidden: the painted views all together, a repaint alone). Retopo reads the 3D model's shape
+// either way; Projection bakes the result's colours, as shown, while it is used (rules.omnitextureUsed).
 // The artist may paint with the marker and the clone stamp of the viewport's bottom-right corner (saved into the step
 // shown as hand paint), and mask what came out wrong with the mask marker and have it painted again as seen from
 // there ("Render Masked": stages/maskbar.js) - on an Omni-Texture, and as well on any prop's 3D model, chosen or not:
@@ -31,7 +32,7 @@ import {
 } from './common.js';
 import {
   TAKEN_OFF, omniBatch, omniChosen, omniOwn, omniRepaints, omniStatus, omniTakeOff, omniTakenOff, omniTextured,
-  omniViews, omnitextureFresh, tileable,
+  omniViews, omniViewsEye, omniViewsHidden, omnitextureFresh, tileable,
 } from './rules.js';
 import { ring } from '../shell/anim.js';
 import { DEFAULT_VIEW, modelPane, rememberWireframe, wireframeOn } from './preview.js';
@@ -44,6 +45,19 @@ const INTRO = 'Tick the box beside each prop on the left that needs Omni-Texture
   + 'also paint on it, or mask a part and have only that painted again, without choosing it.';
 const TICK = 'Tick the box beside its tile on the left to choose it for Omni-Texture.';
 const WHOLE = 'Take the whole Omni-Texture off this model';
+// The eye in the middle of a picture of the list, by what a click on it does.
+const VIEWS_EYE = {
+  hide: 'Hide the painted views - all of them, they go together: the model shows its own texture in their place',
+  show: 'Show the painted views on the model again',
+};
+const REPAINT_EYE = { hide: 'Hide this repaint: the model shows what is under it', show: 'Show this repaint on the model again' };
+// The side panel's button: the whole Omni-Texture anew, or - while something is masked - the mask alone.
+const AGAIN = { words: 'Paint it again', title: 'Paints this prop’s Omni-Texture anew (the one it has now is replaced)' };
+const MASKED = {
+  words: 'Render Masked',
+  title: 'Qwen-Image repaints only what you masked, as you see it from here. (Put the mask marker down and discard '
+    + 'the mask to paint the whole Omni-Texture again.)',
+};
 const WHAT = 'Qwen-Image 2.1 paints the 3D model from a few sides and the pictures are projected back onto it: a new, sharper '
   + 'colour texture. The shape stays the same, and Project bakes these colours.';
 const LIVE_LINGER_MS = 600;   // the last rough picture stays this long after its prop: the model arrives meanwhile
@@ -79,14 +93,17 @@ const SHOWN_AS = {
 };
 
 // What a repaint's pictures are, by their number (adapters/omnitexture.py RETOUCH_PICTURES and the example). The
-// example is the prop's own picture (request.json's retouch.example names its side; retouch.mirrored: given flipped
-// left to right, the camera looking from behind that side); before that it was the model from the nearest camera
-// around it (retouch.example_view), and at first your view without the mask. `held`: the painting was drawn anew
-// where the view is masked and held to the view elsewhere (request.json's redrawn); before that it started from it.
-const repaintGiven = ({ example, mirrored, example_view: from } = {}, held = false) => ({
+// example is the prop's own picture (request.json's retouch.example names its side; retouch.delit: its lighting was
+// taken off first; retouch.mirrored: given flipped left to right, the camera looking from behind that side); before
+// that it was the model from the nearest camera around it (retouch.example_view), and at first your view without
+// the mask. retouch.smooth: the depth map went without the model's facets ("No Facets"). `held`: the painting was
+// drawn anew where the view is masked and held to the view elsewhere (request.json's redrawn); before that it
+// started from it.
+const repaintGiven = ({ example, mirrored, delit, smooth, example_view: from } = {}, held = false) => ({
   1: `Picture 1, also what it ${held ? 'is held to outside the mask' : 'starts from'}: your view of the model, what you masked in magenta`,
-  2: 'Picture 2: the depth map from there',
-  3: `Picture 3, the example: ${example ? `the prop’s own picture of its ${example}${mirrored ? ', mirrored: you look from behind it' : ''}`
+  2: `Picture 2: the depth map from there${smooth ? ', its facets blurred away (No Facets)' : ''}`,
+  3: `Picture 3, the example: ${example ? `the prop’s own picture of its ${example}${delit ? ', its lighting taken off' : ''}${
+    mirrored ? ', mirrored: you look from behind it' : ''}`
     : from ? `the model from the ${from}, the nearest camera around it` : 'the model without the mask'}`,
 });
 
@@ -107,7 +124,7 @@ async function showInputs(prop, shown) {
     const res = await fetch(whole('request.json'));
     if (!res.ok) throw new Error(`The record of this picture could not be read (error ${res.status}).`);
     record = await res.json();
-    // A repaint's lighting is taken off when the add-on is there: its file says so (the picture is shown below).
+    // A repaint made when a repaint's lighting was still taken off kept that picture: its file says so.
     if (shown.repaint) lightOff = (await fetch(whole('albedo.png'))).ok;
   } catch (e) {
     toastError(e);
@@ -167,6 +184,7 @@ async function showInputs(prop, shown) {
       h('div', { class: 'hint' }, `Qwen-Image 2.1${record.model === 'full' ? '' : ' Turbo'} · seed ${record.seed} · `
         + `${record.steps} steps · strength ${record.strength}`
         + (tries > 1 ? ` · the ${tries === 2 ? 'second' : 'third'} picture (the ones before kept the mask’s shape)` : '')
+        + (record.retouch?.wide ? ` · seen ${record.retouch.tan < 0 ? 'in inverse perspective' : 'with less perspective'}` : '')
         + (shown.sheet ? ` · ${record.width} × ${record.height} px, the views: ${(shown.together || []).join(', ')}` : '')),
       field('Pictures given, in this order', h('div', { class: 'ot-inputs-grid' }, given)),
       field('What came back', h('div', { class: 'ot-inputs-grid' }, back)),
@@ -302,8 +320,10 @@ function buildProp(prop) {
   const live = h('div', { class: 'sv-live', hidden: true }, h('span', { class: 'sv-live-tag' }, 'Rough preview'));
   const go = goButton({ before: () => mask.settle() });
   // The prop is being worked on (its job starting, a fade, a picture being taken off): nothing paints meanwhile.
+  let maskChanged = () => {};       // (set once the side panel's button is there)
   const mask = createMaskBar({
-    busy: () => !!jobFor('omnitexture', id) || starting || go.starting() || !!removing || fade.fading(),
+    busy: () => !!jobFor('omnitexture', id) || starting || go.starting() || !!changing || fade.fading(),
+    changed: () => maskChanged(),
   });
   pane.stage.append(mask.cover, live, busy, go, mask.el);
   const media = h('div', { class: 'sv-media' }, pane.el);
@@ -463,49 +483,82 @@ function buildProp(prop) {
   // model without it is the prop's next step, so Ctrl+Z (stages/maskbar.js) shows the picture again. The × beside
   // the heading takes the whole Omni-Texture off the same way: the step after it is none of its models
   // (rules.js TAKEN_OFF), and the prop shows its 3D model.
+  // The eye in a picture's middle hides it on the model, or shows it again (POST .../omnitexture/hide, the worker
+  // alone too): the picture stays in the list, dim. As a fade, that is no step of its own - the eye takes it back.
   const whole = h('button', {
     type: 'button', class: 'ot-x', hidden: true, title: `${WHOLE} (Ctrl+Z brings it back)`, 'aria-label': WHOLE,
     onclick: () => takeOff({ whole: true }, pictures),
   }, icon('x'));
   const picturesBox = h('div', { class: 'field', hidden: true },
     h('div', { class: 'field-label' }, h('span', null, 'Painted views'), whole), pictures, fade.row);
-  let removing = null;      // what is being taken off: a picture's tile, or all of them
-  const waits = () => omniTakeOff(cur(), { job: jobFor('omnitexture', id), changing: removing || fade.fading() })
+  let changing = null;      // the tiles whose pictures are being hidden, shown or taken off
+  const waits = () => omniTakeOff(cur(), { job: jobFor('omnitexture', id), changing: changing || fade.fading() })
     .waits;
   function syncFade() {
     fade.show(repaints[picked] || null,
-      { any: repaints.length > 0, locked: !!jobFor('omnitexture', id) || !!removing });
+      { any: repaints.length > 0, locked: !!jobFor('omnitexture', id) || !!changing });
     pictures.querySelectorAll('.ot-repaint').forEach((node, i) => node.classList.toggle('picked', i === picked));
-    for (const x of [whole, ...pictures.querySelectorAll('.ot-x')]) x.disabled = waits();
+    for (const kind of ['.ot-x', '.ot-eye']) {
+      for (const button of pictures.querySelectorAll(kind)) button.disabled = waits();
+    }
+    whole.disabled = waits();
   }
-  async function takeOff(what, tile) {
+  /**
+   * A change of the pictures on the model shown, asked of the hub (POST .../omnitexture/<verb> with `body`) while
+   * `tiles` wait; told(project, answer) hears its answer before the prop it brings is shown.
+   */
+  async function change(verb, body, tiles, told) {
     if (waits()) return;
     const project = projectId();
-    removing = tile;
-    tile.classList.add('removing');
+    changing = tiles;
+    for (const waiting of tiles) waiting.classList.add('changing');
     picked = -1;
     syncFade();
     try {
       await mask.settle();
-      const done = await api('POST', `${propApi(project, id)}/omnitexture/remove`,
-        { glb: cur().omnitexture?.glb, ...what });
-      if (what.whole) tookOff(project, id);
+      const done = await api('POST', `${propApi(project, id)}/omnitexture/${verb}`,
+        { glb: cur().omnitexture?.glb, ...body });
+      told(project, done);
       if (projectId() === project) replaceProp(done.prop);
     } catch (e) {
       toastError(e);
     } finally {
-      tile.classList.remove('removing');
-      removing = null;
+      for (const waiting of tiles) waiting.classList.remove('changing');
+      changing = null;
       syncFade();
     }
   }
-  /** A picture of the list in its tile, with the × that takes it off the model (`what`, as the hub names it) if given. */
-  function tile(picture, what, words) {
-    const box = h('div', { class: 'ot-tile' }, picture);
-    if (what) {
+  const takeOff = (what, tile) => change('remove', what, [tile], (project) => {
+    if (what.whole) tookOff(project, id);
+  });
+  /** what: {repaint: the model it made} or {views: true} - the painted views go together, all of them. */
+  const setHidden = (what, hidden, tiles) => change('hide', { ...what, hidden }, tiles,
+    (project, done) => renameModels(project, id, done.renamed));
+  /**
+   * A picture of the list in its tile. While the pointer is on it the model shows its `layer` alone (`enter`: what
+   * else happens then). eye: {hidden: it is hidden now, words, toggle(tile)} - the eye in its middle, which hides
+   * it or shows it again; Alt + click there is the picture's own (`inputs`). take: {what: as the hub names it,
+   * words} - the × in its corner, which takes it off the model.
+   */
+  function tile(picture, { layer, enter, inputs, eye, take }) {
+    const box = h('div', {
+      class: `ot-tile${eye?.hidden ? ' off' : ''}`,
+      onpointerenter: () => {
+        showLayer(layer);
+        enter?.();
+      },
+      onpointerleave: () => showLayer(null),
+    }, picture);
+    if (eye) {
       box.append(h('button', {
-        type: 'button', class: 'ot-x', title: `${words} (Ctrl+Z brings it back)`, 'aria-label': words,
-        onclick: () => takeOff(what, box),
+        type: 'button', class: 'ot-eye', title: eye.words, 'aria-label': eye.words,
+        onclick: (e) => (e.altKey ? inputs() : eye.toggle(box)),
+      }, icon(eye.hidden ? 'eyeoff' : 'eye')));
+    }
+    if (take) {
+      box.append(h('button', {
+        type: 'button', class: 'ot-x', title: `${take.words} (Ctrl+Z brings it back)`, 'aria-label': take.words,
+        onclick: () => takeOff(take.what, box),
       }, icon('x')));
     }
     return box;
@@ -513,9 +566,16 @@ function buildProp(prop) {
   const gate = gateLine('omnitexture');
   const error = errorLine('omnitexture');
   let starting = false;
+  // The panel's own button paints the prop's whole Omni-Texture anew - but not while the artist is masking: then
+  // it is the mask bar's "Render Masked", so a press meant for the mask never replaces the whole texture.
+  const againWords = h('span', null, AGAIN.words);
   const againBtn = h('button', {
-    class: 'btn ghost sv-wide', title: 'Paints this prop’s Omni-Texture anew (the one it has now is replaced)',
+    class: 'btn ghost sv-wide', title: AGAIN.title,
     onclick: async () => {
+      if (mask.masking()) {
+        mask.render();
+        return;
+      }
       if (starting) return;
       starting = againBtn.disabled = true;
       await mask.settle();
@@ -523,7 +583,19 @@ function buildProp(prop) {
       starting = false;
       sync(cur());
     },
-  }, icon('sparkles'), 'Paint it again');
+  }, icon('sparkles'), againWords);
+  function syncAgain() {
+    const masking = mask.masking();
+    const says = masking ? MASKED : AGAIN;
+    if (againWords.textContent !== says.words) {
+      againWords.textContent = says.words;
+      againBtn.title = says.title;
+      againBtn.classList.toggle('primary', masking);
+      againBtn.classList.toggle('ghost', !masking);
+    }
+    againBtn.disabled = starting || (masking && mask.working());
+  }
+  maskChanged = syncAgain;
   const foot = h('div', { class: 'sv-foot' }, error, gate, againBtn);
   // The hub's "Faster image generation" (faster.js): the repaints are Qwen-Image's pictures too. Apart from the rest.
   const faster = fasterSwitch('images');
@@ -558,9 +630,10 @@ function buildProp(prop) {
       ['Seed', st.seed ?? null],
     ], notes));
     const offered = omniTakeOff(p, { canRun: canRun() });
+    const viewsOff = omniViewsHidden(block);
     whole.hidden = !offered.whole;
-    const key = [offered.views, offered.repaints, ...[...views, ...repaints].map((v) => `${v.picture}>${v.layer}`)]
-      .join('|');
+    const key = [offered.views, offered.repaints, viewsOff, omniViewsEye(p),
+      ...[...views, ...repaints].map((v) => `${v.picture}>${v.layer}>${!!v.hidden}`)].join('|');
     if (key === shownViews) {
       syncFade();
       return;
@@ -568,42 +641,61 @@ function buildProp(prop) {
     shownViews = key;
     showLayer(null);
     picturesBox.hidden = !views.length && !repaints.length;
-    pictures.replaceChildren(
-      ...views.map((v, i) => tile(viewThumb(v, i, views), offered.views && { view: v.folder },
-        'Take this view off the model')),
-      ...repaints.map((r, i) => tile(repaintThumb(r, i, repaints), offered.repaints && { repaint: r.glb },
-        'Take this repaint off the model')));
+    const viewTiles = views.map((v, i) => tile(viewThumb(v, i, views, viewsOff), {
+      layer: v.layer,
+      inputs: () => showInputs(cur(), v),
+      eye: omniViewsEye(p) && {
+        hidden: viewsOff, words: viewsOff ? VIEWS_EYE.show : VIEWS_EYE.hide,
+        toggle: () => setHidden({ views: true }, !viewsOff, viewTiles),
+      },
+      take: offered.views && { what: { view: v.folder }, words: 'Take this view off the model' },
+    }));
+    const repaintTiles = repaints.map((r, i) => {
+      const inputs = () => showInputs(cur(), { folder: r.folder, repaint: i + 1 });
+      return tile(repaintThumb(r, i, repaints, inputs), {
+        layer: r.layer,
+        enter: () => fade.ready(r),
+        inputs,
+        eye: r.fadable && {
+          hidden: r.hidden, words: r.hidden ? REPAINT_EYE.show : REPAINT_EYE.hide,
+          toggle: (box) => setHidden({ repaint: r.glb }, !r.hidden, [box]),
+        },
+        take: offered.repaints && { what: { repaint: r.glb }, words: 'Take this repaint off the model' },
+      });
+    });
+    pictures.replaceChildren(...viewTiles, ...repaintTiles);
     syncFade();
   }
 
-  /** A painted view's picture: pointed at, the model shows the view alone; clicked, what Qwen-Image was given. */
-  const viewThumb = (v, i, views) => h('img', {
+  /** A painted view's picture: pointed at, the model shows the view alone; Alt + click, what Qwen-Image was given. */
+  const viewThumb = (v, i, views, hidden) => h('img', {
     class: `ot-view${v.layer ? ' has-layer' : ''}`, src: v.picture, alt: `The ${v.side} view`,
-    title: `The ${v.side} view (${i + 1} of ${views.length}), as it went onto the model.${
-      v.layer ? ' While the pointer is here, the model shows this view alone.' : ''
+    title: `The ${v.side} view (${i + 1} of ${views.length}), ${hidden
+      ? 'hidden with the other painted views: the model shows its own texture in their place.'
+      : 'as it went onto the model.'}${
+      v.layer ? ` While the pointer is here, the model shows ${hidden ? 'what this view painted' : 'this view alone'}.` : ''
     } ${INPUTS_KEY}`,
     loading: 'lazy', draggable: 'false',
-    onpointerenter: () => showLayer(v.layer), onpointerleave: () => showLayer(null),
     onclick: (e) => { if (e.altKey) showInputs(cur(), v); },
   });
 
-  /** A repaint's picture: pointed at, the model shows where it went on; clicked, it is picked for the edge fade. */
-  const repaintThumb = (made, i, all) => h('img', {
+  /**
+   * A repaint's picture: pointed at, the model shows where it went on; clicked, it is picked for the edge fade
+   * (not while it is hidden: there is no edge to see).
+   */
+  const repaintThumb = (made, i, all, inputs) => h('img', {
     class: `ot-view ot-repaint${made.layer ? ' has-layer' : ''}`, src: made.picture, alt: `Repaint ${i + 1}`,
-    title: `Repaint ${i + 1} of ${all.length}: what you masked and had painted again, as your view saw it.${
-      made.layer ? ' While the pointer is here, the model shows where it went on.' : ''
-    } Click: pick it for the edge fade below. ${INPUTS_KEY}`,
+    title: `Repaint ${i + 1} of ${all.length}: what you masked and had painted again, as your view saw it${
+      made.hidden ? ' - hidden: it is not on the model.' : '.'}${
+      made.layer ? ` While the pointer is here, the model shows where it ${made.hidden ? 'lies' : 'went on'}.` : ''
+    }${made.hidden ? '' : ' Click: pick it for the edge fade below.'} ${INPUTS_KEY}`,
     loading: 'lazy', draggable: 'false',
-    onpointerenter: () => {
-      showLayer(made.layer);
-      fade.ready(made);
-    },
-    onpointerleave: () => showLayer(null),
     onclick: (e) => {
       if (e.altKey) {
-        showInputs(cur(), { folder: made.folder, repaint: i + 1 });
+        inputs();
         return;
       }
+      if (made.hidden) return;
       picked = picked === i ? -1 : i;
       syncFade();
       if (picked === i) fade.ready(made);
@@ -617,7 +709,7 @@ function buildProp(prop) {
       thumbUrl(p, 'omnitexture') || thumbUrl(p, 'mesh')
       || (p.images?.chosen ? thumbUrl(p, 'images') || boxFile(p, p.images.chosen, 'images') : null));
     againBtn.hidden = !chosen || !omniTextured(p) || !!j || !canRun();
-    againBtn.disabled = starting;
+    syncAgain();
     gate.sync();
     error.sync(p);
     busy.sync(p);

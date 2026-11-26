@@ -261,6 +261,36 @@ class Hub:
         finally:
             self.fading.discard((project, prop_id))
 
+    async def hide_in_omnitexture(self, project: str, prop_id: str, glb: Any, repaint: Any, views: bool,
+                                  hidden: bool) -> dict[str, Any]:
+        """The eye on a picture of the model shown, `glb`: a repaint (`repaint`: the model it made) or the painted
+        views, all at once (`views`), hidden or shown again (adapters/omnitexture.py refade, show_views: the
+        worker alone, no image generator) -> {"prop", "renamed": {step as it was: step as it is}}."""
+        from .adapters import omnitexture
+
+        self.check_omnitexture_idle(project, prop_id)
+        self.fading.add((project, prop_id))
+        try:
+            prop = self.store.get_prop(project, prop_id)
+            if glb != prop["omnitexture"].get("glb"):
+                raise ProjectError("This prop's Omni-Texture changed meanwhile. Reload the page and try again.", 409)
+            prop_dir = self.store.prop_dir(project, prop_id)
+            try:
+                if views:
+                    made = await asyncio.to_thread(omnitexture.show_views, prop_dir, prop, hidden)
+                else:
+                    made = await asyncio.to_thread(omnitexture.refade, prop_dir, prop["omnitexture"], repaint, None,
+                                                   hidden)
+            except StageError as e:
+                raise ProjectError(str(e), 409) from e
+            if made is None:                    # (the views are so already)
+                return {"prop": prop, "renamed": {}}
+            patch, renamed = made
+            prop = await asyncio.to_thread(self.store.apply_stage_patch, project, prop_id, "omnitexture", patch)
+            return {"prop": prop, "renamed": renamed}
+        finally:
+            self.fading.discard((project, prop_id))
+
     async def own_omnitexture(self, project: str, prop_id: str) -> dict[str, Any]:
         """The prop's 3D model becomes the first step of a result of its own texture, so that the artist may paint
         on it and mask it without an Omni-Texture job (adapters/omnitexture.py begin_own) -> {"prop"}. A prop that
@@ -1041,6 +1071,19 @@ def create_app(adapters: dict[str, ToolAdapter] | None = None, *,
         is no longer kept; 422 another fade."""
         return await hub.fade_omnitexture(project, prop_id, body.get("glb"), body.get("fade"),
                                            prepare=body.get("prepare") is True)
+
+    @app.post("/api/projects/{project}/props/{prop_id}/omnitexture/hide")
+    async def hide_in_omnitexture(project: str, prop_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """{"glb": the model the page shows, "repaint": the model a repaint made | "views": true, "hidden": true |
+        false}: the eye on a picture - that repaint, or the painted views all at once, no longer shows on the
+        model, or shows again; it stays in the list either way. The image generator is not needed -> {"prop",
+        "renamed": {step as it was: step as it is now}} (as a fade: the steps that hold it are new files, none is
+        added). 409 while an Omni-Texture job of the prop waits or runs or another change of it is being made,
+        when the page shows another model, or what it takes is no longer kept; 422 without "hidden"."""
+        if not isinstance(body.get("hidden"), bool):
+            raise ProjectError("A picture is either hidden or shown. Reload the page and try again.", 422)
+        return await hub.hide_in_omnitexture(project, prop_id, body.get("glb"), body.get("repaint"),
+                                             body.get("views") is True, body["hidden"])
 
     @app.post("/api/projects/{project}/props/{prop_id}/omnitexture/own")
     async def own_omnitexture(project: str, prop_id: str) -> dict[str, Any]:

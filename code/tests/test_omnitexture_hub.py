@@ -1247,7 +1247,12 @@ class FakeLook(FakeWorker):
             for kept in ("keep", "layer"):
                 if request.get(kept):
                     Path(request[kept]).write_bytes(PNG)
-            return {"painted": 850, "matched": 4000}
+            return {"painted": 850}
+        if cmd == "fit":
+            self.calls.append(request)
+            Path(request["out"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(request["out"]).write_bytes(b"fit " + Path(request["picture"]).read_bytes())
+            return {"picture": request["out"], "size": [1024, 1024]}
         return super().call(request)
 
 
@@ -1303,19 +1308,22 @@ def test_a_repaint_shows_qwen_image_the_pages_view_and_makes_a_new_step(tmp_path
     without the stage's plan, and looks through the page's camera; Qwen-Image gets the viewport with the mask in
     magenta, the depth map and the example - the prop's own picture of the side that camera looks from most, here
     its front, and no other picture of the model -, in that order, with the repaint's words and a seed of its own; its picture is looked at for the
-    mask's shape, the lighting comes off it and it goes onto the masked surface. The result is a new folder
+    mask's shape and goes onto the masked surface as it was painted: its lighting is not taken off (the add-on is
+    asked for the example picture alone) and the worker matches no tone. The result is a new folder
     beside the one it was made from and one more of the prop's steps; its views stay the first result's, its
     numbers too, with what the repaint did. A prop without pictures of its own gets no example."""
     _patch, _worker, bare, _dir = _retouch(tmp_path / "bare", monkeypatch, FakeAlbedo())
     assert [Path(p).name for p in bare[0]["ref_images"]] == ["1-viewport.png", "2-depth.png"]
-    _patch, _worker, behind, _dir = _retouch(tmp_path / "behind", monkeypatch, FakeAlbedo(), own=("0_back.png", "1_front.png"),
+    # (Which picture is the example, and whether it is mirrored: told here without the add-on, so the picture
+    # goes as it is. With it, its lighting comes off first: the test after this one.)
+    _patch, _worker, behind, _dir = _retouch(tmp_path / "behind", monkeypatch, FakeAlbedo(ready=False), own=("0_back.png", "1_front.png"),
                                              params={"retouch": {**RETOUCH, "forward": [0.0, -0.1, 1.0]}})
     assert Path(behind[0]["ref_images"][-1]).name == "0_back.png", "masked from behind: the prop's picture of its back"
     # One picture alone, the front its 3D model was made from, and the camera behind it: the prop faces the other
     # way there, so the picture is given mirrored (the worker flips it into the repaint's own folder). From the
     # front, or a side, it goes as it is.
     for forward, flipped in (([0.0, -0.1, 1.0], True), ([0.6, 0.0, 0.8], True), ([0.0, -0.1, -1.0], False), ([1.0, 0.0, 0.0], False)):
-        _patch, turned, alone, alone_dir = _retouch(tmp_path / f"alone{forward[0]}{forward[2]}", monkeypatch, FakeAlbedo(), own=("0_front.png",),
+        _patch, turned, alone, alone_dir = _retouch(tmp_path / f"alone{forward[0]}{forward[2]}", monkeypatch, FakeAlbedo(ready=False), own=("0_front.png",),
                                                     params={"retouch": {**RETOUCH, "forward": forward}})
         example = Path(alone[0]["ref_images"][-1])
         record = json.loads((alone_dir / "omnitexture" / "ot_002" / "retouch" / "request.json").read_text(encoding="utf-8"))
@@ -1329,8 +1337,13 @@ def test_a_repaint_shows_qwen_image_the_pages_view_and_makes_a_new_step(tmp_path
         else:
             assert example.name == "0_front.png" and mirrors == [] and record["pictures"][-1] == "picture 3: prop: mesh/views/0_front.png"
     assert [omnitexture.behind(side, [0.0, 0.0, 1.0]) for side in ("front", "back", "left", "top", None)] == [True, False, False, False, False]
-    patch, worker, asked, prop_dir = _retouch(tmp_path, monkeypatch, FakeAlbedo(), own=("0_back.png", "1_front.png"))
-    load, look, left, repaint, finish = worker.calls
+    add_on = FakeAlbedo()
+    patch, worker, asked, prop_dir = _retouch(tmp_path, monkeypatch, add_on, own=("0_back.png", "1_front.png"))
+    load, look, fit, left, repaint, finish = worker.calls
+    # The add-on is asked once, for the example picture - never for the painting.
+    (lit_off,) = add_on.calls
+    assert lit_off[0].startswith("1_front-") and lit_off[0].endswith(".fit.png") and lit_off[2] == "turbo"
+    assert fit["cmd"] == "fit" and Path(fit["picture"]).name == "1_front.png"
     assert left["cmd"] == "left" and Path(left["picture"]).parent.name == "retouch"
     assert load["glb"].endswith("ot_001\\omnitexture.glb") or load["glb"].endswith("ot_001/omnitexture.glb")
     assert load["plan"] is False and load["views"] == 1, "it looks through the page's camera alone"
@@ -1338,37 +1351,52 @@ def test_a_repaint_shows_qwen_image_the_pages_view_and_makes_a_new_step(tmp_path
         == {key: RETOUCH[key] for key in ("eye", "forward", "up", "tan")}
     assert Path(look["mask"]).name == "mask.png" and "ot_002" in look["mask"]
     (body,) = asked
-    assert body["prompt"] == ("restore the image in location masked in magenta. Use the depthmap and the example "
-                              "image as reference") == omnitexture.RETOUCH_PROMPT
-    assert [Path(p).name for p in body["ref_images"]] == ["1-viewport.png", "2-depth.png", "1_front.png"]
+    assert body["prompt"] == ("remove the magenta-masked blob. Use the depthmap and the example image as "
+                              "reference") == omnitexture.retouch_prompt()
+    # The artist's own words from the box beside the mask: a sentence of their own after what to do.
+    _patch, _worker, told, _dir = _retouch(tmp_path / "told", monkeypatch, FakeAlbedo(ready=False), own=("1_front.png",),
+                                           params={"retouch": {**RETOUCH, "words": "  a red\nstripe  "}})
+    assert told[0]["prompt"] == ("remove the magenta-masked blob. a red stripe. Use the depthmap and the example "
+                                 "image as reference")
+    # "No Facets": the worker is asked for a depth map without the model's facets, and the record says so.
+    assert look["smooth"] is False and "smooth" not in json.loads(
+        (prop_dir / "omnitexture" / "ot_002" / "retouch" / "request.json").read_text(encoding="utf-8"))["retouch"]
+    _patch, smoothly, _asked, smooth_dir = _retouch(tmp_path / "smooth", monkeypatch, FakeAlbedo(ready=False),
+                                                    params={"retouch": {**RETOUCH, "smooth": True}})
+    assert next(call for call in smoothly.calls if call["cmd"] == "look")["smooth"] is True
+    assert json.loads((smooth_dir / "omnitexture" / "ot_002" / "retouch" / "request.json").read_text(
+        encoding="utf-8"))["retouch"]["smooth"] is True
+    example = Path(body["ref_images"][-1])
+    assert [Path(p).name for p in body["ref_images"][:2]] == ["1-viewport.png", "2-depth.png"]
+    assert example.name.startswith("1_front-") and example.parent == prop_dir / "omnitexture" / "examples"
     assert Path(body["init_image"]).name == "1-viewport.png" and (body["width"], body["height"]) == (1024, 1024)
     # Drawn anew where the view is masked, and held to the view everywhere else: free, Qwen-Image gave back its
     # example picture instead of the view.
     assert (Path(body["mask_image"]).name, body["strength"]) == ("redrawn.png", 1.0) == (omnitexture.REDRAWN, omnitexture.RETOUCH_STRENGTH)
     # ... whatever strength a job names (the stage's views take one): below 1 the masked part would start from the
     # magenta itself.
-    _patch, _worker, weak, _dir = _retouch(tmp_path / "weak", monkeypatch, FakeAlbedo(), own=("1_front.png",),
+    _patch, _worker, weak, _dir = _retouch(tmp_path / "weak", monkeypatch, FakeAlbedo(ready=False), own=("1_front.png",),
                                            params={"retouch": RETOUCH, "strength": 0.6})
     assert weak[0]["strength"] == 1.0
     assert Path(body["mask_image"]).parent == Path(body["init_image"]).parent
     assert body["keep_prefix"] is False and body["cfg_scale"] == 1.0
     assert 1 <= body["seed"] < 2 ** 31
-    assert repaint["cmd"] == "repaint" and Path(repaint["picture"]).name == "albedo.png" \
-        and Path(repaint["colour"]).name == "answer.png" and Path(repaint["keep"]).name == "projected.png" \
-        and Path(repaint["layer"]).name == "layer.webp"
+    assert {key: value if key == "cmd" else Path(value).name for key, value in repaint.items()} == {
+        "cmd": "repaint", "picture": "answer.png", "keep": "projected.png", "layer": "layer.webp"}
     assert finish == {"cmd": "finish", "out": finish["out"], "tone": False}
     folder = prop_dir / "omnitexture" / "ot_002"
     assert patch["glb"] == "omnitexture/ot_002/omnitexture.glb" and (folder / "omnitexture.glb").is_file()
     assert sorted(p.name for p in (folder / "retouch").iterdir()) == [
-        "1-viewport.png", "2-depth.png", "albedo.png", "answer.png", "layer.webp", "mask.png",
+        "1-viewport.png", "2-depth.png", "answer.png", "layer.webp", "mask.png",
         "projected.png", "redrawn.png", "request.json"]
     record = json.loads((folder / "retouch" / "request.json").read_text(encoding="utf-8"))
     assert (record["start_image"], record["redrawn"], record["strength"]) == ("1-viewport.png", "redrawn.png", 1.0)
     assert "mask_image" not in record
     assert record["retouch"]["from"].endswith("ot_001/omnitexture.glb")
     assert record["retouch"]["example"] == "front", "the side the example shows, for the page"
+    assert record["retouch"]["delit"] is True
     assert record["pictures"] == ["picture 1: 1-viewport.png", "picture 2: 2-depth.png",
-                                  "picture 3: prop: mesh/views/1_front.png"]
+                                  f"picture 3: prop: omnitexture/examples/{example.name}"]
     assert record["seed"] == body["seed"] and record["retouch"]["tries"] == [{"seed": body["seed"], "left": 0.4}]
     assert patch["steps"] == ["omnitexture/ot_001/omnitexture.glb", "omnitexture/ot_002/omnitexture.glb"]
     assert patch["repaints"] == [{"glb": "omnitexture/ot_002/omnitexture.glb", "fade": 1.0,
@@ -1381,6 +1409,69 @@ def test_a_repaint_shows_qwen_image_the_pages_view_and_makes_a_new_step(tmp_path
     assert patch["stats"]["retouch"]["seed"] == body["seed"] and patch["stats"]["retouch"]["tries"] == 1 \
         and patch["stats"]["retouch"]["warning"] is None
     assert not (prop_dir / "omnitexture" / "mask.png").exists(), "the mask went with its repaint"
+
+
+def test_a_repaints_example_has_its_lighting_taken_off_once_per_picture(tmp_path: Path,
+                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """The example a repaint is shown is the prop's own picture, lit as it was drawn, while the view it helps to
+    restore is flat: its lighting is taken off first (the worker makes it fit the pass, the add-on takes the
+    lighting off), and what comes back is kept in the prop's omnitexture/examples - the next repaint from that side
+    asks nobody, a repaint from another side makes that side's, and a picture drawn anew gets a new one beside the
+    old (the repaints made with that one still name it). Without the add-on, or when the pass fails, the picture
+    goes as it is and nothing is kept (a failure is told)."""
+    from spellcast.adapters import qwen
+
+    prop_dir = tmp_path / "prop"
+    views = prop_dir / "mesh" / "views"
+    views.mkdir(parents=True)
+    front, back = views / "0_front.png", views / "1_back.png"
+    front.write_bytes(b"front as drawn")
+    back.write_bytes(b"back as drawn")
+    add_on = FakeAlbedo()
+
+    async def albedo_ready(ctx: StageContext) -> bool:
+        return add_on.ready
+
+    monkeypatch.setattr(qwen, "albedo", add_on)
+    monkeypatch.setattr(qwen, "albedo_ready", albedo_ready)
+    told: list[str] = []
+    ctx = dataclasses.replace(_st_ctx(prop_dir), warn=told.append)
+    worker = FakeLook()
+
+    def shown(picture: Path) -> tuple[Path, bool]:
+        return asyncio.run(omnitexture._example_delit(ctx, worker, picture, "turbo"))
+
+    kept = prop_dir / "omnitexture" / "examples"
+    first, delit = shown(front)
+    assert delit and first.parent == kept and first.name.startswith("0_front-") and first.suffix == ".png"
+    assert first.read_bytes() == b"fit front as drawn", "what the add-on gave back, of the picture made to fit"
+    (fit,) = worker.calls
+    assert (fit["cmd"], fit["most"], fit["step"]) == ("fit", 1024, 32) and Path(fit["picture"]) == front.resolve()
+    assert len(add_on.calls) == 1 and [p.name for p in kept.iterdir()] == [first.name], "no scratch file is left"
+    assert shown(front) == (first, True) and len(add_on.calls) == 1 and len(worker.calls) == 1, "kept: nobody asked"
+    other, delit = shown(back)
+    assert delit and other.name.startswith("1_back-") and len(add_on.calls) == 2, "another side: that side's own"
+    assert sorted(p.name for p in kept.iterdir()) == sorted([first.name, other.name])
+    # The picture drawn anew (another size here): its example is made anew, and the old one stays for its repaints.
+    front.write_bytes(b"front, drawn again")
+    again, delit = shown(front)
+    assert delit and again != first and again.read_bytes() == b"fit front, drawn again"
+    assert first.read_bytes() == b"fit front as drawn"
+    assert sorted(p.name for p in kept.iterdir()) == sorted([first.name, again.name, other.name])
+    # The pass fails: the picture as it is, told, nothing kept - and the next repaint tries again.
+    front.write_bytes(b"front, a third time")
+    add_on.fail[len(add_on.calls)] = StageError("No room on the card.")
+    assert shown(front) == (front, False) and len(told) == 1 and "No room on the card." in told[0]
+    assert sorted(p.name for p in kept.iterdir()) == sorted([first.name, again.name, other.name]), "nothing new, no scratch"
+    assert shown(front)[1] is True, "tried again, and made"
+    # A card that has to start again is not swallowed; without the add-on the picture goes as it is, untold.
+    front.write_bytes(b"front, once more ...")
+    add_on.fail[len(add_on.calls)] = ToolNeedsRestart("Qwen-Image 2.1 has to start again after an error. Try again.")
+    with pytest.raises(ToolNeedsRestart):
+        shown(front)
+    add_on.ready = False
+    calls = len(add_on.calls)
+    assert shown(front) == (front, False) and len(add_on.calls) == calls and len(told) == 1
 
 
 def test_a_picture_that_kept_the_masks_shape_is_made_again_with_the_next_seed(tmp_path: Path,
@@ -1409,6 +1500,29 @@ def test_a_picture_that_kept_the_masks_shape_is_made_again_with_the_next_seed(tm
     assert patch["stats"]["retouch"]["warning"] == " ".join(told) and patch["stats"]["retouch"]["tries"] == 3
 
 
+def test_a_repaints_progress_says_what_it_is_at_and_under_it_what_qwen_image_says(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The busy layer shows each line as one: what the repaint is at - a second try says why - and, on a line of
+    their own, Qwen-Image's words."""
+    from spellcast.adapters import qwen
+
+    async def generate(ctx: StageContext, body: dict[str, Any]) -> dict[str, Any]:
+        ctx.report(0.5, "Drawing")
+        drawn = tmp_path / f"drawn-{body['seed']}.png"
+        drawn.write_bytes(PNG)
+        return {"images": [str(drawn)]}
+
+    monkeypatch.setattr(qwen, "generate", generate)
+    worker = FakeLook()
+    worker.lefts = (80.0, 3.0)                      # the first picture kept the mask's shape
+    said: list[str] = []
+    ctx = dataclasses.replace(_st_ctx(tmp_path), report=lambda fraction, words: said.append(words))
+    asyncio.run(omnitexture._restored(ctx, worker, {"seed": 1}, 1, tmp_path))
+    assert said == ["Painting what you masked\nDrawing",
+                    f"Painting what you masked, try 2 of {omnitexture.RETOUCH_TRIES}\n(the picture before kept the "
+                    "mask's shape)\nDrawing"]
+
+
 def test_a_repaint_after_ctrl_z_drops_what_was_taken_back_and_keeps_the_newest_steps(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     steps = [f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (1, 2, 3)]
@@ -1416,12 +1530,19 @@ def test_a_repaint_after_ctrl_z_drops_what_was_taken_back_and_keeps_the_newest_s
     assert omnitexture.steps_after({"glb": steps[0], "steps": []}, "new") == [steps[0], "new"]
     many = [f"s{n}" for n in range(omnitexture.MAX_STEPS)]
     assert omnitexture.steps_after({"glb": many[-1], "steps": many}, "new") == [*many[1:], "new"]
-    # Without the add-on the picture goes on as it is; a request without its camera is refused in plain words.
+    # Without the add-on too the picture goes on as it is; a request without its camera is refused in plain words.
     _patch, worker, _asked, _dir = _retouch(tmp_path, monkeypatch, FakeAlbedo(ready=False))
     assert Path(worker.calls[3]["picture"]).name == "answer.png" and "colour" not in worker.calls[3]
-    for bad in ({}, {**RETOUCH, "tan": 0}, {**RETOUCH, "eye": [1, 2]}, {**RETOUCH, "mask": ""}, "nope"):
+    for bad in ({}, {**RETOUCH, "tan": 0}, {**RETOUCH, "eye": [1, 2]}, {**RETOUCH, "mask": ""}, "nope",
+                {**RETOUCH, "words": ["a red stripe"]}, {**RETOUCH, "smooth": "yes"}):
         with pytest.raises(StageError, match="incomplete"):
             omnitexture.retouch_camera(bad)
+    # The artist's words, when there are any: one sentence, kept short.
+    assert "words" not in omnitexture.retouch_camera({**RETOUCH, "words": "  "})
+    assert omnitexture.retouch_camera({**RETOUCH, "words": "rivets!"})["words"] == "rivets!"
+    assert omnitexture.retouch_prompt("Rivets!") == ("remove the magenta-masked blob. Rivets! Use the depthmap and the "
+                                                     "example image as reference")
+    assert len(omnitexture.retouch_prompt("x" * 5000)) == len(omnitexture.retouch_prompt()) + omnitexture.WORDS_MOST + 2
     # An Omni-Texture made anew starts the steps afresh, and holds no repaint.
     anew, _worker, _warnings = _paint(tmp_path / "anew", monkeypatch, FakeAlbedo())
     assert anew["steps"] == [] and anew["repaints"] == [] and anew["bases"] == []
@@ -1432,6 +1553,33 @@ def test_a_repaint_after_ctrl_z_drops_what_was_taken_back_and_keeps_the_newest_s
     after = omnitexture.records_after(kept, [*held, repaint_record(new, under=steps[1])], [])
     assert [made["glb"] for made in after["repaints"]] == [steps[1], new] and after["bases"] == []
     assert after["repaints"][0]["fade"] == 2.0 and after["repaints"][1]["fade"] == 1.0
+
+
+def test_a_repaint_through_the_pages_bent_lens_names_it_to_the_worker_and_keeps_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The page's "Inverse perspective": the retouch names the bent lens ("wide", with "tan" 0 or below as well);
+    the worker looks through it and the repaint's record keeps it: put on again (its fade, its eye), it goes
+    through that lens. A camera sends none; a lens whose picture would span nothing is refused."""
+    bent = {**RETOUCH, "tan": -0.3, "wide": 0.8}
+    assert omnitexture.retouch_camera(bent) == bent
+    assert "wide" not in omnitexture.retouch_camera(RETOUCH) and "wide" not in omnitexture.retouch_camera({**RETOUCH, "wide": 0})
+    for bad in ({**RETOUCH, "tan": -0.3}, {**RETOUCH, "tan": 0.0}, {**bent, "wide": -1.0}, {**bent, "wide": "x"},
+                {**bent, "tan": -20.0}, {**bent, "wide": float("inf")}):
+        with pytest.raises(StageError, match="incomplete"):
+            omnitexture.retouch_camera(bad)
+    _patch, worker, _asked, prop_dir = _retouch(tmp_path, monkeypatch, FakeAlbedo(ready=False), params={"retouch": bent})
+    look = next(call for call in worker.calls if call["cmd"] == "look")
+    assert (look["tan"], look["wide"]) == (-0.3, 0.8)
+    record = json.loads((prop_dir / "omnitexture" / "ot_002" / "retouch" / "request.json").read_text(encoding="utf-8"))
+    assert (record["retouch"]["tan"], record["retouch"]["wide"]) == (-0.3, 0.8)
+    fading: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: fading.append(FakeFades()) or fading[-1])
+    try:
+        omnitexture.refade(prop_dir, {**_patch, "stale": False}, _patch["glb"], 2.0)
+        (again,) = fading[0].calls[-1]["repaints"]
+        assert (again["tan"], again["wide"], again["fade"]) == (-0.3, 0.8, 2.0)
+    finally:
+        omnitexture.close_fades()
 
 
 def test_a_repaints_mask_is_the_one_the_page_sent_and_no_other_file(
@@ -1451,6 +1599,9 @@ class FakeFades(FakeWorker):
     stopped = False
 
     def call(self, request: dict[str, Any]) -> dict[str, Any]:
+        if request["cmd"] == "texture":
+            self.calls.append(request)
+            return {"texture": [64, 64]}
         if request["cmd"] != "fades":
             return super().call(request)
         self.calls.append(request)
@@ -1485,6 +1636,34 @@ def _kept_repaint(prop_dir: Path, step: str, seed: int) -> None:
         (kept / name).write_bytes(PNG)
     (kept / "request.json").write_text(json.dumps({"seed": seed, "retouch": {
         key: RETOUCH[key] for key in ("eye", "forward", "up", "tan")}}), encoding="utf-8")
+
+
+def test_a_change_that_fails_lets_the_kept_worker_go(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repaint put on again that fails - here Windows refuses to rename the new folder, a file in it held open -
+    leaves nothing of it behind, and the kept worker is let go: what it holds by then is not known (after a
+    failed hide of the views, a model that is deleted and whose name the next change gives to another). The next
+    change loads its model anew."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 1)
+    block = {"glb": steps[1], "steps": steps, "stale": False, "repaints": [repaint_record(steps[1], 1.0, under=steps[0])]}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+
+    def refused(source: Any, target: Any) -> None:
+        raise PermissionError(5, "Access is denied")
+
+    try:
+        omnitexture.refade(prop_dir, block, steps[1], None)
+        with monkeypatch.context() as held:
+            held.setattr(os, "replace", refused)
+            with pytest.raises(StageError, match="could not be put on again"):
+                omnitexture.refade(prop_dir, block, steps[1], 3.0)
+        assert omnitexture._fading is None and workers[0].stopped
+        assert sorted(p.name for p in (prop_dir / "omnitexture").iterdir()) == ["ot_001", "ot_002"]
+        _patch, renamed = omnitexture.refade(prop_dir, block, steps[1], 3.0)
+        assert list(renamed) == [steps[1]] and [call["cmd"] for call in workers[1].calls] == ["load", "fades"]
+    finally:
+        omnitexture.close_fades()
 
 
 def test_a_repaint_is_put_on_again_with_another_fade_and_the_later_ones_onto_it(
@@ -1875,11 +2054,15 @@ class FakeHandPaint(FakeFades):
             return super().call(request)
         self.calls.append(request)
         layer, out = Path(request["layer"]), Path(request["out"])
-        held = (layer.read_bytes() if layer.is_file() else b"") + Path(request["patch"]).read_bytes()
-        for path, data in ((layer, held), (out, Path(request["model"]).read_bytes() + b" + " + held)):
+        held = layer.read_bytes() if layer.is_file() else b""
+        writes = [(out, Path(request["model"]).read_bytes() + b" + " + held)]
+        if request.get("patch"):                # (without one: the layer as it is over another model)
+            held += Path(request["patch"]).read_bytes()
+            writes = [(layer, held), (out, Path(request["model"]).read_bytes() + b" + " + held)]
+        for path, data in writes:
             path.with_name("moved.tmp").write_bytes(data)
             os.replace(path.with_name("moved.tmp"), path)
-        return {"painted": len(held), "texture": [request["width"], request["height"]]}
+        return {"painted": len(held), "texture": [request.get("width"), request.get("height")]}
 
 
 def _hand_painted(prop_dir: Path, step: str) -> Path:
@@ -1996,7 +2179,7 @@ def test_the_fades_worker_is_let_go_when_the_model_it_loaded_is_painted(
     try:
         omnitexture.refade(prop_dir, block, steps[2], None)
         kept = omnitexture._fading
-        assert kept is not None and kept.steps[0] == steps[1]
+        assert kept is not None and kept.model == steps[1]
         omnitexture.hand_paint(prop_dir, steps[2], patch, 4, 4)
         assert omnitexture._fading is kept and not kept.worker.stopped, "a later step painted: still serves"
         omnitexture.hand_paint(prop_dir, steps[1], patch, 4, 4)
@@ -2072,6 +2255,211 @@ def test_a_repaint_taken_off_takes_its_steps_hand_paint_with_it_and_keeps_the_la
     assert (folder / "unpainted.glb").read_bytes() == b"glTF as made"
 
 
+# ---- the eye on a picture (the page's click on its middle) --------------------------------------------------------
+
+def test_a_repaint_hidden_keeps_its_place_and_one_kept_worker_serves_every_change(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The page's eye on a repaint: the worker is asked it "hidden" (nothing of it goes on), its record keeps its
+    place and its fade, and the steps from it on are made again in new folders as by a fade - no step is added.
+    Shown again the same way. The worker kept on the model before it serves what follows - another repaint's eye,
+    a fade, a repaint taken off - without loading again; one that is so already is left alone. A copy of a
+    hidden repaint's model (the repaint after it taken off) is hidden too."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 3)
+    records = [repaint_record(step, fade, under=before) for before, step, fade in zip(steps, steps[1:], (1.0, 2.0, 3.0))]
+    block = {"glb": steps[3], "steps": steps, "repaints": records, "bases": [], "stale": False}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+
+    def hidden(patch: dict[str, Any]) -> list[bool]:
+        return [made.get("hidden", False) for made in omnitexture.parts_of(patch, patch["glb"])[1]]
+
+    try:
+        patch, renamed = omnitexture.refade(prop_dir, block, steps[1], None, hidden=True)
+        new = [f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (5, 6, 7)]
+        assert renamed == dict(zip(steps[1:], new))
+        assert patch["glb"] == new[2] and patch["steps"] == [steps[0], *new], "no step added"
+        assert patch["repaints"] == [repaint_record(new[0], 1.0, under=steps[0], hidden=True),
+                                     repaint_record(new[1], 2.0, under=new[0]), repaint_record(new[2], 3.0, under=new[1])]
+        (worker,) = workers
+        load, put_on = worker.calls
+        assert Path(load["glb"]) == prop_dir / steps[0] and put_on["ahead"] is None and all(put_on["outs"])
+        assert [(asked["hidden"], asked["fade"]) for asked in put_on["repaints"]] == [(True, 1.0), (False, 2.0), (False, 3.0)]
+        assert "layer" not in put_on["repaints"][0] or "ot_005" in put_on["repaints"][0]["layer"]
+        block = {**block, **patch}
+        assert omnitexture.refade(prop_dir, block, new[0], None, hidden=True) is None, "hidden already"
+        # Pointed at while hidden: made ready to be shown again - asked as shown, none of the slider's fades ahead.
+        assert omnitexture.refade(prop_dir, block, new[0], None) is None
+        ready = worker.calls[-1]
+        assert ready["outs"] is None and ready["ahead"] is None and ready["repaints"][0]["hidden"] is False
+        # The newest hidden too: the worker kept on the model before the first writes that step alone.
+        patch, renamed = omnitexture.refade(prop_dir, block, new[2], None, hidden=True)
+        assert list(renamed) == [new[2]] and hidden({**block, **patch}) == [True, False, True]
+        assert [bool(out) for out in worker.calls[-1]["outs"]] == [False, False, True]
+        assert [asked["hidden"] for asked in worker.calls[-1]["repaints"]] == [True, False, True]
+        block = {**block, **patch}
+        # A fade of the one between them leaves both hidden; the first shown again.
+        patch, _renamed = omnitexture.refade(prop_dir, block, new[1], 4.0)
+        block = {**block, **patch}
+        assert hidden(block) == [True, False, True] and block["repaints"][1]["fade"] == 4.0
+        patch, _renamed = omnitexture.refade(prop_dir, block, block["steps"][1], None, hidden=False)
+        block = {**block, **patch}
+        assert hidden(block) == [False, False, True] and worker.calls[-1]["repaints"][0]["hidden"] is False
+        assert len(block["steps"]) == 4 and all((prop_dir / step).is_file() for step in block["steps"])
+        # The one between taken off: the newest goes on again onto the first, hidden as it is - the same worker.
+        first = block["steps"][1]
+        taken = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=block["steps"][2])
+        assert [asked["hidden"] for asked in worker.calls[-1]["repaints"]] == [False, True]
+        assert [bool(out) for out in worker.calls[-1]["outs"]] == [False, True]
+        assert taken["steps"] == [*block["steps"], taken["glb"]]
+        assert taken["repaints"][-1] == repaint_record(taken["glb"], 3.0, under=first, hidden=True)
+        assert len(workers) == 1 and [call["cmd"] for call in worker.calls].count("load") == 1
+        # The newest taken off with nothing to put on again: the model under it once more, hidden as that one is.
+        block = {**block, **taken}
+        patch, _renamed = omnitexture.refade(prop_dir, block, first, None, hidden=True)
+        block = {**block, **patch}
+        copied = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=block["glb"])
+        assert copied["repaints"][-1] == repaint_record(copied["glb"], 1.0, under=steps[0], hidden=True)
+        for bad in (steps[0], "omnitexture/ot_077/omnitexture.glb", None):
+            with pytest.raises(StageError, match="cannot be hidden or shown"):
+                omnitexture.refade(prop_dir, block, bad, None, hidden=True)
+    finally:
+        omnitexture.close_fades()
+
+
+def test_the_painted_views_hidden_give_way_to_the_3d_models_own_texture_and_come_back(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The page's eye on a painted view - on all of them at once: hidden, the result they lie on gives way to a
+    copy of the 3D model (a copy: the 3D stage writes its file anew in place), recorded with the views it hides
+    and the model that holds them; the repaints go on again onto it, each as it lies. No step is added. What was
+    painted by hand goes over the other model (the worker's "hand_paint" without a patch). Shown again, the
+    result as it was made is back (linked), under what is painted by hand now; the worker kept on the one model
+    is given the other's texture instead of loading it. While they are hidden no view is taken off; an
+    Omni-Texture whose 3D model was made again does not hide them; a result of the model's own texture has none."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 1)
+    (prop_dir / "mesh").mkdir()
+    (prop_dir / "mesh" / "mesh.glb").write_bytes(b"glTF mesh")
+    views = [f"omnitexture/ot_001/views/{name}/answer.png" for name in ("0-front", "1-back")]
+    listed = [{"folder": view.rsplit("/", 1)[0], "picture": view, "layer": None} for view in views]
+    block = {"glb": steps[1], "steps": steps, "repaints": [repaint_record(steps[1], 2.0, under=steps[0])], "bases": [],
+             "views": views, "source_mesh": "mesh/mesh.glb", "stale": False}
+    prop = {"mesh": {"glb": "mesh/mesh.glb"}, "omnitexture": block}
+    workers: list[FakeHandPaint] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeHandPaint()) or workers[-1])
+    try:
+        assert omnitexture.show_views(prop_dir, prop, hidden=False) is None, "shown already"
+        patch, renamed = omnitexture.show_views(prop_dir, prop, hidden=True)
+        bare, onto = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (3, 4))
+        assert renamed == {steps[0]: bare, steps[1]: onto}
+        assert patch["glb"] == onto and patch["steps"] == [bare, onto], "no step added"
+        assert patch["bases"] == [{"glb": bare, "views": listed, "hidden": True, "shown": steps[0]}]
+        assert patch["repaints"] == [repaint_record(onto, 2.0, under=bare)]
+        assert (prop_dir / bare).read_bytes() == b"glTF mesh" and os.stat(prop_dir / bare).st_nlink == 1, "a copy"
+        (worker,) = workers
+        assert Path(worker.calls[0]["glb"]) == prop_dir / bare and "ot_004.tmp" in worker.calls[1]["outs"][0]
+        hidden = {**prop, "omnitexture": {**block, **patch}}
+        assert omnitexture.views_hidden(hidden["omnitexture"], bare) and not omnitexture.views_hidden(block, steps[0])
+        assert omnitexture.views_of(hidden["omnitexture"], bare) == listed
+        assert omnitexture.show_views(prop_dir, hidden, hidden=True) is None, "hidden already"
+        with pytest.raises(StageError, match="Show them again first"):
+            omnitexture.take_off(prop_dir, hidden, view=listed[0]["folder"])
+        # Painted by hand while they are hidden; shown again: the result as made, linked, with that paint over it.
+        layer = _hand_painted(prop_dir, bare)
+        patch, renamed = omnitexture.show_views(prop_dir, hidden, hidden=False)
+        back, again = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (5, 6))
+        assert renamed == {bare: back, onto: again} and patch["steps"] == [back, again]
+        assert patch["bases"] == [{"glb": back, "views": listed}] and patch["repaints"] == [repaint_record(again, 2.0, under=back)]
+        folder = (prop_dir / back).parent
+        assert (folder / "unpainted.glb").read_bytes() == b"glTF" and os.stat(folder / "unpainted.glb").st_nlink == 2
+        assert (folder / "hand-paint.png").read_bytes() == layer.read_bytes()
+        assert (prop_dir / back).read_bytes() == b"glTF + " + layer.read_bytes()
+        (painted,) = [call for made in workers for call in made.calls if call["cmd"] == "hand_paint"]
+        assert "patch" not in painted and Path(painted["layer"]) == layer
+        # The worker kept on the model without the views is given the other texture: the surface is the same.
+        assert [call["cmd"] for call in worker.calls] == ["load", "fades", "texture", "fades"]
+        assert Path(worker.calls[2]["glb"]) == prop_dir / back and omnitexture._fading.model == back
+        # Hidden again, from a result painted by hand: its model as made is the one named to come back.
+        shown = {**prop, "omnitexture": {**block, **patch}}
+        patch, _renamed = omnitexture.show_views(prop_dir, shown, hidden=True)
+        (record,) = patch["bases"]
+        assert record["shown"] == "omnitexture/ot_005/unpainted.glb" and record["hidden"] is True
+        folder = (prop_dir / record["glb"]).parent
+        assert (folder / "unpainted.glb").read_bytes() == b"glTF mesh"
+        assert (prop_dir / record["glb"]).read_bytes() == b"glTF mesh + " + layer.read_bytes()
+        with pytest.raises(StageError, match="made again"):
+            omnitexture.show_views(prop_dir, {**prop, "omnitexture": {**block, "stale": True}}, hidden=True)
+        with pytest.raises(StageError, match="no longer on the model shown"):
+            omnitexture.show_views(prop_dir, {**prop, "omnitexture": {**block, "views": []}}, hidden=True)
+        (prop_dir / steps[1]).with_name("retouch").joinpath("mask.png").unlink()
+        with pytest.raises(StageError, match="can no longer be put on again"):
+            omnitexture.show_views(prop_dir, prop, hidden=True)
+        assert sorted(p.name for p in (prop_dir / "omnitexture").glob("ot_*")) == [f"ot_{n:03d}" for n in range(1, 9)], \
+            "nothing left of the ones refused"
+    finally:
+        omnitexture.close_fades()
+
+
+def test_the_pages_eye_hides_a_picture_and_what_is_hidden_stays_so(api: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST .../omnitexture/hide: a repaint, or the painted views all at once, hidden or shown again -> the prop,
+    its steps made again and which is which; the bake made from the model it showed is out of date. What is
+    hidden is so when the project is read again, and the result the hidden views lie on stays when older folders
+    are tidied away. Refused without "hidden", while the page shows another model, and while another change of
+    the prop's Omni-Texture is being made."""
+    app, client, _ = api
+    client.post("/api/projects", json={"name": "Demo"})
+    hub = app.state.hub
+    store = hub.store
+    pid = _meshed(client, app, "Barrel")
+    front = "omnitexture/ot_001/views/0-front"
+    first = _give_omnitexture(store, "Demo", pid, views=[f"{front}/answer.png"])
+    prop_dir = store.prop_dir("Demo", pid)
+    second = "omnitexture/ot_002/omnitexture.glb"
+    (prop_dir / second).parent.mkdir()
+    (prop_dir / second).write_bytes(b"glTF repainted")
+    _kept_repaint(prop_dir, second, 1)
+    store.apply_stage_patch("Demo", pid, "omnitexture", {"glb": second, "steps": [first, second],
+                                                         "repaints": [repaint_record(second, under=first)]})
+    store.apply_stage_patch("Demo", pid, "projection", {"glb": "projection/bake.glb", "stale": False})
+    monkeypatch.setattr(omnitexture, "Worker", FakeFades)
+    url = f"/api/projects/Demo/props/{pid}/omnitexture/hide"
+    try:
+        assert client.post(url, json={"glb": second, "repaint": second}).status_code == 422
+        assert client.post(url, json={"glb": first, "repaint": second, "hidden": True}).status_code == 409
+        hub.fading.add(("Demo", pid))
+        try:
+            busy = client.post(url, json={"glb": second, "repaint": second, "hidden": True})
+            assert busy.status_code == 409 and "being changed" in busy.text
+        finally:
+            hub.fading.discard(("Demo", pid))
+        made = client.post(url, json={"glb": second, "repaint": second, "hidden": True})
+        assert made.status_code == 200 and not hub.fading
+        third = "omnitexture/ot_003/omnitexture.glb"
+        block = made.json()["prop"]["omnitexture"]
+        assert made.json()["renamed"] == {second: third} and block["glb"] == third and block["steps"] == [first, third]
+        assert block["repaints"] == [repaint_record(third, under=first, hidden=True)]
+        assert made.json()["prop"]["projection"]["stale"] is True
+        same = client.post(url, json={"glb": third, "repaint": third, "hidden": True})
+        assert same.status_code == 200 and same.json()["renamed"] == {} and same.json()["prop"]["omnitexture"] == block
+        views = client.post(url, json={"glb": third, "views": True, "hidden": True})
+        assert views.status_code == 200, views.text
+        bare, onto = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (4, 5))
+        block = views.json()["prop"]["omnitexture"]
+        assert views.json()["renamed"] == {first: bare, third: onto} and block["steps"] == [bare, onto]
+        assert block["bases"] == [{"glb": bare, "hidden": True, "shown": first, "views": [
+            {"folder": front, "picture": f"{front}/answer.png", "layer": None}]}]
+        assert (prop_dir / bare).read_bytes() == (prop_dir / "mesh" / "mesh.glb").read_bytes()
+    finally:
+        omnitexture.close_fades()
+    # Read again from the project's file: as hidden as before. Tidied: the result the views lie on stays.
+    again = ProjectStore(store.root).get_prop("Demo", pid)["omnitexture"]
+    assert again["bases"] == block["bases"] and again["repaints"] == [repaint_record(onto, under=bare, hidden=True)]
+    for number in (6, 7, 8):
+        (prop_dir / "omnitexture" / f"ot_{number:03d}").mkdir()
+    store.apply_stage_patch("Demo", pid, "omnitexture", {"glb": onto})
+    assert sorted(p.name for p in (prop_dir / "omnitexture").glob("ot_*")) == ["ot_001", "ot_004", "ot_005", "ot_007", "ot_008"]
+
+
 def test_a_fade_and_a_job_of_one_prop_never_run_together(api: Any, paint: FakePaint,  # noqa: F811
                                                          monkeypatch: pytest.MonkeyPatch) -> None:
     """Both write the prop's next result folder. While a repaint is being faded an Omni-Texture job of the prop is
@@ -2111,6 +2499,9 @@ def test_the_page_the_hub_and_the_worker_agree_on_the_fade_and_on_the_clay() -> 
     clay = re.search(r"^CLAY = \((\d+), (\d+), (\d+)\)", read("launchers", "omnitexture_tone.py"), re.MULTILINE)
     viewer = re.search(r"^const CLAY = \{ color: 0x([0-9a-f]{6}),", read("static", "js", "viewer3d.js"), re.MULTILINE)
     assert "{:02x}{:02x}{:02x}".format(*(int(v) for v in clay.groups())) == viewer.group(1)
+    # ... and one how deep an inverse lens sees: the page's viewer draws no deeper than the worker looks.
+    assert number(read("launchers", "omnitexture_views.py"), r"^LENS_REACH = ([\d.]+)$") \
+        == number(read("static", "js", "viewer3d.js"), r"^export const LENS_REACH = ([\d.]+);$")
 
 
 def test_the_mask_is_kept_for_its_job_and_ctrl_z_steps_between_the_results(api: Any) -> None:

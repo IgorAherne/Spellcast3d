@@ -35,6 +35,7 @@ import { showGiven } from './given.js';
 import { createImportPanel, readClipboardItems } from './importpanel.js';
 import { createMarks } from './marks.js';
 import { sameShape } from './mask_window.js';
+import { createPictureView } from './picview.js';
 import { toastSaved } from './preview.js';
 import { libraryPanel, promptBar } from './promptlib.js';
 import { groupPropFiles, severalProps } from './propfiles.js';
@@ -794,17 +795,18 @@ function buildBench(prop) {
   // An example picture under the pointer, in the viewport's top right corner (examplesList).
   const peekImg = h('img', { alt: '', draggable: 'false' });
   const peek = h('div', { class: 'sv-ref-peek', hidden: true, 'aria-hidden': 'true' }, peekImg);
-  // A tileable picture looked at from afar (the wheel): copies of it all round, under the picture itself.
+  // A tileable picture looked at from afar (the wheel, zoomed all the way out): copies of it all round, under it.
   const tiling = h('div', { class: 'sv-tiling', hidden: true },
     h('div', { class: 'sv-tiling-fit' }, h('div', { class: 'sv-tiling-field' })));
   const stageEl = h('div', { class: 'sv-stagebox sv-imgstage' }, tiling, picture, marks.el, slicer.el, live, busy,
     uploading, donateCorner(), marks.hint, marks.bar, peek, library.el);
-  stageEl.addEventListener('wheel', (e) => {
-    if (tiling.hidden || !e.deltaY) return;
-    e.preventDefault();
-    afar = e.deltaY > 0;
-    syncMarks();
-  }, { passive: false });
+  // The wheel zooms the picture, the middle button pans it (picview.js).
+  const view = createPictureView(stageEl, {
+    measure: () => (picture.querySelector('.sv-picture-img')
+      ? { w: picture.offsetWidth, h: picture.offsetHeight, aspect: shownAspect() } : null),
+    tiles: () => !tiling.hidden,
+    changed: () => syncMarks(),
+  });
   dropTarget(stageEl, (files) => importImages(files), () => toast(NOT_AN_IMAGE, 'warn'), { all: true });
   let liveUrl = '';     // the preview asked for last ('' none)
   let liveImg = null;   // the one on screen: the preview, or its parts over the part of the picture it is of
@@ -960,7 +962,6 @@ function buildBench(prop) {
   let shownPicture = null;
   let blank = false;
   let shift = 0;        // a tileable picture is shown moved by this much of its size, right and down (-0.5 .. 0.5)
-  let afar = false;     // ... and from afar, among copies of itself
   function renderPicture(p) {
     const img = p.images || {};
     const src = img.chosen ? boxFile(p, img.chosen, 'images') : '';
@@ -973,8 +974,10 @@ function buildBench(prop) {
     const own = !shown && !p.draft && p.mesh?.imported;
     blank = !shown && !own && mode === 'example';
     tiling.style.setProperty('--tile', shown ? `url("${src}")` : 'none');
-    shown?.addEventListener('load', () => tiling.style.setProperty('--ar', String(shown.naturalWidth / shown.naturalHeight)),
-      { once: true });
+    shown?.addEventListener('load', () => {
+      tiling.style.setProperty('--ar', String(shown.naturalWidth / shown.naturalHeight));
+      view.refit();               // its own shape now: the view keeps within reach of it
+    }, { once: true });
     if (shown && shift) {
       // Shifted, the picture is a canvas of the page's: it takes the picture's place once it is drawn (the one on
       // screen stays until then), and it is what Re-Render Viewport sends, marks or none.
@@ -994,6 +997,7 @@ function buildBench(prop) {
           icon('upload', 'big'),
           h('b', null, 'Drop images here'),
           h('span', null, 'or click to choose · PNG, JPG or WebP'))));
+    view.refit();
     slicer.picture(shown, img.chosen || null);
     marks.picture(shown || canvas, img.chosen || (blank ? `blank:${w}x${hh}` : null), { always: blank });
   }
@@ -1303,8 +1307,8 @@ function buildBench(prop) {
   firstBlockCache.classList.add('sv-oneline');
   // Qwen-Image 2.1: a texture that repeats without a seam (projects.py tileable). To judge one, the artist slides
   // it - right and down by tenths of its size, what leaves one side coming back at the other, so its seams cross
-  // the picture - and looks at it from afar among copies of itself (the wheel over the picture: syncTiling). "R"
-  // turns it, to render from it in another direction (rotate).
+  // the picture - and looks at it from afar among copies of itself (the wheel turned on out past the whole picture:
+  // picview.js). "R" turns it, to render from it in another direction (rotate).
   const shiftSlider = h('input', {
     type: 'range', class: 'range sv-shift', min: -50, max: 50, step: 10, value: 0, 'aria-label': 'Offset',
     title: 'Offset: slides the picture right and down (to the left: up and left) by tenths of its size, wrapping '
@@ -1336,21 +1340,21 @@ function buildBench(prop) {
   /**
    * What Tileable shows while it is on (`on`: as just set, else as the prop has it, for a model that draws such
    * pictures): "R" (while there is a picture to turn), the offset slider and the hint under the tick, and - once the
-   * wheel was turned over the picture - the picture a quarter its size among copies of itself. Off, the picture is
-   * back as it is.
+   * wheel was turned on out past the whole picture - the picture a quarter its size among copies of itself. Off, the
+   * picture is back as it is.
    */
   const tilingOn = () => tileable.input.checked && !tileBox.hidden;
   function syncTiling(on = tilingOn()) {
     if (!on) {
       shift = 0;
-      afar = false;
+      view.afar = false;
       shiftSlider.value = 0;
     }
     shiftSlider.hidden = turnBtn.hidden = tileHint.hidden = !on;
     turnBtn.disabled = turning || !cur().images?.chosen;
     tiling.hidden = !on || !cur().images?.chosen;
     tiling.style.setProperty('--shift', String(wrapped(shift)));
-    stageEl.classList.toggle('afar', afar && !tiling.hidden);
+    stageEl.classList.toggle('afar', view.afar && !tiling.hidden);
   }
 
   // The built-in image generator: which of its models draws this prop (QWEN_MODELS; projects.py qwen_model), under
@@ -1849,6 +1853,7 @@ function buildBench(prop) {
       document.removeEventListener('paste', onPaste);
       document.removeEventListener('keydown', onUndo, true);
       dropUndo();
+      view.destroy();
       marks.destroy();
       promptChips.destroy();
       library.destroy();

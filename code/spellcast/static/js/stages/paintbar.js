@@ -5,8 +5,9 @@
 // orbits again), the clone stamp, the marker (any colour: the rainbow circle opens the palette) and the stage's own
 // tool if it has one - with, to its left while it is up, an x that wipes what it painted. To the glass's left, in
 // two lines, how to use the tool that is up. While a tool is up the left button paints; Alt + left, the middle and the
-// right button still move the camera as everywhere (viewer3d.js dragAction), unless the tool is a stage's own that
-// holds the view still (`still`). Shift + moving sideways over the model sizes the brush, as on the Images picture.
+// right button still move the camera as everywhere (viewer3d.js dragAction). Shift + moving sideways over the model
+// sizes the brush, as on the Images picture. A tool taken up in the lit view ("All") moves the view to "Base colour",
+// what the brushes paint, flat; any other view stays as it is.
 // Ctrl+Z / Ctrl+Y take strokes back and bring them back; the painting is saved into the model's files a moment after
 // each change.
 //
@@ -18,10 +19,10 @@
 //   overlay: the stage's own tool, which paints the model's overlay (paint3d.js: one colour over the base colour, on
 //     the page only, never saved): {button (its node at the column's foot: a click takes it up or puts it down; it is
 //     ringed ("on") while up), colour ('#rrggbb'), hint (the first of the two lines while it is up: the second names
-//     the keys, as for every tool), slot (a node at the glass's left end), up() / down() (it was taken up / put down),
+//     the keys, as for every tool), up() / down() (it was taken up / put down), stroke() (a stroke of it begins),
 //     wipe (what the x beside the button does, in words: its tooltip), lost (words added to what the artist is told
-//     when the graphics card is reset: the overlay went with it), still (true: while it is up nothing moves the
-//     camera - viewer3d.js holdView - and the hint's second line says so)}.
+//     when the graphics card is reset: the overlay went with it)}.
+//   foot: a node of the stage's own at the very foot of the tools' column, under its tool (Omni-Texture's lens).
 //   busy() -> true while the stage works on the model: nothing paints, no tool is taken up, Ctrl+Z / Ctrl+Y wait.
 // A model that is not the stage's to paint yet is bound with `begin` (bind): no tool is up on it, and the first one
 // asked for has the stage make it paintable (begin(): awaited; the stage then binds the model anew, without it) -
@@ -44,14 +45,13 @@ import { undoKey } from './strokes.js';
 
 const SAVE_DELAY = 2500;         // ms of quiet after a change before it is saved (a 4K save rewrites ~100 MB of files)
 const MAX_CURSOR = 120;          // browsers draw a cursor up to 128 px; a bigger brush gets a drawn ring
-const ONLY_COLOUR = 'The brushes paint the base colour only, so the view went to “All” to show it. Roughness and '
-  + 'Metallic can’t be painted yet.';
+const ONLY_COLOUR = 'The brushes paint the base colour only: it shows in “Base colour” and “All”, not in this view. '
+  + 'Roughness and Metallic can’t be painted yet.';
 const BASE = 'base';             // the layers of paint3d.js: the base colour, saved ...
 const OVERLAY = 'overlay';       // ... and the stage's own (its tool has its name)
 // How to use the viewport, in two lines to the left of the glass: to look around, or with a tool up.
 const NAV = ['Orbit: middle or left drag · Pan: right drag', 'Zoom: wheel · F: frame'];
 const KEYS = 'Shift + move sideways: brush size · Alt + drag or middle drag: orbit · Ctrl+Z: undo · Esc: put it down';
-const STILL_KEYS = 'Esc: put it down to move the view again · Shift + move sideways: brush size · Ctrl+Z: undo';
 const HINTS = {
   marker: ['Marker: drag on the model to paint · Alt + click: pick the colour under the pointer', KEYS],
   clonePick: ['Clone stamp: Ctrl+click the model where to copy from, then paint', KEYS],
@@ -168,7 +168,8 @@ export function createSaver({ project, propId, glb, session, save = saveToBake }
  */
 export function createPaintBar(options = {}) {
   const {
-    save = saveToBake, patches = false, overlay = null, busy = () => false, undo = null, changed: onChange = null,
+    save = saveToBake, patches = false, overlay = null, foot = null, busy = () => false, undo = null,
+    changed: onChange = null,
   } = options;
   let viewer = null;        // the viewer while a model is shown and can be painted
   let painter = null;       // paint3d.js's painter on it
@@ -213,7 +214,7 @@ export function createPaintBar(options = {}) {
   const byFade = flag('byFade', 'F', 'Fade: a pen’s pressure sets how strongly the paint covers: a light touch paints faintly. '
     + 'With Pressure too, both follow the pen.');
   const status = h('span', { class: 'pt-status', hidden: true }, 'Saving…');
-  const bar = h('div', { class: 'pt-bar' }, overlay?.slot, status, size, bySize, byFade);
+  const bar = h('div', { class: 'pt-bar' }, status, size, bySize, byFade);
 
   // ---- the tools' column, from the top down: Orbit, the clone stamp, the marker, the stage's own ---------------
   const orbit = h('button', {
@@ -245,7 +246,7 @@ export function createPaintBar(options = {}) {
     },
   }, icon('x'));
   const tools = h('div', { class: 'pt-tools' }, orbit, clone, marker,
-    overlay && h('span', { class: 'pt-own' }, wipe, overlay.button));
+    overlay && h('span', { class: 'pt-own' }, wipe, overlay.button), foot);
 
   const lines = [h('span'), h('span')];
   const hint = h('div', { class: 'pt-hint' }, ...lines);
@@ -279,12 +280,11 @@ export function createPaintBar(options = {}) {
     brush.tool = tool;
     if (tool && painter && !painter.paintable()) brush.tool = null;
     if (brush.tool && binding?.begin) begin();
-    // The brushes paint the base colour alone, which the lit view and the base colour's show: from another map's
-    // view the brush goes to the lit one, and says why (the artist looking at Roughness meant to paint that).
-    if (tool && viewer && !['all', 'basecolor'].includes(viewer.view)) {
-      binding?.select?.('all');
-      toast(ONLY_COLOUR);
-    }
+    // The brushes paint the base colour alone. From the lit view the tool goes to the base colour's own, where the
+    // paint shows as it is, without the lights; any other view is the artist's choice and stays - one that does
+    // not show the base colour with a word on why the paint will not show there.
+    if (tool && viewer?.view === 'all') binding?.select?.('basecolor');
+    else if (tool && viewer && viewer.view !== 'basecolor') toast(ONLY_COLOUR);
     sync();
   }
 
@@ -298,14 +298,11 @@ export function createPaintBar(options = {}) {
     orbit.setAttribute('aria-pressed', String(!tool));
     clone.setAttribute('aria-pressed', String(tool === 'clone'));
     overlay?.button.setAttribute('aria-pressed', String(tool === OVERLAY));
-    const words = !tool ? NAV : tool === OVERLAY ? [overlay.hint, overlay.still ? STILL_KEYS : KEYS]
+    const words = !tool ? NAV : tool === OVERLAY ? [overlay.hint, KEYS]
       : tool === 'marker' ? HINTS.marker : painter.hasSource() ? HINTS.clone : HINTS.clonePick;
     lines.forEach((line, i) => { line.textContent = words[i] || ''; });
     hint.classList.toggle('active', !!tool);
-    if (viewer) {
-      viewer.holdLight = !!tool;   // a light circling the model while it is painted only distracts
-      if (overlay?.still) viewer.holdView(tool === OVERLAY);
-    }
+    if (viewer) viewer.holdLight = !!tool;   // a light circling the model while it is painted only distracts
     if (overlay && overlayUp !== (tool === OVERLAY)) {
       overlayUp = tool === OVERLAY;
       (overlayUp ? overlay.up : overlay.down)?.();
@@ -458,7 +455,10 @@ export function createPaintBar(options = {}) {
       bySize: () => brush.bySize,
       byFade: () => brush.byFade,
       pressure: (e) => pressure.read(e),
-      strokeStart: () => pressure.start(),
+      strokeStart: () => {
+        pressure.start();
+        if (toolUp() === OVERLAY) overlay.stroke?.();
+      },
       strokeEnd: () => pressure.end(),
       changed,
       source: () => sync(),
@@ -504,7 +504,6 @@ export function createPaintBar(options = {}) {
       canvas.removeEventListener('pointerleave', onLeave);
       canvas.style.cursor = '';
       viewer.holdLight = false;
-      if (overlay?.still) viewer.holdView(false);
     }
     painter = null;
     viewer = null;

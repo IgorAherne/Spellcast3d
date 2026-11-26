@@ -56,11 +56,11 @@
 
 /* The tools over the viewport, on a layer that takes no pointer (only the glasses do): the brush's ring, the clone
    stamp's source mark, and the dock in the bottom-right corner. Its glass, the markers' (stages-images.css .mk-bar),
-   holds a stage's own button at its left end (Omni-Texture's "Render Masked"), "Saving…" while the painting goes to
-   its files, the brush size, P and F; rising from its right end, a glass of their own holds the tools from the top
-   down - Orbit, the clone stamp, the marker (the rainbow: it opens the palette), a stage's own (Omni-Texture's mask
-   marker, with an x to its left while it is up: it wipes the mask) - the one that is up with a ring. To the glass's left, in two lines, how to use it, in the navigation hint's
-   place; they take what room is left beside Donate and Discord ("Omni-Texture the chosen") and are cut short ("…"). */
+   holds "Saving…" while the painting goes to its files, the brush size, P and F; rising from its right end, a glass
+   of their own holds the tools from the top down - Orbit, the clone stamp, the marker (the rainbow: it opens the
+   palette), a stage's own (Omni-Texture's mask marker, with an x to its left while it is up: it wipes the mask) - the
+   one that is up with a ring. To the glass's left, in two lines, how to use it, in the navigation hint's place; they
+   take what room is left beside Donate and Discord ("Omni-Texture the chosen") and are cut short ("…"). */
 .pt-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
 .sv-stagebox:has(> .pt-layer:not([hidden])) > .sv-viewer-help { display: none; }
 .pt-dock {
@@ -74,7 +74,6 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); pointer-events: auto;
 }
 .pt-bar { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 8px 0 12px; border-radius: 999px; }
-.pt-bar:has(> .mk-render:not([hidden])) { padding-left: 6px; }
 .pt-tools { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 42px; padding: 8px 0; border-radius: 21px; }
 .pt-size { width: 96px; height: 20px; }
 .pt-own { position: relative; display: grid; place-items: center; }
@@ -89,17 +88,33 @@
 .pt-wipe:disabled { opacity: 0.45; cursor: default; }
 .pt-wipe .icon { width: 15px; height: 15px; }
 /* Omni-Texture's mask marker (stages/maskbar.js), at the column's foot: a tool like the ones above it, its icon a
-   marked-out patch (a magenta disc read as one more colour to paint with); "Render Masked" once something is masked.
+   marked-out patch (a magenta disc read as one more colour to paint with).
    While the marker is up: black over the viewport outside its largest centred square, the picture "Render Masked"
-   sends. Under the tools and the buttons, over the model; it takes no pointer. */
+   sends. Under the tools and the buttons, over the model; it takes no pointer but for the box on it, which asks
+   for words about the mask (the Images stage's Smart Mask box: .mk-ask) and holds "Render Masked", once something
+   is masked - beside the mask, where maskbar.js askPlace finds room. */
 .mk-cover {
   position: absolute; inset: 0; z-index: 2; overflow: hidden; container-type: size; display: grid; place-items: center;
   pointer-events: none; border-radius: inherit;
 }
-.mk-cover > div { width: min(100cqw, 100cqh); aspect-ratio: 1; box-shadow: 0 0 0 100vmax #000; }
+.mk-square { width: min(100cqw, 100cqh); aspect-ratio: 1; box-shadow: 0 0 0 100vmax #000; }
+.mk-ask.ot-ask { transform: none; }
+.ot-ask > .mk-ask-input { width: 270px; }
+.ot-ask > .mk-ask-row { justify-content: flex-end; }
+/* Under the mask marker, Omni-Texture's "Inverse perspective": lit while it is on (no ring: that is the tool that is
+   up), and to its left then, on a glass of its own, the slider that says how far the view is bent. */
+.mk-bend[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(139, 125, 255, 0.55); }
+.mk-lens {
+  position: absolute; right: calc(100% + 16px); top: 50%; transform: translateY(-50%); display: flex;
+  align-items: center; height: 30px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 999px;
+  background: rgba(20, 23, 29, 0.72); backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+.mk-lens[hidden] { display: none; }
+.mk-lens .range { width: 120px; height: 20px; }
+.mk-lens .range::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -4px; }
 /* The panel's "Faster image generation": apart from what is above it, by the panel's own gap once more. */
 .ot-faster { margin-top: 16px; }
-.mk-render { height: 30px; border-radius: 999px; white-space: nowrap; }
+.mk-render { white-space: nowrap; }
 .mk-render .mk-glyph { display: inline-flex; }
 .pt-tool:disabled { opacity: 0.5; cursor: progress; transform: none; }
 .pt-size::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -4px; }
@@ -179,18 +194,31 @@
   width: 100%; aspect-ratio: 1; object-fit: contain; display: block; border-radius: 8px; border: 1px solid var(--line-2);
   background: #000;
 }
-/* A click shows what Qwen-Image was given for it; the model shows its share while the pointer is over it. */
-.ot-view { cursor: zoom-in; }
-.ot-view.has-layer:hover { border-color: rgba(242, 193, 78, 0.9); box-shadow: 0 0 0 1px rgba(242, 193, 78, 0.9); }
+/* Alt + click shows what Qwen-Image was given for it; the model shows its share while the pointer is on its tile. */
+.ot-view { cursor: zoom-in; transition: opacity 0.15s; }
+.ot-tile:hover > .ot-view.has-layer { border-color: rgba(242, 193, 78, 0.9); box-shadow: 0 0 0 1px rgba(242, 193, 78, 0.9); }
 /* A repaint of what the artist masked, among the views: framed in the marker's colour; a click picks it for the
    fade slider under them. */
 .ot-view.ot-repaint { cursor: pointer; border-color: rgba(255, 92, 244, 0.65); }
-.ot-view.ot-repaint.picked, .ot-view.ot-repaint.picked:hover { border-color: #ff5cf4; box-shadow: 0 0 0 2px #ff5cf4; }
+.ot-view.ot-repaint.picked, .ot-tile:hover > .ot-view.ot-repaint.picked { border-color: #ff5cf4; box-shadow: 0 0 0 2px #ff5cf4; }
 /* Each picture's × (as the Images stage's .sv-cand-x) in its corner, faint until the pointer is on the picture: it
    takes the picture off the model. The one beside the views' heading takes them all off. It turns red under the
    pointer, and waits while the prop's Omni-Texture changes. */
 .ot-tile { position: relative; }
-.ot-tile.removing, .ot-views.removing { opacity: 0.4; pointer-events: none; }
+.ot-tile.changing, .ot-views.changing { opacity: 0.4; pointer-events: none; }
+/* The eye in a picture's middle, see-through, there while the pointer is on the picture: a click hides the picture
+   on the model. Hidden, the picture is dim under a crossed eye that stays; a click shows it again. */
+.ot-eye {
+  position: absolute; top: 50%; left: 50%; translate: -50% -50%; width: 40%; aspect-ratio: 1; padding: 0;
+  display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(12, 14, 18, 0.5); color: #fff;
+  cursor: pointer; opacity: 0; transition: opacity 0.12s, scale 0.12s;
+}
+.ot-eye .icon { width: 60%; height: 60%; }
+.ot-tile:hover > .ot-eye, .ot-eye:focus-visible { opacity: 0.55; }
+.ot-tile.off > .ot-eye { opacity: 0.7; }
+.ot-tile.off > .ot-view { opacity: 0.3; }
+.ot-eye:hover:not(:disabled), .ot-tile.off > .ot-eye:hover:not(:disabled) { opacity: 0.95; scale: 1.08; }
+.ot-eye:disabled { cursor: wait; }
 .ot-x {
   position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; display: grid; place-items: center;
   border: 1px solid var(--line-2); border-radius: 50%; background: #0c0e12; color: var(--text); cursor: pointer;

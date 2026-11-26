@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,10 +20,10 @@ import numpy as np
 from PIL import Image
 from spellbake import BakeError
 from omnitexture_blend import blend, within_reach
-from omnitexture_masks import SPECK, clean, grow, mask_left
-from omnitexture_pixels import between, nearest
-from omnitexture_tone import on_clay, recolour, to_bytes, tone_table
-from omnitexture_views import FACING, Lens, cast, depth_grey
+from omnitexture_masks import SNAP, SNAP_REACH, SPECK, clean, grow, mask_left, shrink
+from omnitexture_pixels import between
+from omnitexture_tone import on_clay, to_bytes
+from omnitexture_views import SMOOTH_SIDE, PageLens, cast, depth_grey, faced, smooth_depth
 
 if TYPE_CHECKING:
     from omnitexture_worker import Prop
@@ -38,8 +38,8 @@ MASK_GUTTER = 2              # texels of the gutter beside masked texels that co
 MAX_FADE = 8.0
 FADE_STEP = 0.5
 FADE_STEPS = tuple(1.0 + FADE_STEP * n for n in range(round((MAX_FADE - 1.0) / FADE_STEP) + 1))
-FADE_PNG = 3                 # a fade's models' texture: zlib level 3 (a third of level 6's time, 6 % larger)
 FADE_MARGIN = 4.0            # reaches around the repainted texels within which the blend is worked out
+KEPT_SPARE = 2               # repaints "fades" keeps beyond those asked: one taken off comes back at once (Ctrl+Z)
 FULL_SHARE = 90              # the percentile of the mask's blurred share that a fade raises to the whole picture
 NOTHING_MASKED = "Nothing is masked on the model. Paint over what should be made again first."
 MODEL_OUT_OF_SIGHT = "The model is not in sight. Turn the view to what you masked, then render again."
@@ -52,7 +52,7 @@ class Look:
     """What a repaint's camera sees of the model: the texels its picture may go onto (`chosen`: indices into the
     islands' texels) and their places in it, the texels the artist masked (per texel of the islands), and in its
     picture where the mask shows and where the model is."""
-    lens: Lens
+    lens: PageLens
     chosen: np.ndarray
     px: np.ndarray
     py: np.ndarray
@@ -72,6 +72,13 @@ def clamped_fade(fade: Any) -> float:
     return min(max(float(fade or 1.0), 1.0), MAX_FADE)
 
 
+def _made_from(asked: dict[str, Any], lens: PageLens) -> tuple:
+    """What a repaint's look, picture and weights are made from: its lens, and its mask's and its picture's
+    files as they are (size and time of writing: the hub's link or copy of one in another folder is the same)."""
+    files = tuple((stat.st_size, stat.st_mtime_ns) for stat in (Path(asked[key]).stat() for key in ("mask", "picture")))
+    return (type(lens), *(float(value) for part in astuple(lens) for value in np.ravel(part)), *files)
+
+
 class Repaints:
     """One prop's repaints: the look through the page's camera, the picture laid onto what it sees of the mask,
     and - for the page's edge fade - what a change of a fade does not change, kept from call to call."""
@@ -83,7 +90,8 @@ class Repaints:
         self.ahead = ThreadPoolExecutor(1)           # a repaint's other fades, worked out while idle
         self._stop_ahead = threading.Event()         # of the job working ahead now (each job has its own)
         self._lock = threading.Lock()
-        self.kept: dict[int, dict[str, Any]] = {}    # fades: per repaint its camera, look, picture, weights per fade
+        # fades: per repaint (_made_from) its look, picture and weights per fade; the one used last stands last
+        self.kept: dict[tuple, dict[str, Any]] = {}
         self._loaded: tuple | None = None            # fades: the model as loaded (Prop.snapshot)
 
     def close(self) -> None:
@@ -91,31 +99,43 @@ class Repaints:
         self.ahead.shutdown(wait=True)
         self.encoders.shutdown(wait=True)
 
+    def loaded_anew(self) -> None:
+        """The prop holds another texture (Prop.retexture): "fades" starts from that one. What is kept of the
+        repaints stays - it is made from the surface, the masks and the cameras, never from the texture."""
+        self._loaded = None
+
     # ---- the look --------------------------------------------------------------------------------------------------
-    def look(self, lens: Lens, mask: Path, pictures: bool = True) -> dict[str, Any]:
+    def look(self, lens: PageLens, mask: Path, pictures: bool = True, smooth: bool = False) -> dict[str, Any]:
         """The worker's "look" through `lens`: mask is a picture of the texture's size, white where the artist
-        masked. Without `pictures` only where a picture made through this camera before would go."""
+        masked. Without `pictures` only where a picture made through this camera before would go. `smooth`: the
+        depth map without the model's facets (the page's "No Facets": smooth_depth)."""
         prop, size = self.prop, lens.width
         marked = self._marked(mask)
         masked = marked.reshape(-1)[prop.texel]
         if not masked.any():
             raise BakeError(NOTHING_MASKED)
         rays = lens.rays()
-        met = cast(prop.scene, prop.mesh.faces, np.broadcast_to(lens.eye, rays.shape), rays)
+        along = rays @ lens.forward              # (a ray's depth, from the lens's own plane, is this times its length)
+        met = cast(prop.scene, prop.mesh.faces, lens.origins(), rays, lens.reach / along)
         if not met.hit.any():
             raise BakeError(MODEL_OUT_OF_SIGHT)
         uv = met.between(prop.mesh.uv)
         depth = np.full(size * size, np.inf)
-        depth[met.hit] = met.t * (rays[met.hit] @ lens.forward)
+        depth[met.hit] = met.t * along[met.hit]
         over = self._masked_pixels(uv, marked)
         shown = np.zeros(size * size, dtype=bool)
         shown[met.hit] = over
-        # Where its picture may go: what faces it, without specks; then the texels of that, away from snaps.
+        # Where its picture may go: what faces it, without specks; then the texels of that, away from snaps. An
+        # inverse lens ends the model where its reach does, and lets a slanted surface take the picture right up
+        # to the model's outline: no texel reads within SNAP_REACH of that outline either, where Qwen-Image's
+        # painting may be the background's (a texel's four pixels lie up to one from its own).
         facing = np.zeros(size * size, dtype=bool)
-        facing[met.hit] = (met.unit(prop.smooth) * -rays[met.hit]).sum(axis=1) >= FACING
+        facing[met.hit] = faced(lens, (met.unit(prop.smooth) * -rays[met.hit]).sum(axis=1), depth[met.hit])
         model = met.hit.reshape(size, size)
-        chosen, px, py, _ = prop.targets(lens, clean(facing.reshape(size, size), SPECK) & model,
-                                         depth.reshape(size, size))
+        may = clean(facing.reshape(size, size), SPECK) & model
+        if lens.reach < np.inf:
+            may &= shrink(model, SNAP_REACH + 1)
+        chosen, px, py, _ = prop.targets(lens, may, depth.reshape(size, size))
         look = Look(lens, chosen, px, py, masked, shown.reshape(size, size), model)
         seen = int((look.can() & masked).sum())
         if not seen:
@@ -126,6 +146,8 @@ class Repaints:
             viewport = to_bytes(self._textured(uv))
             viewport[over] = MASK_COLOUR
             redrawn = grow(look.shown, HELD_ROOM).reshape(-1)[met.hit]
+            if smooth:
+                depth = smooth_depth(depth.reshape(size, size), SMOOTH_SIDE * size, SNAP * prop.scene.diag).reshape(-1)
             answer = {**self._pictures(lens, met.hit, depth_grey(depth[met.hit]), viewport, redrawn), **answer}
         return answer
 
@@ -145,13 +167,15 @@ class Repaints:
     def _masked_pixels(self, uv: np.ndarray, marked: np.ndarray) -> np.ndarray:
         """Which of the pixels that read the texture at `uv` show the mask: most of what a pixel reads is masked,
         the gutter beside masked texels counted (no unmasked lines along the UV seams), and some of it is masked
-        surface itself (the gutter alone would speck the islands that lie beside a masked one in the texture)."""
+        surface itself, a texel of an island: the gutter alone - the page's brush marks it too - would speck the
+        islands that lie beside a masked one in the texture."""
         res = self.prop.res
-        grown = marked | (grow(marked, MASK_GUTTER) & ~self.prop.inside.reshape(res, res))
+        inside = self.prop.inside.reshape(res, res)
+        grown = marked | (grow(marked, MASK_GUTTER) & ~inside)
         return ((self._textured(uv, grown.reshape(res, res, 1).astype(np.float32))[:, 0] > 0.5)
-                & (self._textured(uv, marked.reshape(res, res, 1).astype(np.float32))[:, 0] > 0.0))
+                & (self._textured(uv, (marked & inside).reshape(res, res, 1).astype(np.float32))[:, 0] > 0.0))
 
-    def _pictures(self, lens: Lens, hit: np.ndarray, grey: np.ndarray, viewport: np.ndarray,
+    def _pictures(self, lens: PageLens, hit: np.ndarray, grey: np.ndarray, viewport: np.ndarray,
                   redrawn: np.ndarray) -> dict[str, Any]:
         """A look's pictures written, each the lens's own square: the depth map, and the model as it is
         textured now with the mask in MASK_COLOUR (never the browser's lit picture: its shading would go onto
@@ -175,14 +199,14 @@ class Repaints:
         return {"left": round(mask_left(self.prop.picture(picture, look.lens.width), look.shown, look.model), 1)}
 
     # ---- a picture onto the look's texels --------------------------------------------------------------------------
-    def repaint(self, look: Look, picture: Path, colour: Path | None = None, keep: Path | None = None,
-                layer: Path | None = None, fade: float = 1.0, tone: bool = True) -> dict[str, Any]:
-        """The worker's "repaint": Qwen-Image's picture of what the look showed it onto the masked texels."""
+    def repaint(self, look: Look, picture: Path, keep: Path | None = None, layer: Path | None = None,
+                fade: float = 1.0) -> dict[str, Any]:
+        """The worker's "repaint": Qwen-Image's picture of what the look showed it onto the masked texels, as it was
+        painted. Its lighting is not taken off and its tone is not matched: it restores a view of the textured
+        model, which is lit and toned as the model is already (a second lighting pass made a pale model's repaint
+        nearly twice as bright)."""
         prop, size = self.prop, look.lens.width
-        whole = to_bytes(prop.to_project(picture, colour, size)[0])
-        matched = 0
-        if prop.agree and tone:
-            whole, matched = self._in_tone(look, whole)
+        whole = prop.picture(picture, size)
         if keep is not None:
             Image.fromarray(whole).save(keep)
         to, sampled, a = self._onto(look, whole, self.weight(look, fade))
@@ -190,21 +214,7 @@ class Repaints:
         if layer is not None:
             prop.write_layer(layer, to, on_clay(sampled, a))
         prop.resettle()
-        return {"painted": len(to), "matched": matched}
-
-    def _in_tone(self, look: Look, whole: np.ndarray) -> tuple[np.ndarray, int]:
-        """The picture in the tone of the texture around the mask: read where it shows surface that is not masked,
-        as a later picture's tone is read against the earlier ones' -> the picture, and the texels the tone was
-        read from (0: left as it came). All of that surface, the part held to the view too: taking the lighting
-        off changes the tone of the whole picture alike, far more than the model's own drawing beside the mask."""
-        prop, size = self.prop, look.lens.width
-        col, row = nearest(look.px, look.py, size, size)
-        beside = ~look.masked[look.chosen]
-        table = tone_table(whole.reshape(-1, 3)[(row * size + col)[beside]],
-                           prop.paint[prop.texel[look.chosen][beside]])
-        if table is None:
-            return whole, 0
-        return recolour(whole.reshape(-1, 3), table).reshape(size, size, 3), int(beside.sum())
+        return {"painted": len(to)}
 
     def weight(self, look: Look, fade: float) -> np.ndarray:
         """How much of a picture each texel takes (0 to 1; nothing outside the camera's reach): the masked texels
@@ -252,14 +262,16 @@ class Repaints:
         return self.prop.texel[look.chosen][some], sampled, a
 
     # ---- the repaints put on again, each with its fade -------------------------------------------------------------
-    def fades(self, repaints: list[dict[str, Any]], lenses: list[Lens], outs: list[str] | None,
+    def fades(self, repaints: list[dict[str, Any]], lenses: list[PageLens], outs: list[str] | None,
               ahead: int | None = None) -> dict[str, Any]:
         """The worker's "fades": the repaints (each through its lens) onto the model as loaded, one after the
-        other, each with what was painted by hand on its step over it (Prop.step_models). Kept from call to call:
-        the model as loaded, each repaint's look and picture, and its weights per fade - so a change of one
-        repaint's fade costs that one's blend, laying the pictures on, and writing the models. `ahead`: the
-        repaint whose weights for the slider's other fades (FADE_STEPS) are worked out meanwhile, on a thread,
-        nearest first, so that the next change finds its own ready."""
+        other, each with what was painted by hand on its step over it (Prop.step_models). A "hidden" one puts
+        nothing on: its step is the model before it with that step's hand paint. Kept from call to call: the
+        model as loaded, each repaint's look and picture, and its weights per fade - so a change of one repaint
+        costs that one's blend, laying the pictures on, and writing the models; of the repaints no longer asked,
+        the KEPT_SPARE used last (each holds tens of megabytes). `ahead`: the repaint whose
+        weights for the slider's other fades (FADE_STEPS) are worked out meanwhile, on a thread, nearest first, so
+        that the next change finds its own ready."""
         prop = self.prop
         self._stop_ahead.set()                       # (the thread lets go after the fade it is at)
         if self._loaded is None:
@@ -267,38 +279,42 @@ class Repaints:
         prop.restore(self._loaded)
         writes: list[Future[None]] = []
         painted: list[int] = []
+        kept: list[dict[str, Any] | None] = []
         try:
-            for i, (asked, lens) in enumerate(zip(repaints, lenses)):
-                kept = self._kept_repaint(i, asked, lens)
-                to, sampled, a = self._kept_fade(kept, clamped_fade(asked.get("fade")))
-                painted.append(len(to))
+            for asked, lens, out in zip(repaints, lenses, outs or [None] * len(repaints)):
+                shown = not asked.get("hidden")
+                layer = asked.get("layer") if outs is not None else None
+                kept.append(self._kept_repaint(asked, lens) if shown or layer else None)
+                laid = self._kept_fade(kept[-1], clamped_fade(asked.get("fade"))) if kept[-1] else None
+                painted.append(len(laid[0]) if shown else 0)
                 if outs is None:
                     continue
-                prop.mix_in(to, sampled, a)
-                if asked.get("layer"):
-                    writes.append(self.encoders.submit(prop.write_layer, Path(asked["layer"]), to,
-                                                       on_clay(sampled, a)))
-                for out, model in prop.step_models(outs[i], asked.get("hand_paint"), asked.get("unpainted")):
-                    writes.append(self.encoders.submit(prop.write_model, out, model, FADE_PNG))
+                if shown:
+                    prop.mix_in(*laid)
+                if layer:                            # (where it lies, or would: the page shows it either way)
+                    writes.append(self.encoders.submit(prop.write_layer, Path(layer), laid[0], on_clay(*laid[1:])))
+                for path, model in prop.step_models(out, asked.get("hand_paint"), asked.get("unpainted")):
+                    writes.append(self.encoders.submit(prop.write_model, path, model, True))
         finally:
             wait(writes)                             # (nothing is still being written when the answer goes out)
-            if ahead is not None and ahead in self.kept:
+            for key in list(self.kept)[:-(len(repaints) + KEPT_SPARE)]:
+                del self.kept[key]
+            if ahead is not None and ahead < len(kept) and kept[ahead]:
                 self._stop_ahead = stop = threading.Event()
-                self.ahead.submit(self._fades_ahead, self.kept[ahead], float(repaints[ahead].get("fade") or 1.0),
-                                  stop)
+                self.ahead.submit(self._fades_ahead, kept[ahead], float(repaints[ahead].get("fade") or 1.0), stop)
         for written in writes:
             written.result()
         return {"painted": painted}
 
-    def _kept_repaint(self, i: int, asked: dict[str, Any], lens: Lens) -> dict[str, Any]:
-        """What `fades` keeps of its i-th repaint: its camera, its look (without pictures), its picture, its
-        weights per fade. Made anew when the camera asked is another one."""
-        camera = tuple(tuple(float(v) for v in asked[key]) for key in ("eye", "forward", "up")) + (float(asked["tan"]),)
-        kept = self.kept.get(i)
-        if kept is None or kept["camera"] != camera:
+    def _kept_repaint(self, asked: dict[str, Any], lens: PageLens) -> dict[str, Any]:
+        """What `fades` keeps of a repaint: its look (without pictures), its picture, its weights per fade - by
+        what they are made from (_made_from), so wherever the repaint stands among those asked."""
+        key = _made_from(asked, lens)
+        kept = self.kept.pop(key, None)
+        if kept is None:
             self.look(lens, Path(asked["mask"]), pictures=False)
-            kept = self.kept[i] = {"camera": camera, "look": self.at,
-                                   "whole": self.prop.picture(Path(asked["picture"]), lens.width), "fades": {}}
+            kept = {"look": self.at, "whole": self.prop.picture(Path(asked["picture"]), lens.width), "fades": {}}
+        self.kept[key] = kept
         return kept
 
     def _kept_fade(self, kept: dict[str, Any], fade: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

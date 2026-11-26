@@ -1,6 +1,7 @@
 // viewer3d.js's shared viewer in the stage tests (a resolve hook puts this module in its place): it shows each model
 // asked for at once - a stand-in model of 64 x 64 texels on the stand-in card (standin_card.mjs), one per URL - and
-// does what the views ask of it. Its camera is moved by the tests alone: `held` says whether the artist could.
+// does what the views ask of it. Its camera is moved by the tests alone, which then tell its controls' listeners so
+// (a "change", as OrbitControls does).
 import { StandInRenderer, standInCamera, standInModel } from './standin_card.mjs';
 
 export const TEX = 64;
@@ -9,13 +10,12 @@ const models = new Map();       // url -> standInModel
 export const viewer = {
   renderer: new StandInRenderer(),
   camera: standInCamera(),
-  controls: { update() {} },
+  controls: Object.assign(new EventTarget(), { update() {} }),
   current: null,
   view: 'all',
   paintHook: null,
   holdLight: false,
-  held: false,
-  holdView(on) { this.held = !!on; },
+  setPerspective(amount) { this.camera.perspective = amount; },
   shown: [],                    // the URLs shown, in order
   attach() {},
   detach() {},

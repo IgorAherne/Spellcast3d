@@ -16,9 +16,9 @@ export const THREE = await import(THREE_URL);
  * the context is lost; once it is back every render target is empty, and a read that spanned the loss hands back
  * zeros without a word. An async read takes the pixels as they are when it is asked for (three.js reads them into a
  * buffer on the card at once) and hands them over later (`slowRead`: a promise it waits for). Of the passes it counts
- * them all, and draws two as the card would: a stroke's (it paints the texels of `brush` in its layer - the marker its
- * colour, the clone stamp what is 4 texels to the left, the overlay full coverage) and the composite of the base with
- * the overlay.
+ * them all, and draws three as the card would: a stroke's (it paints the texels of `brush` in its layer - the marker
+ * its colour, the clone stamp what is 4 texels to the left, the overlay full coverage), the composite of the base with
+ * the overlay, and the model in sight (sight).
  */
 export class StandInRenderer {
   constructor() {
@@ -57,8 +57,28 @@ export class StandInRenderer {
     const material = (scene.children.find((m) => m.userData.inside) || scene.children[0])?.material;
     const u = material?.uniforms || {};
     if (u.src) this.bytes(this.target.texture).set(u.src.value.image.data || u.src.value.image.pixels);   // a fill's copy
-    else if (u.overlay) this.composite(this.bytes(this.target.texture), u);
+    else if (u.base && u.overlay) this.composite(this.bytes(this.target.texture), u);
+    else if (u.overlay) this.sight(this.bytes(this.target.texture), u);
     else if (u.before && u.islands) this.stroke(this.bytes(this.target.texture), u, material.defines);
+  }
+
+  /**
+   * The model in sight, small (paint3d.js Session.sight): the middle of the picture, from 0.3 to 0.7 across and 0.1 to
+   * 0.9 down; masked at its very middle while the overlay covers anything.
+   */
+  sight(into, u) {
+    const { width, height } = this.target;
+    const cover = u.overlay.value && this.memory.get(u.overlay.value);
+    const masked = !!cover?.some((v, i) => i % 4 === 0 && v > 0);
+    for (let row = 0; row < height; row++) {
+      for (let col = 0; col < width; col++) {
+        const [fx, fy] = [(col + 0.5) / width, (row + 0.5) / height];
+        if (fx < 0.3 || fx > 0.7 || fy < 0.1 || fy > 0.9) continue;
+        const i = (row * width + col) * 4;
+        into[i + 1] = into[i + 3] = 255;
+        if (masked && Math.abs(fx - 0.5) < 0.05 && Math.abs(fy - 0.5) < 0.05) into[i] = 255;
+      }
+    }
   }
 
   stroke(into, u, defines) {
@@ -152,11 +172,19 @@ export function standInModel(size) {
   return { pivot, own, picture: picture.pixels };
 }
 
-/** A camera 2 units in front of a standInModel: the model fills most of the stand-in's 100 x 100 px viewport. */
+/**
+ * A camera 2 units in front of a standInModel: the model fills most of the stand-in's 100 x 100 px viewport. Its
+ * lens as viewer3d.js's LensCamera tells it, turned about the model's middle.
+ */
 export function standInCamera() {
   const camera = new THREE.PerspectiveCamera();
   camera.position.set(0, 0, 2);
   camera.updateMatrixWorld();
+  camera.perspective = 1;
+  camera.lens = () => {
+    const half = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    return { tan: half * camera.perspective, wide: half * camera.position.length() * (1 - camera.perspective), far: camera.far };
+  };
   return camera;
 }
 

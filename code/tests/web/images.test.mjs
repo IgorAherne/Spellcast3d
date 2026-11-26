@@ -2713,7 +2713,7 @@ test('the prompt library: "+prompt" and the shown prompts under the words; a cli
 
 // ---- "Tileable" (More): the tick, the offset slider beside it, the look from afar ---------------------------------
 
-test('Tileable sits under More; ticked, an offset slider stands to its right and a hint under it, and the wheel over the picture shows it from afar among copies of itself', async () => {
+test('Tileable sits under More; ticked, an offset slider stands to its right and a hint under it, and the wheel turned out past the whole picture shows it from afar among copies of itself', async () => {
   reset(status('qwen'));
   store.project.props = [{ id: 'p_1', name: 'Bricks', images: { chosen: 'images/0001.png', candidates: ['images/0001.png'], settings: { prompt: 'bricks' } } }];
   const host = new FakeEl('div');
@@ -2724,6 +2724,8 @@ test('Tileable sits under More; ticked, an offset slider stands to its right and
   const [hint] = box.byClass('hint');
   const [stage] = host.byClass('sv-imgstage');
   const [tiling] = host.byClass('sv-tiling');
+  const [area] = host.byClass('sv-picture');      // laid out at the whole picture's zoom (picview.js measures it)
+  Object.assign(area, { offsetWidth: 800, offsetHeight: 600 });
   const wheel = (deltaY) => {
     const e = { deltaY, prevented: false, preventDefault() { e.prevented = true; } };
     for (const fn of stage.listeners.wheel) fn(e);
@@ -2734,9 +2736,9 @@ test('Tileable sits under More; ticked, an offset slider stands to its right and
   assert.deepEqual([tick.textContent, hint.textContent], ['Tileable', 'scrollwheel on canvas to zoom out']);
   assert.deepEqual([slider.getAttribute('min'), slider.getAttribute('max'), slider.getAttribute('step'), slider.value], ['-50', '50', '10', 0],
     'tenths of the picture, nought in the middle');
-  // Off: no slider, no hint, and the wheel is the page's own.
+  // Off: no slider, no hint, and the wheel out at the whole picture goes no further (the view's: picview.js).
   assert.deepEqual([!!tick.input.checked, slider.hidden, hint.hidden, tiling.hidden], [false, true, true, true]);
-  assert.deepEqual([wheel(120), afar()], [false, false]);
+  assert.deepEqual([wheel(120), afar()], [true, false]);
   // The tick is the last thing in the side list: ticked, the list scrolls on until the hint under it stands whole
   // above the list's fading bottom edge.
   const [list] = host.byClass('sv-side-scroll');
@@ -2749,7 +2751,7 @@ test('Tileable sits under More; ticked, an offset slider stands to its right and
   assert.equal(store.project.props[0].images.settings.tileable, true, 'the prop\'s own setting');
   assert.deepEqual([slider.hidden, hint.hidden, tiling.hidden], [false, false, false]);
   assert.deepEqual(scrolled, [52], 'the hint ends at 902, plus 28 of fade and air, against the list ending at 878');
-  // The wheel towards the artist: from afar; away: back. The page does not scroll meanwhile.
+  // The wheel towards the artist, out at the whole picture: from afar; away: back. The page does not scroll meanwhile.
   assert.deepEqual([wheel(120), afar()], [true, true]);
   assert.deepEqual([wheel(120), afar()], [true, true]);
   assert.deepEqual([wheel(-120), afar()], [true, false]);

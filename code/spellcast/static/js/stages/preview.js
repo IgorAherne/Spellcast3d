@@ -26,6 +26,7 @@ export const NO_WEBGL = 'Your models are fine. The browser refuses 3D views on t
 // The view a model is shown in first, in 3D, Projection and Export: "All", lit with every map (its baked AO left
 // out: viewer3d.js apply). A stage keeps the view the artist picks after that (Projection's lastView).
 export const DEFAULT_VIEW = 'all';
+const SWAP_WAIT = 400;    // ms another model of the object on screen may take before "Loading…" covers that one
 
 // The Wireframe toggle's choice, per stage, kept until the page closes: Retopo starts with the edges on (both its
 // High and Low sides: the topology is what the artist judges there), Projection and 3D with them off; a stage keeps
@@ -102,7 +103,10 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
         await after;
         if (destroyed || mine !== token) return false;
       }
-      loading.hidden = false;
+      // Another model of the object on screen (keepView) is mostly there at once, and that one stays on screen
+      // meanwhile: "Loading…" covers it only when it takes long.
+      loading.hidden = keepView;
+      const slow = keepView && setTimeout(() => { if (mine === token) loading.hidden = false; }, SWAP_WAIT);
       try {
         viewer ||= (await import('../viewer3d.js')).viewer;
         if (destroyed || mine !== token) return false;
@@ -129,6 +133,7 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
             `${e.message || e}. The file itself may still be fine: save it to the project folder and open it in another program.`));
         return false;
       } finally {
+        clearTimeout(slow);
         if (mine === token) loading.hidden = true;
       }
     },

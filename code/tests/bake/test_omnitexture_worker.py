@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -565,6 +566,62 @@ def test_specks_and_holes_leave_the_mask() -> None:
     mask[1, 1] = True                                     # a speck
     cleaned = ot_masks.clean(mask, 2)
     assert cleaned[20, 20] and not cleaned[1, 1] and cleaned[8:32, 8:32].all()
+
+
+def test_no_facets_blurs_the_depth_within_the_model_and_keeps_what_stands_in_front() -> None:
+    """smooth_depth: a slope made of flat faces loses their edges; the background takes no depth and does not pull
+    the model's rim towards it; no pixel moves further than `most`, so a part standing in front of another still
+    does."""
+    size, most = 96, 0.01
+    depth = np.full((size, size), np.inf)
+    depth[16:80, 8:88] = (1.0 + (np.arange(size) // 8) * 0.008)[8:88]     # faces 8 px wide, 0.008 apart
+    depth[40:60, 30:60] = 0.5                                              # a part well in front of the slope
+    smoothed = ot_views.smooth_depth(depth, 6.0, most)
+    model = np.isfinite(depth)
+    assert (np.isfinite(smoothed) == model).all(), "nothing seeps out of the model, nothing of it is lost"
+    assert np.abs(smoothed[model] - depth[model]).max() <= most + 1e-12
+    across = smoothed[20, 16:80]                    # along the slope, clear of the part in front
+    assert np.abs(np.diff(depth[20, 16:80])).max() == pytest.approx(0.008)
+    assert (np.diff(across) > 0).all() and np.diff(across).max() < 0.003, "the slope stays, its faces' edges are gone"
+    assert abs(smoothed[16, 40] - depth[16, 40]) < 0.004, "the rim keeps its depth"
+    assert smoothed[50, 29] - smoothed[50, 30] > 0.4, "the step between the two stays"
+
+
+def test_the_gutter_the_brush_marks_beside_a_masked_island_shows_on_no_island_next_to_it(tmp_path: Path) -> None:
+    """The page's brush marks a few texels of the gutter round what it masks. A pixel that reads those alone - the
+    edge of another island that lies beside the masked one in the texture - shows no mask; one on the masked
+    island's own edge does (no unmasked line along a seam)."""
+    work = tmp_path / "work"
+    work.mkdir()
+    prop = w.Prop(box(tmp_path / "box.glb"), work, SIZE, 6, ahead=False)
+    try:
+        u0, v0, u1, v1 = island(list(FACES).index("+Z"))
+        marked = np.zeros((RES, RES), bool)       # the island, and three texels of gutter all round it
+        marked[int((1 - v1) * RES) - 3:int((1 - v0) * RES) + 4, max(0, int(u0 * RES) - 3):int(u1 * RES) + 4] = True
+        assert (marked & ~prop.inside.reshape(RES, RES)).sum() > 100
+        v = (v0 + v1) / 2
+        shows = lambda u: bool(prop.repaints._masked_pixels(np.array([[u, v]]), marked)[0])   # noqa: E731
+        assert not shows(u1 + 2.0 / RES), "the marked gutter alone: no masked surface"
+        assert shows(u1 - 0.2 / RES) and shows((u0 + u1) / 2), "the island's edge and its middle"
+    finally:
+        prop.close()
+
+
+def test_no_facets_changes_the_depth_map_a_look_writes_inside_the_model_and_nothing_else(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    prop = w.Prop(box(tmp_path / "box.glb"), work, SIZE, 6, ahead=False)
+    try:
+        ask = {**lens_at_front(prop, centre_texels(prop, "+Z"), work)[0], "size": 512}
+        read = lambda made: {key: np.asarray(Image.open(made[key]).convert("L")).astype(int)   # noqa: E731
+                             for key in ("depth", "viewport", "redrawn")}
+        plain, smooth = read(prop.look(ask)), read(prop.look({**ask, "smooth": True}))
+        assert ((smooth["depth"] > 0) == (plain["depth"] > 0)).all(), "the model's outline as it was"
+        moved = np.abs(smooth["depth"] - plain["depth"])
+        assert 0 < moved.max() < 30 and (moved > 0).mean() > 0.01, "the box's edges rounded, no more"
+        assert (smooth["viewport"] == plain["viewport"]).all() and (smooth["redrawn"] == plain["redrawn"]).all()
+    finally:
+        prop.close()
 
 
 def test_a_picture_whose_copy_could_not_be_kept_is_projected_again(prop: w.Prop) -> None:
@@ -1141,6 +1198,163 @@ def lens_at_front(prop: w.Prop, mask_texels: np.ndarray, work: Path) -> tuple[di
             "mask": work / "mask.png", "size": SIZE}, {}
 
 
+def test_a_bent_lens_places_what_its_own_lines_of_sight_meet_and_faces_a_shapes_sides() -> None:
+    """The page's "Inverse perspective" (BentLens): half the picture's side at depth z is wide + tan * z. Every
+    pixel's line starts on the lens's own plane and a point on it is placed back in that pixel, at its depth; below
+    tan 0 the lines meet behind the model, what is farther shows larger, a side that turns away from a camera
+    faces this lens, and it sees no deeper than LENS_REACH of the way to that meeting point. tan 0: no
+    perspective at all. A plain Lens when nothing is bent; none when the picture would span nothing."""
+    eye, forward, up = [0.0, 0.0, 3.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]
+    lens = ot_views.page_lens(eye, forward, up, -1.0, 64, wide=4.5)
+    assert isinstance(lens, ot_views.BentLens) and lens.reach == pytest.approx(ot_views.LENS_REACH * 4.5)
+    origins, rays = lens.origins(), lens.rays()
+    cols, rows = (grid.reshape(-1) for grid in np.meshgrid(np.arange(64), np.arange(64)))
+    for depth in (0.5, 2.0, 3.5):
+        px, py, z = lens.place(origins + rays * (depth / (rays @ lens.forward))[:, None])
+        assert np.allclose(px, cols, atol=1e-6) and np.allclose(py, rows, atol=1e-6) and np.allclose(z, depth)
+    assert np.allclose(origins + rays * (4.5 / (rays @ lens.forward))[:, None], [0.0, 0.0, -1.5]), "where they meet"
+    assert (lens.place(np.array([[0.0, 0.0, -1.0], [0.0, 0.0, 3.5]]))[2] == -1).all(), "too deep, and behind it"
+    (near,), (far,) = lens.place(np.array([[1.0, 0.0, 2.0]]))[0], lens.place(np.array([[1.0, 0.0, 0.0]]))[0]
+    assert far > near > 31.5, "the farther of two points beside the axis lies further out in the picture"
+    assert lens.step(np.array([2.0]))[0] == pytest.approx((4.5 - 2.0) * 2 / 64)
+    side, outwards = np.array([[1.0, 0.0, 0.0]]), np.array([[1.0, 0.0, 0.0]])      # a wall at x = 1, facing +x
+    assert lens.facing(side, outwards)[0] == pytest.approx((1 / 1.5) / np.hypot(1.0, 1 / 1.5)) and lens.facing(side, outwards)[0] > ot_views.FACING
+    plain = ot_views.page_lens(eye, forward, up, 0.5, 64)
+    assert type(plain) is ot_views.Lens and plain.facing(side, outwards)[0] < 0, "a camera sees its back"
+    assert plain.reach == np.inf and np.allclose(plain.origins(), eye)
+    flat = ot_views.page_lens(eye, forward, up, 0.0, 64, wide=2.0)
+    assert np.allclose(flat.rays(), forward) and flat.reach == np.inf
+    assert flat.place(np.array([[1.0, 0.0, 2.0]]))[0] == flat.place(np.array([[1.0, 0.0, -2.0]]))[0]
+    for tan, wide in ((0.0, 0.0), (-1.0, 0.0), (0.5, -1.0), (float("nan"), 1.0)):
+        assert ot_views.page_lens(eye, forward, up, tan, 64, wide=wide) is None
+    # The inverse lens alone shows the deeper larger - than at its own plane -, and there a surface may be that
+    # much more slanted (faced); through the other lenses, by its cosine alone.
+    depths = np.array([0.0, 2.0, 3.5])
+    assert lens.larger(depths) == pytest.approx([1.0, 1.8, 4.5])
+    less = ot_views.page_lens(eye, forward, up, 0.2, 64, wide=1.0)
+    assert plain.larger(depths) == 1.0 and (flat.larger(depths) == 1.0).all() and (less.larger(depths) == 1.0).all()
+    cosines, deep = np.array([0.45, 0.3, 0.12, 0.1]), np.array([0.0, 2.0, 3.5, 3.5])
+    assert ot_views.faced(lens, cosines, deep).tolist() == [False, True, True, False]
+    for other in (plain, flat, less):
+        assert not ot_views.faced(other, cosines, deep).any()
+        assert ot_views.faced(other, np.array([ot_views.FACING]), np.array([3.5])).all()
+
+
+def test_through_an_inverse_lens_a_repaint_reaches_a_side_no_camera_in_front_sees(tmp_path: Path) -> None:
+    """A box looked at straight from the front, its right side masked: a camera sees nothing of that side; the
+    bent lens, its lines of sight meeting just behind the box, does - the look shows it, and the picture goes
+    onto its texels."""
+    work = tmp_path / "work"
+    work.mkdir()
+    prop = w.Prop(box(tmp_path / "box.glb"), work, SIZE, 6, ahead=False)
+    try:
+        side = centre_texels(prop, "+X")
+        mask = np.zeros(RES * RES, np.uint8)
+        mask[side] = 255
+        Image.fromarray(mask.reshape(RES, RES)).save(work / "mask.png")
+        front = {"eye": (SPIN @ np.array((0.0, 0.0, 3.0))).tolist(), "forward": (SPIN @ np.array((0.0, 0.0, -1.0))).tolist(),
+                 "up": [0.0, 1.0, 0.0], "mask": work / "mask.png", "size": SIZE}
+        with pytest.raises(w.BakeError, match="in sight from here"):
+            prop.look({**front, "tan": 0.5}, pictures=False)
+        seen = prop.look({**front, "tan": -1.0, "wide": 4.5})
+        assert 0 < seen["seen"] <= seen["masked"] == len(side)
+        shown = np.asarray(Image.open(seen["viewport"]).convert("RGB")).reshape(-1, 3)
+        assert (shown == ot_repaint.MASK_COLOUR).all(axis=1).any(), "the masked side shows in the look's picture"
+        assert prop.repaint(solid(work / "answer.png", (40, 160, 90)))["painted"] > 0
+        assert (prop.paint[side] == (40, 160, 90)).all(axis=1).any(), "and takes the picture"
+    finally:
+        prop.close()
+
+
+def through_an_inverse_lens(tmp_path: Path, size: tuple[float, float, float], masked: str | None,
+                            tan: float = -1.0) -> tuple[w.Prop, dict]:
+    """A box of half sides `size` looked at straight from the front, 3 away from its middle, through an inverse
+    lens (wide 4.5), a face's middle masked (or every texel) -> (the prop: close it; the look's answer)."""
+    work = tmp_path / "work"
+    work.mkdir()
+    prop = w.Prop(box(tmp_path / "box.glb", size), work, SIZE, 6, ahead=False)
+    mask = np.zeros(RES * RES, np.uint8)
+    mask[centre_texels(prop, masked) if masked else slice(None)] = 255
+    Image.fromarray(mask.reshape(RES, RES)).save(work / "mask.png")
+    return prop, prop.look({"eye": (SPIN @ np.array((0.0, 0.0, 3.0))).tolist(), "forward": (SPIN @ np.array((0.0, 0.0, -1.0))).tolist(),
+                            "up": [0.0, 1.0, 0.0], "tan": tan, "wide": 4.5, "mask": work / "mask.png", "size": SIZE},
+                           pictures=False)
+
+
+@pytest.mark.parametrize("half_width, least", [(1.0, 0.4), (0.5, 0.2)])
+def test_what_an_inverse_lens_shows_larger_takes_its_picture_at_more_of_a_slant(tmp_path: Path, half_width: float,
+                                                                                least: float) -> None:
+    """The box's right side through the inverse lens, its middle masked: the lens shows the side larger the deeper
+    it runs, and that makes up for its slant (faced). So the near end of the masked part, which the lens faces at
+    less than FACING, takes the picture too: nearly all that is masked does (by the cosine alone, some six tenths
+    of it). The narrow box's side is seen at half the cosine: from pixel to pixel it runs four pixels' sides
+    deeper, which the test that nothing hides a texel has to allow (Prop.targets), or half of them go unpainted."""
+    prop, seen = through_an_inverse_lens(tmp_path, (half_width, 1.0, 1.0), "+X")
+    try:
+        look = prop.repaints.at
+        mine = look.chosen[look.masked[look.chosen]]
+        cosine = look.lens.facing(prop.point[mine], prop.normal[mine])
+        depth = look.lens.place(prop.point[mine])[2]
+        assert depth.min() < 2.55 and depth.max() > 3.3, "the masked middle of the side, some 2.5 to 3.5 deep"
+        slanted = cosine < ot_views.FACING
+        assert slanted.any() and depth[slanted].min() < 2.55, "its near end is slanted"
+        assert (cosine * look.lens.larger(depth) >= ot_views.FACING).all() and least < cosine.min() < least + 0.05
+        assert seen["seen"] == len(mine) > 0.9 * seen["masked"] and (~slanted).sum() < 0.7 * seen["masked"]
+    finally:
+        prop.close()
+
+
+def test_an_inverse_lens_sees_no_deeper_than_its_reach_and_paints_nothing_beside_the_models_outline(
+        tmp_path: Path) -> None:
+    """A thin box whose sides run on beyond the lens's reach, all of it masked: the look's picture ends where the
+    reach cuts the box, though the rays would meet it deeper. That cut is an outline the surface is seen squarely
+    at, and beside every outline a slanted surface takes the picture too: no texel reads a pixel within SNAP_REACH
+    of the model's outline, where Qwen-Image's painting may be the background's."""
+    prop, _ = through_an_inverse_lens(tmp_path, (0.3, 0.3, 1.0), None, tan=-1.4)
+    try:
+        look = prop.repaints.at
+        lens = look.lens
+        rays = lens.rays()
+        met = ot_views.cast(prop.scene, prop.mesh.faces, lens.origins(), rays)        # however deep
+        depth = np.full(SIZE * SIZE, np.inf)
+        depth[met.hit] = met.t * (rays @ lens.forward)[met.hit]
+        assert 2.0 < lens.reach < 3.0 and (look.model.reshape(-1) == (depth <= lens.reach)).all()
+        assert (np.isfinite(depth) & (depth > lens.reach)).sum() > 100, "the box runs on behind the cut"
+        away = ot_masks.shrink(look.model, ot_masks.SNAP_REACH + 1)
+        col, row = w.nearest(look.px, look.py, SIZE, SIZE)
+        assert len(look.chosen) > 100 and away[row, col].all()
+        # (not for want of texels there: the lens faces the surface beside the cut well enough)
+        px, py, z = lens.place(prop.point)
+        at = np.flatnonzero((z > 0) & (px >= 4) & (px <= SIZE - 5) & (py >= 4) & (py <= SIZE - 5))
+        col, row = w.nearest(px[at], py[at], SIZE, SIZE)
+        beside = look.model[row, col] & ~away[row, col]
+        assert (beside & ot_views.faced(lens, lens.facing(prop.point[at], prop.normal[at]), z[at])).sum() > 20
+    finally:
+        prop.close()
+
+
+def test_a_repaint_through_a_bent_lens_is_laid_again_through_that_lens(tmp_path: Path) -> None:
+    """ "fades" reads a repaint's lens as "look" does. A lens turned down but not inside out (tan above 0 with
+    "wide") is the one that would go wrong in silence - without its "wide" it is a narrow camera, no error: laid
+    again, the repaint goes onto the texels it was painted on, and the same camera and files without "wide", or
+    with another, are other repaints kept."""
+    work = tmp_path / "work"
+    work.mkdir()
+    prop = w.Prop(box(tmp_path / "box.glb"), work, SIZE, 6, ahead=False)
+    try:
+        ask, _ = lens_at_front(prop, centre_texels(prop, "+Z"), work)
+        bent = {**ask, "mask": str(ask["mask"]), "tan": 0.1, "wide": 1.1}
+        prop.look(bent, pictures=False)
+        painted = prop.repaint(solid(work / "projected.png", (40, 160, 90)))["painted"]
+        again = {**bent, "picture": str(work / "projected.png"), "fade": 1.0}
+        assert prop.fades([again], [None])["painted"] == [painted]
+        narrow = {key: value for key, value in again.items() if key != "wide"}
+        assert 0 < prop.fades([narrow], [None])["painted"][0] < painted and len(prop.repaints.kept) == 2
+        assert prop.fades([{**again, "wide": 1.2}], [None])["painted"][0] > 0 and len(prop.repaints.kept) == 3
+    finally:
+        prop.close()
+
+
 def test_what_is_masked_is_painted_again_through_the_pages_camera_and_nothing_else(tmp_path: Path) -> None:
     """A repaint: the middle of the box's front face is masked; the look gives Qwen-Image the
     depth map from the page's camera and the model as it is textured with the masked surface in magenta - no
@@ -1155,7 +1369,7 @@ def test_what_is_masked_is_painted_again_through_the_pages_camera_and_nothing_el
         assert prop.plan is None and not prop._sights, "nothing is looked through ahead"
         masked = centre_texels(prop, "+Z")
         ask, _ = lens_at_front(prop, masked, work)
-        made = prop.look(**ask)
+        made = prop.look(ask)
         depth = np.asarray(Image.open(made["depth"]).convert("L"))
         seen = np.asarray(Image.open(made["viewport"]).convert("RGB"))
         model = depth > 0
@@ -1178,11 +1392,11 @@ def test_what_is_masked_is_painted_again_through_the_pages_camera_and_nothing_el
                 grown |= np.roll(magenta, (dy, dx), axis=(0, 1))
         assert ((redrawn == 255) == (grown & model)).all() and (redrawn == 255).sum() > magenta.sum()
         assert made["masked"] == len(masked) and 0.9 * len(masked) <= made["seen"] <= len(masked)
-        # Qwen-Image's picture: one colour all over (so unlike the grey around the mask that its tone is left alone).
+        # Qwen-Image's picture: one colour all over.
         colour = (40, 160, 90)
         before = prop.paint.copy()
         done = prop.repaint(solid(work / "answer.png", colour), keep=work / "projected.png")
-        assert done["painted"] >= made["seen"] and done["matched"] == 0
+        assert done == {"painted": done["painted"]} and done["painted"] >= made["seen"]
         inside = np.zeros(RES * RES, dtype=bool)
         inside[masked] = True
         changed = (prop.paint != before).any(axis=1) & prop.inside
@@ -1202,6 +1416,48 @@ def test_what_is_masked_is_painted_again_through_the_pages_camera_and_nothing_el
         texture, _ = ot_model.base_colour((tmp_path / "out.glb").read_bytes())
         assert (centre(texture, "+Z") == colour).all(axis=1).mean() > 0.3 and (centre(texture, "+X") == GREY).all()
         assert result["stats"]["texture"] == RES
+    finally:
+        prop.close()
+
+
+def test_a_repaint_goes_on_as_it_was_painted_whatever_its_tone(tmp_path: Path) -> None:
+    """Render Masked on a pale model: the picture comes back much brighter than the texture around the mask, with
+    a pane of black glass darker than anything on the model. It goes on as it was painted - no lighting taken
+    off, no tone matched to the texture: the masked texels take the picture's own colours, and what was kept of
+    it is the picture to the byte."""
+    work = tmp_path / "work"
+    work.mkdir()
+    res = size = 512
+    prop = w.Prop(shielded_wall(tmp_path / "wall.glb", 0.86, 0.96, 0.86, 0.96, texture=res), work, size, 3,
+                  ahead=False)
+    try:
+        x, y = prop.point[:, 0], prop.point[:, 1]
+        on_wall = prop.point[:, 2] < 0.3
+        prop.paint[prop.texel] = np.clip(40.0 + 60.0 * (x[:, None] + 1.0), 0, 255).astype(np.uint8)   # a grey ramp
+        prop.resettle()
+        masked = on_wall & (np.abs(x) < 0.4) & (np.abs(y) < 0.4)
+        mask = np.zeros(res * res, np.uint8)
+        mask[prop.texel[masked]] = 255
+        Image.fromarray(mask.reshape(res, res)).save(work / "mask.png")
+        made = prop.look({"eye": [0.0, 0.0, 4.0], "forward": [0.0, 0.0, -1.0], "up": [0.0, 1.0, 0.0], "tan": 0.3,
+                          "mask": work / "mask.png", "size": size})
+        view = np.asarray(Image.open(made["viewport"]).convert("RGB")).astype(int)
+        model = np.asarray(Image.open(made["depth"]).convert("L")) > 0
+        picture = np.clip(view * 1.6, 0, 255).astype(np.uint8)          # the view, far brighter
+        middle = np.zeros((size, size), dtype=bool)
+        middle[size // 2 - 40:size // 2 + 40, size // 2 - 40:size // 2 + 40] = True
+        picture[middle] = (5, 5, 6)                                     # the glass
+        picture[~model] = 0
+        Image.fromarray(picture).save(work / "answer.png")
+        done = prop.repaint(work / "answer.png", keep=work / "projected.png")
+        assert done["painted"] > 1000
+        assert (np.asarray(Image.open(work / "projected.png").convert("RGB")) == picture).all(), "kept as painted"
+        glass = masked & (np.abs(x) < 0.08) & (np.abs(y) < 0.08)
+        painted = prop.paint[prop.texel].astype(int)
+        assert glass.sum() > 100 and (np.abs(painted[glass] - (5, 5, 6)).max(axis=1) <= 1).all(), "as black as painted"
+        surface = masked & (np.abs(x) > 0.25) & (np.abs(x) < 0.33) & (np.abs(y) < 0.33)
+        own = np.clip(40.0 + 60.0 * (x[surface] + 1.0), 0, 255)
+        assert surface.sum() > 300 and (painted[surface, 0] - own).mean() > 0.4 * own.mean(), "as bright as painted"
     finally:
         prop.close()
 
@@ -1232,11 +1488,11 @@ def test_a_repaints_edge_fades_out_where_the_camera_sees_on_and_in_where_it_does
             mask = np.zeros(prop.res * prop.res, np.uint8)
             mask[prop.texel[masked]] = 255
             Image.fromarray(mask.reshape(prop.res, prop.res)).save(work / "mask.png")
-            seen = prop.look([0.0, 0.0, 4.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0], 0.3, work / "mask.png", 512,
-                             pictures=False)
+            seen = prop.look({"eye": [0.0, 0.0, 4.0], "forward": [0.0, 0.0, -1.0], "up": [0.0, 1.0, 0.0], "tan": 0.3,
+                              "mask": work / "mask.png", "size": 512}, pictures=False)
             assert set(seen) == {"masked", "seen"} and not list(work.glob("look_*.png"))
             prop.paint[:] = GREY
-            prop.repaint(picture, layer=work / f"layer{fade}.webp", fade=fade, tone=False)
+            prop.repaint(picture, layer=work / f"layer{fade}.webp", fade=fade)
             share = (prop.paint[prop.texel, 1].astype(float) - GREY[1]) / (colour[1] - GREY[1])
             apart = np.hypot(np.maximum(np.abs(x) - shadow, 0.0), np.maximum(np.abs(y) - shadow, 0.0))
             apart = apart / prop.seam_reach()
@@ -1280,8 +1536,8 @@ def test_fades_lay_kept_repaints_on_again_as_a_repaint_would_and_work_the_other_
     prop = w.Prop(glb_path, work, SIZE, 6, ahead=False)
     try:
         ask, _ = lens_at_front(prop, centre_texels(prop, "+Z"), work)
-        prop.look(**ask, pictures=False)
-        prop.repaint(picture, tone=False, fade=2.0)
+        prop.look(ask, pictures=False)
+        prop.repaint(picture, fade=2.0)
         expected = prop.paint.copy()
     finally:
         prop.close()
@@ -1297,10 +1553,10 @@ def test_fades_lay_kept_repaints_on_again_as_a_repaint_would_and_work_the_other_
         assert not (prop.paint == expected).all(), "another fade"
         prop.fades(asked, [None])
         assert (prop.paint == expected).all(), "from the model as loaded each time"
-        assert set(prop.repaints.kept[0]["fades"]) < set(ot_repaint.FADE_STEPS), \
-            "a call without `ahead` stops the thread"
+        (kept,) = prop.repaints.kept.values()
+        assert set(kept["fades"]) < set(ot_repaint.FADE_STEPS), "a call without `ahead` stops the thread"
         prop.fades(asked, None, ahead=0)                 # (picked again: it starts again from where it was)
-        fades = prop.repaints.kept[0]["fades"]
+        fades = kept["fades"]
         deadline = time.time() + 30
         while not all(fade in fades and fades[fade].done() for fade in ot_repaint.FADE_STEPS) \
                 and time.time() < deadline:
@@ -1403,14 +1659,149 @@ def test_a_steps_hand_paint_goes_on_again_after_its_repaint_and_stays_under_the_
 
 
 def two_repaints(tmp_path: Path) -> tuple[w.Prop, list[dict]]:
-    """A box and the same repaint of its front asked twice (what "fades" takes)."""
+    """A box and two repaints of its front (what "fades" takes): one mask and one picture, the second through a
+    slightly wider lens."""
     work = tmp_path / "work"
     work.mkdir()
     prop = w.Prop(box(tmp_path / "box.glb"), work, SIZE, 6, ahead=False)
     ask, _ = lens_at_front(prop, centre_texels(prop, "+Z"), work)
     asked = {**{key: ask[key] for key in ("eye", "forward", "up", "tan", "size")}, "mask": str(ask["mask"]),
              "picture": str(solid(work / "projected.png", (40, 160, 90))), "fade": 2.0}
-    return prop, [asked, dict(asked)]
+    return prop, [asked, {**asked, "tan": asked["tan"] * 1.05}]
+
+
+def test_a_hidden_repaint_puts_nothing_on_and_keeps_its_place_and_its_steps_hand_paint(tmp_path: Path) -> None:
+    """The page's eye on a repaint: asked "hidden", it puts nothing onto the model - its step is the model before
+    it with what was painted by hand on that step - and the repaints after it go on as ever. Its layer is still
+    written where asked (the page shows where it would lie). Shown again, it is on."""
+    prop, asked = two_repaints(tmp_path)
+    try:
+        front, side = centre_texels(prop, "+Z"), centre_texels(prop, "+X")
+        middle = front[[len(front) // 2]]
+        layer = paint_layer(tmp_path / "hand-paint.png", side, (250, 5, 5))
+        outs = [str(tmp_path / "one.glb"), str(tmp_path / "two.glb")]
+        hidden = {**asked[0], "hidden": True, "hand_paint": str(layer), "unpainted": str(tmp_path / "one-made.glb"),
+                  "layer": str(tmp_path / "one.webp")}
+
+        def at(path: str, texels: np.ndarray) -> np.ndarray:
+            return ot_model.base_colour(Path(path).read_bytes())[0].reshape(-1, 3)[texels]
+
+        made = prop.fades([hidden, asked[1]], outs)
+        assert made["painted"][0] == 0 and made["painted"][1] > 0
+        assert (at(outs[0], middle) == GREY).all(), "nothing of it on its own step"
+        assert (at(outs[0], side) == (250, 5, 5)).all() and (at(str(tmp_path / "one-made.glb"), side) == GREY).all()
+        assert (at(outs[1], middle) == (40, 160, 90)).all() and (at(outs[1], side) == (250, 5, 5)).all()
+        assert (tmp_path / "one.webp").is_file(), "where it would lie"
+        # The last one hidden: its step is the one before it.
+        prop.fades([asked[0], {**asked[1], "hidden": True}], outs)
+        assert (at(outs[1], front) == at(outs[0], front)).all()
+        prop.fades([{**hidden, "hidden": False}, asked[1]], outs)
+        assert (at(outs[0], middle) == (40, 160, 90)).all(), "shown again"
+        # Hidden and only made ready (the page picked it): nothing is worked out for it.
+        prop.repaints.kept.clear()
+        assert prop.fades([hidden], None)["painted"] == [0] and not prop.repaints.kept
+    finally:
+        prop.close()
+
+
+def test_a_kept_repaint_is_found_wherever_it_stands_and_looked_at_anew_when_its_files_changed(
+        tmp_path: Path) -> None:
+    """What "fades" keeps of a repaint goes by its camera and its mask's and picture's files, not by its place
+    among those asked: with the one before it taken off or hidden, nothing is worked out again - also when the
+    hub names the same files in another folder (linked or copied there). A mask written anew is looked at anew."""
+    prop, asked = two_repaints(tmp_path)
+    looks: list[Path] = []
+    look = prop.repaints.look
+    prop.repaints.look = lambda lens, mask, pictures=True: looks.append(mask) or look(lens, mask, pictures)
+    try:
+        expected = prop.fades(asked, [None, None])["painted"]
+        assert len(looks) == 2 and len(prop.repaints.kept) == 2
+        assert prop.fades(asked[1:], [None])["painted"] == expected[1:], "the one before it taken off"
+        assert prop.fades(asked[::-1], [None, None])["painted"] == expected[::-1]
+        moved = tmp_path / "moved"
+        moved.mkdir()
+        os.link(asked[0]["mask"], moved / "mask.png")
+        shutil.copy2(asked[0]["picture"], moved / "projected.png")
+        elsewhere = {**asked[0], "mask": str(moved / "mask.png"), "picture": str(moved / "projected.png")}
+        assert prop.fades([elsewhere], [None])["painted"] == expected[:1]
+        assert len(looks) == 2 and len(prop.repaints.kept) == 2, "nothing looked at or worked out again"
+        time.sleep(0.02)
+        front = centre_texels(prop, "+Z")
+        lens_at_front(prop, front[:len(front) // 4], tmp_path / "work")               # the mask, written anew
+        assert prop.fades(asked[:1], [None])["painted"][0] < expected[0]
+        assert len(looks) == 3 and len(prop.repaints.kept) == 3
+        # No more is kept than the repaints asked and a few of those asked before (one taken off may come back).
+        for tan in (0.31, 0.32, 0.33, 0.34):
+            prop.fades([{**asked[0], "tan": tan}], [None])
+        assert len(prop.repaints.kept) == 1 + ot_repaint.KEPT_SPARE and len(looks) == 7
+        assert prop.fades([{**asked[0], "tan": 0.33}], [None]) and len(looks) == 7, "the one before the last is still kept"
+    finally:
+        prop.close()
+
+
+def test_another_model_of_the_prop_takes_the_loaded_ones_place_and_the_repaints_go_onto_it(tmp_path: Path) -> None:
+    """The worker's "texture" (the painted views hidden, or shown again): the same surface with another texture.
+    "fades" then puts the repaints onto that one and writes its file's models; nothing kept of the repaints is
+    worked out again. A model with a texture of another size is refused."""
+    prop, asked = two_repaints(tmp_path)
+    looks: list[Path] = []
+    look = prop.repaints.look
+    prop.repaints.look = lambda lens, mask, pictures=True: looks.append(mask) or look(lens, mask, pictures)
+    try:
+        front, side = centre_texels(prop, "+Z"), centre_texels(prop, "+X")
+        prop.fades(asked[:1], [str(tmp_path / "grey.glb")])
+        blue = io.BytesIO()
+        Image.new("RGB", (RES, RES), (10, 20, 200)).save(blue, "PNG")
+        other = tmp_path / "blue.glb"
+        other.write_bytes(glb.set_base_color_image((tmp_path / "box.glb").read_bytes(), blue.getvalue()))
+        assert w.COMMANDS["texture"](prop, {"glb": str(other)}) == {"texture": [RES, RES]}
+        prop.fades(asked[:1], [str(tmp_path / "on-blue.glb")])
+        painted = ot_model.base_colour((tmp_path / "on-blue.glb").read_bytes())[0].reshape(-1, 3)
+        assert (painted[side] == (10, 20, 200)).all() and (painted[front[[len(front) // 2]]] == (40, 160, 90)).all()
+        assert len(looks) == 1, "the repaint's look is the surface's: kept"
+        small = io.BytesIO()
+        Image.new("RGB", (RES // 2, RES // 2), GREY).save(small, "PNG")
+        other.write_bytes(glb.set_base_color_image((tmp_path / "box.glb").read_bytes(), small.getvalue()))
+        with pytest.raises(BakeError, match="pixels"):
+            prop.retexture(other)
+    finally:
+        prop.close()
+
+
+def test_a_model_written_quickly_holds_every_pixel_as_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model the artist waits for (a repaint put on again) is written without loss, in its texture's own
+    format: every pixel as given, also under the texture's see-through texels, whose alpha stays. Written at
+    leisure, a WebP texture is the smaller, lossy one."""
+    monkeypatch.setattr(glb, "set_base_color_image", lambda data, image: image)       # (the texture as stored)
+    rng = np.random.default_rng(3)
+    texture = np.dstack([rng.integers(0, 256, (RES, RES, 3), np.uint8), np.full((RES, RES, 1), 255, np.uint8)])
+    texture[:8, :, 3] = 0
+    pixels = np.repeat(np.repeat(rng.integers(0, 256, (RES // 8, RES // 8, 3), np.uint8), 8, axis=0), 8, axis=1)
+    given = np.dstack([pixels, texture[..., 3:]])
+
+    def stored(kind: str, quick: bool) -> tuple[np.ndarray, str, int]:
+        data = w.model_with(b"", kind, texture, pixels, quick)
+        picture = Image.open(io.BytesIO(data))
+        return np.asarray(picture.convert("RGBA")), picture.format.lower(), len(data)
+
+    for kind in ("webp", "png"):
+        held, kept_as, _ = stored(kind, True)
+        assert kept_as == kind and (held == given).all()
+    lossy, kept_as, size = stored("webp", False)
+    assert kept_as == "webp" and size < stored("webp", True)[2] and not (lossy == given).all()
+
+
+def test_a_steps_hand_paint_goes_onto_another_model_of_the_prop(tmp_path: Path) -> None:
+    """The worker's "hand_paint" without a patch (the painted views hidden, or shown again): the paint layer as it
+    is over another model's texture, that model and the layer left as they are."""
+    made, out = box(tmp_path / "box.glb"), tmp_path / "painted.glb"
+    texels = np.arange(10 * RES, 10 * RES + 40)
+    layer = paint_layer(tmp_path / "hand-paint.png", texels, (200, 30, 40))
+    before = made.read_bytes(), layer.read_bytes()
+    answer = w.WITHOUT_LOAD["hand_paint"]({"model": str(made), "layer": str(layer), "out": str(out)})
+    assert answer == {"texture": [RES, RES]} and (made.read_bytes(), layer.read_bytes()) == before
+    painted = ot_model.base_colour(out.read_bytes())[0].reshape(-1, 3)
+    assert (painted[texels] == (200, 30, 40)).all() and (np.delete(painted, texels, axis=0) == GREY).all()
 
 
 def test_working_ahead_stops_for_good_when_another_repaint_is_picked(
@@ -1433,13 +1824,13 @@ def test_working_ahead_stops_for_good_when_another_repaint_is_picked(
         assert entered.wait(30), "the first repaint's other fades are being worked out"
         prop.fades(asked, None, ahead=1)
         go.set()
-        second = prop.repaints.kept[1]["fades"]
+        first, second = (kept["fades"] for kept in prop.repaints.kept.values())
         deadline = time.time() + 30
         while not all(fade in second and second[fade].done() for fade in ot_repaint.FADE_STEPS) \
                 and time.time() < deadline:
             time.sleep(0.05)
         assert set(second) == set(ot_repaint.FADE_STEPS), "the repaint picked now: every fade worked out"
-        assert len(prop.repaints.kept[0]["fades"]) <= 2, "the one picked before: its own fade and the one it was at"
+        assert len(first) <= 2, "the one picked before: its own fade and the one it was at"
     finally:
         go.set()
         prop.close()
@@ -1472,7 +1863,7 @@ def test_no_model_is_still_being_written_when_a_fade_fails(tmp_path: Path) -> No
     prop, asked = two_repaints(tmp_path)
     written: list[str] = []
 
-    def write(out: Path, pixels: np.ndarray, compress: int = 6) -> None:
+    def write(out: Path, pixels: np.ndarray, quick: bool = False) -> None:
         if out.name == "one.glb":
             raise OSError("the drive is full")
         time.sleep(0.4)
@@ -1496,11 +1887,11 @@ def test_a_look_that_fails_leaves_the_look_before_it_whole(tmp_path: Path) -> No
     try:
         masked = centre_texels(prop, "+Z")
         ask, _ = lens_at_front(prop, masked, work)
-        prop.look(**ask, pictures=False)
+        prop.look(ask, pictures=False)
         hidden, _ = lens_at_front(prop, centre_texels(prop, "-Z"), work)
         with pytest.raises(w.BakeError, match="in sight from here"):
-            prop.look(**hidden, pictures=False)
-        assert prop.repaint(solid(work / "answer.png", (40, 160, 90)), tone=False)["painted"] > 0
+            prop.look(hidden, pictures=False)
+        assert prop.repaint(solid(work / "answer.png", (40, 160, 90)))["painted"] > 0
         middle = masked[len(masked) // 2 + int(np.sqrt(len(masked))) // 2]      # (the mask is a block of texels)
         assert tuple(prop.paint[middle]) == (40, 160, 90)
     finally:
@@ -1516,10 +1907,10 @@ def test_a_repaint_needs_something_masked_in_sight(tmp_path: Path) -> None:
     try:
         ask, _ = lens_at_front(prop, np.zeros(0, np.int64), work)
         with pytest.raises(w.BakeError, match="Nothing is masked"):
-            prop.look(**ask)
+            prop.look(ask)
         ask, _ = lens_at_front(prop, centre_texels(prop, "-Z"), work)
         with pytest.raises(w.BakeError, match="in sight from here"):
-            prop.look(**ask)
+            prop.look(ask)
         with pytest.raises(w.RequestError):
             prop.repaint(solid(work / "answer.png", (1, 2, 3)))
     finally:
@@ -1612,6 +2003,38 @@ def test_the_sheet_commands_answer_as_json_lines(tmp_path: Path) -> None:
     stdout = io.StringIO()
     w.main(io.StringIO(json.dumps(load) + "\n" + json.dumps({"cmd": "view", "index": 0}) + "\n"), stdout)
     assert "error" in json.loads(stdout.getvalue().splitlines()[1])
+
+
+def test_a_picture_is_made_ready_for_the_lighting_pass_without_a_model(tmp_path: Path) -> None:
+    """The worker's "fit", for a repaint's example before its lighting is taken off: the pass takes pictures whose
+    sides are multiples of 32, so the picture is laid, undistorted, in the middle of the smallest such canvas
+    (the rest in its corner's colour), on white where it is see-through, and made smaller when its longer side is
+    over `most`. The picture itself stays as it is."""
+    cut_out = np.zeros((500, 300, 4), np.uint8)
+    cut_out[100:400, 50:250] = (200, 40, 40, 255)                 # a red figure on nothing
+    Image.fromarray(cut_out, "RGBA").save(tmp_path / "front.png")
+    before = (tmp_path / "front.png").read_bytes()
+    out = tmp_path / "examples" / "front.fit.png"
+    stdout = io.StringIO()
+    asked = {"cmd": "fit", "picture": str(tmp_path / "front.png"), "out": str(out), "most": 1024, "step": 32}
+    assert w.main(io.StringIO(json.dumps(asked) + "\n"), stdout) == 0
+    answer = json.loads(stdout.getvalue().splitlines()[-1])
+    assert answer["ok"] and answer["picture"] == str(out) and answer["size"] == [320, 512]
+    made = np.asarray(Image.open(out))
+    assert made.shape == (512, 320, 3), "RGB, sides of multiples of 32"
+    assert (made[0, 0] == 255).all() and (made[6 + 250, 10 + 150] == (200, 40, 40)).all(), "on white, in the middle"
+    assert (made[6 + 100:6 + 400, 10 + 50:10 + 250] == (200, 40, 40)).all() and (made[:6] == 255).all()
+    assert (tmp_path / "front.png").read_bytes() == before
+    # A large picture: its longer side `most` px, the other as it follows, then the canvas.
+    wide = np.full((1000, 2000, 3), (10, 90, 160), np.uint8)
+    Image.fromarray(wide).save(tmp_path / "wide.png")
+    answer = w.fit(tmp_path / "wide.png", tmp_path / "wide.fit.png", 1024, 32)
+    assert answer["size"] == [1024, 512] and (np.asarray(Image.open(tmp_path / "wide.fit.png")) == (10, 90, 160)).all()
+    # One that fits already goes through as it is.
+    exact = np.random.default_rng(1).integers(0, 255, (64, 96, 3), dtype=np.uint8)
+    Image.fromarray(exact).save(tmp_path / "exact.png")
+    assert w.fit(tmp_path / "exact.png", tmp_path / "exact.fit.png", 1024, 32)["size"] == [96, 64]
+    assert (np.asarray(Image.open(tmp_path / "exact.fit.png")) == exact).all()
 
 
 def test_a_picture_is_mirrored_without_a_model(tmp_path: Path) -> None:

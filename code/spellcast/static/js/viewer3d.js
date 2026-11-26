@@ -24,6 +24,10 @@ const CACHE_SIZE = 2;   // high-poly GLBs are big; keep only the last two in mem
 // A model is downloaded only once its prop has stayed on screen this long (ms): going through the props
 // with the arrow keys must not fetch and parse every model on the way.
 const LOAD_DELAY = 200;
+// How deep an inverse lens shows the model, of the way from the camera's own plane to where its lines of sight
+// meet: nearer to that point a surface would fill the picture many times over. Omni-Texture's worker looks no
+// deeper either (launchers/omnitexture_views.py LENS_REACH; a test holds the two together).
+export const LENS_REACH = 0.875;
 
 const { ROTATE, DOLLY, PAN } = THREE.MOUSE;
 const BUTTONS = ['LEFT', 'MIDDLE', 'RIGHT'];
@@ -399,7 +403,6 @@ class Viewer {
     this.paintHook = null; // paint3d.js while a brush is up: it takes the presses it paints with
     this.orbiting = false; // a model's "all" view is on screen: OrbitLights light it (orbitLight)
     this.holdLight = false;   // those lights hold still (a brush is up)
-    this.held = false;     // the camera holds still (holdView)
     this.place = null;     // where the model last on screen stood (show's keepView)
     this.frameAt = 0;      // when the animation loop drew its last frame (ms)
     this.layerUrl = null;  // the layer shown over the view (setLayer)
@@ -421,8 +424,9 @@ class Viewer {
     this.root = new THREE.Group();
     this.scene.add(this.root);
 
-    this.camera = new THREE.PerspectiveCamera(32, 1, 0.01, 1000);
+    this.camera = new LensCamera(32, 1, 0.01, 1000);
     const controls = new OrbitControls(this.camera, r.domElement);
+    this.camera.about = controls.target;
     controls.enableDamping = true;
     controls.dampingFactor = 0.09;
     controls.screenSpacePanning = true;
@@ -576,14 +580,14 @@ class Viewer {
    * polygon edges, as always (the map bar puts back what its stage shows). Resolves true once shown,
    * false if another show() superseded it. onProgress(fraction|null) reports download progress; extraMaps ({height: {url,
    * colorspace}}) adds maps a GLB cannot carry, on its own UVs. keepView: `url` is another model of the
-   * object last on screen (its high or low poly): it takes that model's place and the camera stays where the
-   * artist left it, so the two can be compared up close.
+   * object last on screen (its high or low poly, its texture changed): it takes that model's place and the
+   * camera stays where the artist left it, so the two can be compared up close - and that model stays on screen
+   * until this one is there, loaded at once.
    */
   async show(url, kind, { onProgress, extraMaps = {}, keepView = false } = {}) {
     this.init();
     const token = ++this.token;
     this.stopLoading();         // nobody waits for the previous model any more
-    this.holdView(false);       // a hold is for the model that was on screen
     // Where frame() put the model last on screen: one shown with keepView goes to the same place, also when a
     // model still loading had taken that one off the screen meanwhile.
     if (this.current) this.place = this.current.children[0].position.clone();
@@ -592,11 +596,13 @@ class Viewer {
     if (pivot) {
       this.cache.delete(url);   // refresh its LRU position
     } else {
-      this.root.clear();        // don't keep showing the previous prop's model while this one loads
-      this.current = null;
-      this.dirty = true;
-      await new Promise((resolve) => setTimeout(resolve, LOAD_DELAY));
-      if (token !== this.token) return false;
+      if (!keepView) {
+        this.root.clear();      // don't keep showing the previous prop's model while this one loads
+        this.current = null;
+        this.dirty = true;
+        await new Promise((resolve) => setTimeout(resolve, LOAD_DELAY));
+        if (token !== this.token) return false;
+      }
       const manager = new THREE.LoadingManager();
       this.loading = manager;
       let object;
@@ -700,11 +706,11 @@ class Viewer {
   /**
    * Centres the current model and places the camera so all of it is in view: from the front, a little
    * from the right and above, or (keepDirection, the F key) from where the artist looks at it now.
-   * Returns false when there is no model to frame, or the view is held (holdView).
+   * Returns false when there is no model to frame.
    */
   frame({ keepDirection = false } = {}) {
     const pivot = this.current;
-    if (!pivot || this.held) return false;
+    if (!pivot) return false;
     const direction = keepDirection ? this.camera.position.clone().sub(this.controls.target) : null;
     const radius = fitCamera(this.camera, pivot, direction);
     if (!radius) return false;
@@ -725,13 +731,61 @@ class Viewer {
   }
 
   /**
-   * The camera holds still (`on`) or follows the artist again: held, no drag, wheel or touch moves it and frame() -
-   * the F key, "reset the view" - does nothing. Until the next show() at the latest.
+   * How much perspective the view has (LensCamera.perspective): 1, a camera's, is what every stage shows; the stage
+   * that turns it down or inside out sets it back when it goes.
    */
-  holdView(on) {
-    this.held = !!on;
-    this.controls.enabled = !on;
-    if (on) this.stopGlide();
+  setPerspective(amount) {
+    if (!this.camera || this.camera.perspective === amount) return;
+    this.camera.perspective = amount;
+    this.camera.updateProjectionMatrix();
+    this.dirty = true;
+  }
+}
+
+/**
+ * The viewer's camera: a perspective camera whose perspective can be turned down, or inside out, about the point the
+ * artist orbits (`about`), what lies at that point's depth keeping its size. `perspective`: 1 as a camera sees, 0
+ * none (orthographic), below 0 inverse - the lines of sight meet behind the model, so what is farther shows larger
+ * and the sides of a round shape turn towards the artist.
+ */
+export class LensCamera extends THREE.PerspectiveCamera {
+  constructor(fov, aspect, near, far) {
+    super(fov, aspect, near, far);
+    this.perspective = 1;
+    this.about = new THREE.Vector3();
+  }
+
+  /**
+   * {tan, wide, far}: half the picture's height at depth z, from the camera along its view, is wide + tan * z, and
+   * nothing shows deeper than `far`. A camera's own: its angle's tangent, wide 0.
+   */
+  lens() {
+    const half = Math.tan(THREE.MathUtils.degToRad(this.fov) / 2) / this.zoom;
+    const tan = half * this.perspective;
+    const wide = half * this.position.distanceTo(this.about) * (1 - this.perspective);
+    return { tan, wide, far: tan < 0 ? Math.min(this.far, (LENS_REACH * wide) / -tan) : this.far };
+  }
+
+  updateProjectionMatrix() {
+    super.updateProjectionMatrix();
+    if ((this.perspective ?? 1) === 1) return;         // (also while the camera is being made)
+    const { tan, wide, far } = this.lens();
+    // A point's clip w is the picture's half height at its depth; its clip z runs from -w at `near` to w at `far`.
+    const slope = (2 * wide + tan * (this.near + far)) / (far - this.near);
+    const offset = -(wide + tan * this.near) - slope * this.near;
+    this.projectionMatrix.set(
+      1 / this.aspect, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, -slope, offset,
+      0, 0, -tan, wide,
+    );
+    this.projectionMatrixInverse.copy(this.projectionMatrix).invert();
+  }
+
+  /** A bent lens follows the distance to the point it turns about: whoever reads the camera's place reads its lens. */
+  updateMatrixWorld(force) {
+    super.updateMatrixWorld(force);
+    if (this.perspective !== 1) this.updateProjectionMatrix();
   }
 }
 
@@ -788,11 +842,18 @@ const ORBIT_FRAME = [[1, 0, 0], [0, Math.SQRT1_2, Math.SQRT1_2], [0, -Math.SQRT1
 const ORBIT_SEED = 1;
 const ORBIT_MS = 10000;      // one turn of a light round the model
 const ORBIT_STEP_MS = 100;   // the most one frame moves them: after a hidden tab they go on from where they were
-const ORBIT_RADIUS = 1.5;    // their distance from the model's centre, in model radii (half its box's diagonal)
-// The lights do not fade with distance, so every prop is lit alike whatever its size. One this near lights only the
-// side of the model facing it, about half of what a far light of the same intensity gives: six at 1.2 light a model
-// about as brightly as far lights of 1.4 + 1.4 + 0.9 (a key, a second key and the rim), but from every side.
-const ORBIT_INTENSITY = 1.2;
+const ORBIT_RADIUS = 1.25;   // their distance from the model's centre, in model radii (half its box's diagonal)
+// Six lights of one strength that do not fade light a model from every side alike: its shading hardly changes as
+// they go round. So each fades as a lamp does (ORBIT_DECAY) and reaches ORBIT_REACH model radii and no further: it
+// lights the side it passes and leaves the far side to the others. And the two of a pair differ (ORBIT_PAIR, the
+// first of a pair and the one opposite it): what one lights the other does not light as much, so the model has a
+// lit side and a shaded one, which go round with them. ORBIT_INTENSITY is a light's strength at one model radius,
+// the pair's mean - told in model radii, so every prop is lit alike whatever its size: about as bright where it is
+// lit as under far lights of 1.4 + 1.4 + 0.9 (a key, a second key and the rim), half as bright in its shade.
+const ORBIT_REACH = 1.5;
+const ORBIT_DECAY = 2;
+const ORBIT_INTENSITY = 2.0;
+const ORBIT_PAIR = [4 / 3, 2 / 3];
 // Each light shows as a small glow, PARTICLE_SIZE model radii across, but never more than PARTICLE_ANGLE radians of
 // the view: one passing close by the camera stays a dot.
 const PARTICLE_SIZE = 0.1;
@@ -860,10 +921,11 @@ export class OrbitLights {
     this.angle = 0;                     // how far they have gone round (radians)
     this.centre = new THREE.Vector3();  // the model's, and its radius
     this.radius = 1;
+    this.lit = false;                   // they shine (light)
     const glow = new THREE.SpriteMaterial({
       map: glowTexture(), color: KEY_LIGHT.color, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
     });
-    this.lights = this.paths.map(() => new THREE.PointLight(KEY_LIGHT.color, 0, 0, 0));   // decay 0: no fading
+    this.lights = this.paths.map(() => new THREE.PointLight(KEY_LIGHT.color, 0, 0, ORBIT_DECAY));
     this.glows = this.lights.map((light) => {
       const sprite = new THREE.Sprite(glow);
       sprite.visible = false;
@@ -882,12 +944,22 @@ export class OrbitLights {
     box.getCenter(this.centre);
     this.radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1e-3);
     this.place();
+    this.power();
   }
 
   /** The lights shine and their glows show (`on`), or both go out. */
   light(on) {
-    for (const light of this.lights) light.intensity = on ? ORBIT_INTENSITY : 0;
-    for (const sprite of this.glows) sprite.visible = on;
+    this.lit = !!on;
+    this.power();
+    for (const sprite of this.glows) sprite.visible = this.lit;
+  }
+
+  /** Each light's reach and strength for the model fitted: as strong at one of its radii whatever its size. */
+  power() {
+    this.lights.forEach((light, i) => {
+      light.distance = this.radius * ORBIT_REACH;
+      light.intensity = this.lit ? ORBIT_INTENSITY * ORBIT_PAIR[i % 2] * this.radius ** ORBIT_DECAY : 0;
+    });
   }
 
   /** Every light goes on along its path by `angle` (radians). */

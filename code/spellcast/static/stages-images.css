@@ -89,12 +89,21 @@
 
 /* ---- the picture and its candidates ------------------------------------------------------------- */
 
-.sv-picture {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  padding: 10px;
+/* The picture's area: the viewport less 10px all round, as many times its size as --zoom about its middle and moved
+   by --pan-x / --pan-y (js/stages/picview.js: the wheel, the middle button). The picture and every layer laid on it -
+   its marks, its slices, the rough preview - take this area, so they move as one, and what they draw on top of the
+   picture keeps its size on screen. */
+.sv-imgstage :is(.sv-picture, .mk-area, .sl-area, .sl-canvas, .sv-live-area, .sv-live > .sv-live-img) {
+  position: absolute;
+  left: calc(10px + (100% - 20px) * (1 - var(--zoom, 1)) / 2 + var(--pan-x, 0px));
+  top: calc(10px + (100% - 20px) * (1 - var(--zoom, 1)) / 2 + var(--pan-y, 0px));
+  width: calc((100% - 20px) * var(--zoom, 1)); height: calc((100% - 20px) * var(--zoom, 1));
 }
+.sv-imgstage.panning, .sv-imgstage.panning * { cursor: grabbing !important; }
+.sv-picture { display: flex; align-items: center; justify-content: center; }
 .sv-picture-img { width: 100%; height: 100%; min-width: 0; object-fit: contain; display: block; user-select: none; }
-/* A tileable picture from afar (the wheel over it: images.js syncTiling): it shrinks to a quarter about its middle
+/* A tileable picture from afar (the wheel turned on out past the whole picture: picview.js), at the whole picture's
+   zoom: it shrinks to a quarter about its middle
    while copies of it fade in all round - a field of 17 x 17 of them laid on the picture's own fitted box (--ar, as
    the slicer's .sl-fit), moved with the picture's offset (--shift, in tiles) and shrunk with it. */
 .sv-picture, .sv-tiling-fit { transition: transform 0.3s ease-in-out; }
@@ -121,7 +130,7 @@
    that part of the picture's own fitted box (as the markers' .mk-fit), in pieces round a tileable picture's edge, the
    rest of the picture in sight round it; from afar it shrinks with the picture. */
 .sv-live.part { background: none; }
-.sv-live-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; }
+.sv-live-area { container-type: size; display: grid; place-items: center; }
 .sv-live-fit {
   position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1);
   transition: transform 0.3s ease-in-out;
@@ -212,8 +221,8 @@
    too, while slicing). Its row of buttons is above the picture, in the workbench's header (.sl-bar below). */
 .sl { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .sl button { pointer-events: auto; }
-/* The <img>'s own box (.sv-picture's padding): the picture shows in it, fitted (xMidYMid meet). */
-.sl-canvas { position: absolute; left: 10px; top: 10px; width: calc(100% - 20px); height: calc(100% - 20px); overflow: visible; }
+/* The <img>'s own box (the picture's area, above): the picture shows in it, fitted (xMidYMid meet). */
+.sl-canvas { overflow: visible; }
 /* While slicing the whole layer takes the pointer, the empty room beside the picture too: a slice may begin there. */
 .sl.on { pointer-events: auto; cursor: crosshair; touch-action: none; }
 .sl-rect { fill: var(--view); fill-opacity: 0.1; stroke: var(--view); stroke-width: 2px; vector-effect: non-scaling-stroke; }
@@ -223,7 +232,7 @@
   vector-effect: non-scaling-stroke;
 }
 /* The slices' buttons sit on the picture itself: the fitted box of its aspect ratio (--ar), centred like the <img>. */
-.sl-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; pointer-events: none; }
+.sl-area { container-type: size; display: grid; place-items: center; pointer-events: none; }
 .sl-fit { position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1); }
 /* A slice's buttons, in its bottom-left corner (--x, --y): the chip with its view's name, the move button above
    it, the one that removes it to its right (the last two while slicing). A small slice, or one at the
@@ -480,7 +489,7 @@ div.sv-slot.filled:hover { border-color: var(--line-2); background: var(--field)
    takes the pointer, and the slices' buttons always do), and under Donate (the same z-index, earlier in the stage).
    Elsewhere a press paints; the cursor is a ring of the marker's size (marks.js ringCursor). */
 .mk { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.mk-area { position: absolute; inset: 10px; container-type: size; display: grid; place-items: center; }
+.mk-area { container-type: size; display: grid; place-items: center; }
 .mk-fit { position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1))); aspect-ratio: var(--ar, 1); }
 .mk-canvas {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: auto; cursor: crosshair;

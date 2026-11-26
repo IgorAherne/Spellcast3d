@@ -456,9 +456,11 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
     box.style.top = `${((below ? y1 : y0 / natural.h > 0.3 ? y0 : natural.h) / natural.h) * 100}%`;
     box.classList.toggle('above', !below);
     fit.append(box);
-    const room = fit.clientWidth || 0;
+    // (a share of the picture's width: the box stays at the strokes as the picture is zoomed)
+    const room = fit.clientWidth || 1;
     const wide = box.offsetWidth || 0;
-    box.style.left = `${Math.max(0, Math.min(room - wide, ((x0 + x1) / 2 / natural.w) * room - wide / 2))}px`;
+    const left = Math.max(0, Math.min(room - wide, ((x0 + x1) / 2 / natural.w) * room - wide / 2));
+    box.style.left = `${(left / room) * 100}%`;
     asking = {
       box,
       close() {

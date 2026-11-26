@@ -53,7 +53,7 @@ def closing(mask: np.ndarray, r: int) -> np.ndarray:
     return shrink(grow(np.pad(mask, r, constant_values=True), r), r)[r:-r, r:-r] if r > 0 else mask.copy()
 
 
-def _window_sum(values: np.ndarray, r: int) -> np.ndarray:
+def window_sum(values: np.ndarray, r: int) -> np.ndarray:
     """The sum over each (2r + 1)-square window of `values` ((h, w) or (h, w, n)); outside the picture counts 0."""
     pad = ((r + 1, r), (r + 1, r)) + ((0, 0),) * (values.ndim - 2)
     total = np.cumsum(np.cumsum(np.pad(values.astype(np.float64), pad), axis=0), axis=1)
@@ -71,13 +71,13 @@ def mask_left(picture: np.ndarray, where: np.ndarray, model: np.ndarray) -> floa
     inside = shrink(where, LEFT_NEAR) & ~shrink(where, LEFT_FAR)
     outside = grow(where, LEFT_FAR) & ~grow(where, LEFT_NEAR) & model
     edge = where & ~shrink(where, 1)
-    within, without = _window_sum(inside, LEFT_WINDOW), _window_sum(outside, LEFT_WINDOW)
+    within, without = window_sum(inside, LEFT_WINDOW), window_sum(outside, LEFT_WINDOW)
     told = edge & (within >= LEFT_RING_PIXELS) & (without >= LEFT_RING_PIXELS)
     if told.sum() < LEFT_OUTLINE_PIXELS:
         return 0.0
     values = picture.astype(np.float64)
-    step = np.abs(_window_sum(values * inside[..., None], LEFT_WINDOW)[told] / within[told][:, None]
-                  - _window_sum(values * outside[..., None], LEFT_WINDOW)[told] / without[told][:, None]).max(axis=1)
+    step = np.abs(window_sum(values * inside[..., None], LEFT_WINDOW)[told] / within[told][:, None]
+                  - window_sum(values * outside[..., None], LEFT_WINDOW)[told] / without[told][:, None]).max(axis=1)
     return float(np.percentile(step, LEFT_SHARE))
 
 
