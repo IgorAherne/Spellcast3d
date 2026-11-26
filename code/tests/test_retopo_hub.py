@@ -23,7 +23,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from spellcast import exports, paths
+from spellcast import exports, paths, projects
 from spellcast.adapters import Lato2Adapter, TriflowAdapter, build_adapters, lato2, triflow, variants
 from spellcast.adapters.base import StageContext, StageError, ToolNeedsRestart
 from spellcast.exports import Exporter
@@ -95,7 +95,7 @@ class FakeRetopo(FakeAdapter):
         meshes = []
         for size, (raw, answer) in made:
             obj = f"{variants.folder(size)}/{self.tool_id}.obj"
-            stats = await ctx.unwrap(raw, obj, params.get("uv_leniency", 0.5))
+            stats = await ctx.unwrap(raw, obj, params.get("uv_leniency", 1.0))
             meshes.append({"size": size, "obj": obj, "stats": {**stats, "raw_vertices": answer["vertices"]}})
         self.marks.append(("unwrapped", ctx.prop_id, time.monotonic()))
         self.watch()
@@ -226,6 +226,15 @@ def test_retopo_settings_are_checked_and_repaired_and_a_new_prop_starts_with_the
     file.write_text(json.dumps(data), encoding="utf-8")
     read = store.get_prop("P", second["id"])["retopo"]["settings"]["sizes"]
     assert read == [0.25, 2] and isinstance(read[1], int)
+    # The UV leniency's old default (the page never showed it) becomes today's, xatlas's largest islands, in a
+    # project from before it; another value stays. Once the project says it is from since, a 0.5 (picked in Instant
+    # Meshes' viewer) stays too.
+    assert projects.UV_LENIENCY == 1.0 and data.get("uv_leniency_default") == 1.0     # written since
+    older = {key: value for key, value in data.items() if key != "uv_leniency_default"}
+    for marked, kept, expected in ((older, 0.5, 1.0), (older, 0.3, 0.3), (data, 0.5, 0.5)):
+        marked["props"][1]["retopo"]["settings"]["uv_leniency"] = kept
+        file.write_text(json.dumps(marked), encoding="utf-8")
+        assert store.get_prop("P", second["id"])["retopo"]["settings"]["uv_leniency"] == expected
 
     # A project from before the choice: a prop with a clean mesh keeps the method that made it (Instant Meshes, so
     # the mesh is not "to do" again); one without gets the default.
@@ -593,7 +602,7 @@ def test_retopo_all_split_per_method_loads_each_tool_once(tmp_path: Path) -> Non
         assert [(tool, state) for tool, state, _ in seen] == [(LATO2, "busy")] * 2 + [(TRIFLOW, "busy")]
         assert all(imesh in ("ready", "busy") for _, _, imesh in seen)
         assert [(Path(u["src"]).name, Path(u["dst"]).name, u["uv_leniency"]) for u in unwraps] == [
-            ("lato2.raw.obj", "lato2.obj", 0.5), ("lato2.raw.obj", "lato2.obj", 0.5),
+            ("lato2.raw.obj", "lato2.obj", 1.0), ("lato2.raw.obj", "lato2.obj", 1.0),
             ("triflow.raw.obj", "triflow.obj", 0.25)]
         assert [prop_id for prop_id, _ in adapters[LATO2].calls] == [ids["A"], ids["B"]]
         assert adapters[TRIFLOW].bodies[0]["faces"] == 8000, "two triangles per vertex wanted"
@@ -783,7 +792,7 @@ def test_the_unwrap_says_what_went_wrong(tmp_path: Path) -> None:
                            client=None, settings={}, report=lambda f, m: None,  # type: ignore[arg-type]
                            cancelled=lambda: False)
     with pytest.raises(StageError, match="cannot unwrap UVs here"):
-        asyncio.run(context.unwrap("a.obj", "b.obj"))
+        asyncio.run(context.unwrap("a.obj", "b.obj", projects.UV_LENIENCY))
 
 
 def test_waiting_and_stopping_go_by_the_jobs_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

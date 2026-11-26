@@ -548,12 +548,14 @@ def repack(
     pair_pos = pairs // (int(tri_uv.max()) + 1)
     pair_uv = pairs % (int(tri_uv.max()) + 1)
 
+    # The islands in texels of the map: packing from given coordinates, xatlas charts anew any face whose UV
+    # area is under FLT_EPSILON - in a 0..1 atlas, a sliver of a large island.
     atlas = xatlas.Atlas()
     atlas.add_mesh(
         np.ascontiguousarray(positions[pair_pos], dtype=np.float32),
         np.ascontiguousarray(tri_pair, dtype=np.uint32),
         np.ascontiguousarray(cage[pair_pos], dtype=np.float32),
-        np.ascontiguousarray(uvs[pair_uv], dtype=np.float32),
+        np.ascontiguousarray(uvs[pair_uv] * float(resolution), dtype=np.float32),
     )
     chart_options = xatlas.ChartOptions()
     chart_options.use_input_mesh_uvs = True

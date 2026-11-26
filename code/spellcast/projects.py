@@ -75,6 +75,13 @@ _QUALITY_TAGS = frozenset({"masterpiece", "best quality", "high quality", "highe
                            "ultra detailed", "highly detailed", "detailed", "highres", "absurdres", "4k", "8k",
                            "hd", "uhd", "hdr", "photorealistic", "realistic", "3d", "3d render", "render",
                            "game asset", "concept art", "white background", "simple background"})
+# The UV unwrap of the clean meshes (xatlas's chart cost, 0..1 as Instant Meshes' viewer shows it): the top, its
+# largest islands, a little more stretch accepted for them. 0.5 was the default before: in a project that does not
+# say it was written since (_UV_DEFAULT_KEY), a prop holding 0.5 takes this one - once, so a 0.5 picked later in
+# Instant Meshes' viewer stays.
+UV_LENIENCY = 1.0
+_OLD_UV_LENIENCY = 0.5
+_UV_DEFAULT_KEY = "uv_leniency_default"
 # Per editable stage (a stage with a tool): the settings a new prop starts with, and its result keys.
 # A new stage needs one entry here (and a tool in paths.STAGES); the stages without a tool get {}.
 STAGE_DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
@@ -159,7 +166,7 @@ STAGE_DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
         # borders), and an Accept there stores the viewer's values of all of them (adapters/imesh.py
         # VIEWER_SETTINGS). lato2_* and triflow_* are LATO.2's and TriFlow's (RETOPO_NUMBERS).
         "settings": {"method": paths.TRIFLOW, "sizes": [2], "target_vertices": 5000, "pure_quad": False,
-                     "crease_angle": -1, "smooth_iter": 2, "uv_leniency": 0.5, "rosy": 4, "posy": 4,
+                     "crease_angle": -1, "smooth_iter": 2, "uv_leniency": UV_LENIENCY, "rosy": 4, "posy": 4,
                      "extrinsic": True, "align_to_boundaries": False,
                      "lato2_seed": 0, "triflow_quad_ratio": 0.95, "triflow_seed": 0},
         # variants: the clean meshes `method` made from the 3D model `source`, [{"size", "obj", "stats"}], one per
@@ -374,9 +381,10 @@ def check_retopo_settings(changes: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _normalize_retopo_settings(settings: dict[str, Any]) -> None:
+def _normalize_retopo_settings(settings: dict[str, Any], old_uv_default: bool = False) -> None:
     """An older or hand-edited project's retopo settings, repaired in place: a method, sizes or LATO.2 / TriFlow
-    number that is not valid becomes the default; the settings that are none any more go."""
+    number that is not valid becomes the default; the settings that are none any more go. `old_uv_default`: the
+    project is from before UV_LENIENCY was the default."""
     defaults = DEFAULT_STAGE_SETTINGS["retopo"]
     for key in _RETIRED_RETOPO_SETTINGS:
         settings.pop(key, None)
@@ -391,6 +399,10 @@ def _normalize_retopo_settings(settings: dict[str, Any]) -> None:
             settings[key] = _setting_number(key, settings.get(key))
         except ProjectError:
             settings[key] = defaults[key]
+    # The page never showed the leniency, and a new prop copies the last one's settings, so the old default
+    # would stay in a project for good.
+    if old_uv_default and settings.get("uv_leniency") == _OLD_UV_LENIENCY:
+        settings["uv_leniency"] = UV_LENIENCY
 
 
 def check_images_settings(changes: dict[str, Any]) -> dict[str, Any]:
@@ -1090,6 +1102,8 @@ def _normalize(data: dict[str, Any], folder_name: str) -> dict[str, Any]:
     data["ui"] = {**{k: v for k, v in ui.items() if k not in _OLD_UI_KEYS}, "stage": stage}
     props = data.get("props") if isinstance(data.get("props"), list) else []
     data["props"] = [p for p in props if isinstance(p, dict) and PROP_ID_RE.match(str(p.get("id", "")))]
+    old_uv_default = data.get(_UV_DEFAULT_KEY) != UV_LENIENCY
+    data[_UV_DEFAULT_KEY] = UV_LENIENCY                 # kept by the project's next write
     has_draft = False
     for prop in data["props"]:
         prop.setdefault("name", prop["id"])
@@ -1155,7 +1169,7 @@ def _normalize(data: dict[str, Any], folder_name: str) -> dict[str, Any]:
                     block["repaints"] = [repaint_record(step, layer=REPAINT_MASK, under=_step_before(steps, step))
                                          for step in steps[1:] if step != TAKEN_OFF]
             if stage == "retopo":
-                _normalize_retopo_settings(block["settings"])
+                _normalize_retopo_settings(block["settings"], old_uv_default)
                 _normalize_variants(block)
                 if "sizes" not in saved and block["variants"]:
                     # A clean mesh from before there were sizes: the prop asks for the size it has.

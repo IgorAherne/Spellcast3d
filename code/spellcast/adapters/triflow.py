@@ -55,7 +55,6 @@ QEM_THRESHOLD = 12.0               # TriFlow's own default: the largest error it
 # it takes (the launcher's largest). At TriFlow's default it stopped a rifle near 470 vertices whether 100, 250 or
 # 300 were asked; with this it made 303 for 250 and 347 for 300 (RTX 3060).
 QEM_THRESHOLD_SMALL = 1000.0
-UV_LENIENCY = 0.5                  # the Instant Meshes unwrap's default (retopo.settings.uv_leniency)
 
 RAW_OBJ = "triflow.raw.obj"        # TriFlow's mesh, no UVs (removed once unwrapped), in its size's folder
 OBJ = "triflow.obj"                # with UVs: what the next stages use
@@ -191,9 +190,9 @@ class TriflowAdapter(ToolAdapter):
         made = await variants.make_each(ctx, sizes, UNWRAP_SHARE, make)
         ctx.report(UNWRAP_SHARE, "Unwrapping the UVs (xatlas, on the CPU)…")
         try:
-            leniency = min(max(float(params.get("uv_leniency", UV_LENIENCY)), 0.0), 1.0)
+            leniency = min(max(float(params.get("uv_leniency", projects.UV_LENIENCY)), 0.0), 1.0)
         except (TypeError, ValueError):
-            leniency = UV_LENIENCY
+            leniency = projects.UV_LENIENCY
         meshes = []
         for size, (raw, result) in made:
             obj = f"{variants.folder(size)}/{OBJ}"

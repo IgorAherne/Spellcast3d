@@ -356,7 +356,7 @@ def test_projects_and_props(tmp_path: Path) -> None:
     assert first["images"]["settings"]["steps"] == 25 and first["images"]["chosen"] is None
     assert first["retopo"] == {"settings": {"method": "triflow", "sizes": [2], "target_vertices": 5000,
                                             "pure_quad": False, "crease_angle": -1, "smooth_iter": 2,
-                                            "uv_leniency": 0.5, "rosy": 4, "posy": 4, "extrinsic": True,
+                                            "uv_leniency": 1.0, "rosy": 4, "posy": 4, "extrinsic": True,
                                             "align_to_boundaries": False, "lato2_seed": 0,
                                             "triflow_quad_ratio": 0.95, "triflow_seed": 0},
                                "obj": None, "method": None, "source": None, "session_id": None, "stale": False,

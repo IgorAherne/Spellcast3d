@@ -524,6 +524,11 @@
 	             nobody back). Not happy? Another "Seed" gives a different
 	             take on the same model: press "Make it again" (it makes that prop's clean meshes
 	             anew).
+	             The UVs are cut into large islands: the tiny pieces an unwrap leaves along sharp
+	             folds are laid flat onto the island beside them, so a texture has few crumbs (a
+	             little more stretch is accepted for it). The 3D stage's models are unwrapped the
+	             same way. In Instant Meshes' viewer the UV slider still sets how far xatlas may
+	             stretch an island before it cuts a new one.
 	             Each method keeps the clean meshes it made for a prop: pick TriFlow, make them, try
 	             LATO.2, then pick TriFlow again and its clean meshes are back, with their numbers and
 	             your pick, without making them again. The method picked is the one the prop uses

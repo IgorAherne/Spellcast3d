@@ -299,16 +299,20 @@ class FakeAtlas:
             assert not isinstance(tensor, Card) and tensor.device.type == "cpu", "xatlas takes CPU tensors"
             assert tensor.dtype == dtype and tensor.is_contiguous()
         LOG.append(("xatlas.add_mesh", tuple(vertices.shape), tuple(faces.shape)))
-        self.meshes.append((vertices.clone(), faces.clone()))
+        self.meshes.append((vertices.clone(), faces.clone(), None if uvs is None else uvs.clone()))
+        self.given_uvs = False
 
     def compute_charts(self, **options: Any) -> None:
         LOG.append(("xatlas.compute_charts", tuple(sorted(options.items()))))
+        self.given_uvs = bool(options.get("use_input_mesh_uvs"))
 
     def pack_charts(self, **options: Any) -> None:
         LOG.append(("xatlas.pack_charts", tuple(sorted(options.items()))))
 
     def get_mesh(self, index: int) -> tuple[Any, Any, Any]:
-        vertices, faces = self.meshes[index]
+        vertices, faces, uvs = self.meshes[index]
+        if self.given_uvs and uvs is not None:                         # packed again: the charts as given, moved
+            return torch.arange(vertices.shape[0], dtype=torch.int32), faces.clone(), (uvs * 0.5 + 0.25).contiguous()
         n = vertices.shape[0]
         xref = torch.arange(n - 1, -1, -1, dtype=torch.int32)          # new vertex j is the chart's n-1-j
         new_faces = (n - 1 - faces.long()).int().contiguous()
@@ -482,6 +486,9 @@ def fakes(monkeypatch: pytest.MonkeyPatch) -> Iterator[Fakes]:
                          ("nvdiffrast.torch", dr), ("flex_gemm", flex_gemm), ("flex_gemm.ops", ops),
                          ("flex_gemm.ops.grid_sample", grid_sample)):
         monkeypatch.setitem(sys.modules, name, module)
+    # to_glb has no joined islands, so the steps are compared with it without them (the join has tests of its own:
+    # test_the_unwrap_joins_small_islands_and_packs_the_atlas_again, and tests/bake/test_uv_islands.py).
+    monkeypatch.setenv("PIXAL3D_JOIN_ISLANDS", "off")
     LOG.clear()
     CPU_ONLY[0] = False
     yield Fakes(cumesh=cumesh, remeshing=remeshing)
@@ -1088,6 +1095,54 @@ def test_the_holes_closed_after_the_remesh_are_oriented_with_the_rest() -> None:
     assert torch.allclose(filled.vertices[5], (filled.vertices[1] + filled.vertices[2] + filled.vertices[4]) / 3)
     log.clear()
     assert glbmod.fill_after_remesh(cumesh, filled) is filled and log == ["fill_holes"]
+
+
+def _atlas_with_a_crumb() -> tuple[Any, Any, Any, Any]:
+    """(positions, vmap, faces, uvs) as the unwrap's xatlas leaves them: a flat 40 x 40 grid that is one island, and
+    a sliver folded back over its border that is an island of its own, far away in the atlas."""
+    side = 40
+    xs, ys = np.meshgrid(np.arange(side + 1), np.arange(side + 1), indexing="ij")
+    positions = np.stack([xs.ravel(), ys.ravel(), np.zeros(xs.size)], axis=1)
+    faces = []
+    for i in range(side):
+        for j in range(side):
+            a, b, d = i * (side + 1) + j, (i + 1) * (side + 1) + j, i * (side + 1) + j + 1
+            faces += [[a, b, b + 1], [a, b + 1, d]]
+    a, b = 0, side + 1                                      # the vertices at (0, 0) and (1, 0)
+    positions = np.vstack([positions, [[0.5, 0.3, 0.05]]])
+    vmap = np.concatenate([np.arange(len(positions) - 1), [b, a, len(positions) - 1]])
+    uvs = np.vstack([positions[:-1, :2] / side, [[5.0, 5.0], [5.2, 5.0], [5.1, 5.1]]])
+    faces.append([len(vmap) - 3, len(vmap) - 2, len(vmap) - 1])
+    return (torch.tensor(positions, dtype=torch.float32), torch.tensor(vmap, dtype=torch.int32),
+            torch.tensor(faces, dtype=torch.int32), torch.tensor(uvs, dtype=torch.float32))
+
+
+def test_the_unwrap_joins_small_islands_and_packs_the_atlas_again(fakes: Fakes,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """join_islands: the sliver laid onto the grid's island (uv_islands), and the atlas packed again by xatlas from
+    those UVs; the same triangles, in the unwrap's dtypes. Off (PIXAL3D_JOIN_ISLANDS), xatlas's atlas as it was."""
+    import uv_islands
+
+    positions, vmap, faces, uvs = _atlas_with_a_crumb()
+    assert int(uv_islands.chart_labels(faces.numpy(), len(vmap)).max()) + 1 == 2
+    same = glbmod.join_islands(fakes.cumesh, positions, vmap, faces, uvs)                  # off (the fixture's)
+    assert all(got is given for got, given in zip(same, (vmap, faces, uvs))) and LOG == []
+
+    monkeypatch.setenv("PIXAL3D_JOIN_ISLANDS", "on")
+    got_vmap, got_faces, got_uvs = glbmod.join_islands(fakes.cumesh, positions, vmap, faces, uvs)
+    assert LOG[-2:] == [("xatlas.compute_charts", (("use_input_mesh_uvs", True),)), ("xatlas.pack_charts", ())]
+    assert (got_vmap.dtype, got_faces.dtype, got_uvs.dtype) == (torch.int32, torch.int32, torch.float32)
+    assert torch.equal(got_vmap[got_faces.long()], vmap[faces.long()])
+    assert int(uv_islands.chart_labels(got_faces.numpy(), len(got_vmap)).max()) + 1 == 1
+    assert len(got_vmap) == len(positions)                  # the sliver's corners: two of the grid's, one new
+
+    class Refuses(FakeAtlas):
+        def pack_charts(self, **options: Any) -> None:
+            raise RuntimeError("xatlas: no room")
+
+    monkeypatch.setattr(fakes.cumesh, "Atlas", Refuses)     # the join never costs the mesh: xatlas's atlas stays
+    kept = glbmod.join_islands(fakes.cumesh, positions, vmap, faces, uvs)
+    assert all(got is given for got, given in zip(kept, (vmap, faces, uvs)))
 
 
 @needs_sources

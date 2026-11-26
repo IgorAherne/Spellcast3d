@@ -24,6 +24,7 @@ from typing import Any, Mapping
 import httpx
 
 from .. import gpu, paths
+from ..projects import UV_LENIENCY
 from . import variants
 from .base import LaunchSpec, StageContext, StageError, ToolAdapter, ToolNeedsRestart
 
@@ -50,7 +51,7 @@ def lato2_params(settings: Mapping[str, Any]) -> dict[str, Any]:
     """The prop's LATO.2 settings, checked -> {"seed", "uv_leniency"}."""
     try:
         seed = int(settings.get("lato2_seed", 0))
-        leniency = float(settings.get("uv_leniency", 0.5))
+        leniency = float(settings.get("uv_leniency", UV_LENIENCY))
     except (TypeError, ValueError) as exc:
         raise StageError("This prop's LATO.2 settings are not valid numbers. Set its Seed again in the Retopo "
                          "stage.") from exc

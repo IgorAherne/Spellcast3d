@@ -369,9 +369,10 @@ def test_a_stage_that_runs_out_of_memory_on_its_way_to_the_gpu_goes_back(monkeyp
 
 def test_adapter_settings() -> None:
     p = adapter_module.lato2_params({})
-    assert p == {"seed": 0, "uv_leniency": 0.5}
+    assert p == {"seed": 0, "uv_leniency": 1.0}
     clamped = adapter_module.lato2_params({"lato2_seed": "5", "uv_leniency": 7})
     assert clamped == {"seed": 5, "uv_leniency": 1.0}
+    assert adapter_module.lato2_params({"uv_leniency": -2})["uv_leniency"] == 0.0
     with pytest.raises(StageError, match="not valid numbers"):
         adapter_module.lato2_params({"lato2_seed": "x"})
     adapter = adapter_module.Lato2Adapter()

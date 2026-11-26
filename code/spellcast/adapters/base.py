@@ -90,7 +90,7 @@ class StageContext:
     def abs(self, rel: str | None) -> Path | None:
         return None if not rel else (self.prop_dir / rel)
 
-    async def unwrap(self, src_rel: str, dst_rel: str, uv_leniency: float = 0.5) -> dict[str, Any]:
+    async def unwrap(self, src_rel: str, dst_rel: str, uv_leniency: float) -> dict[str, Any]:
         """UV-unwrap the low poly src_rel (an OBJ another tool made, without UVs) into dst_rel (an OBJ with
         UVs, its faces and positions kept), both relative to the prop dir. Instant Meshes does it: it is
         started if needed, and runs on the CPU beside a GPU tool. It takes seconds to minutes and reports

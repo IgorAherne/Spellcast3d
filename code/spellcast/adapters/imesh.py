@@ -23,6 +23,7 @@ from urllib.parse import quote
 import httpx
 
 from .. import paths
+from ..projects import UV_LENIENCY
 from . import projection, variants
 from .base import LaunchSpec, StageContext, StageError, ToolAdapter
 
@@ -64,7 +65,7 @@ def _retopo_params(settings: Mapping[str, Any]) -> dict[str, Any]:
         target = int(settings.get("target_vertices", 5000))
         crease = float(settings.get("crease_angle", -1))
         smooth = int(settings.get("smooth_iter", 2))
-        leniency = float(settings.get("uv_leniency", 0.5))
+        leniency = float(settings.get("uv_leniency", UV_LENIENCY))
         rosy, posy = int(settings.get("rosy", 4)), int(settings.get("posy", 4))
     except (TypeError, ValueError) as exc:
         raise StageError("This prop's Retopo settings are not valid numbers. Open it in the Retopo "
@@ -289,7 +290,7 @@ class ImeshAdapter(ToolAdapter):
         return await _post(client, f"{base_url}/spellcast/import", body, IMPORT_TIMEOUT, IMPORT_TOO_SLOW)
 
     async def unwrap(self, client: httpx.AsyncClient, base_url: str, src: Path, dst: Path,
-                     uv_leniency: float = 0.5) -> dict[str, Any]:
+                     uv_leniency: float = UV_LENIENCY) -> dict[str, Any]:
         """UV-unwrap the low poly `src` (an OBJ LATO.2 or TriFlow made) into `dst` (OBJ with UVs): its faces
         and positions stay as they are, nothing is remeshed. uv_leniency 0..1 as in the viewer.
         Returns {"vertices", "faces", "has_uv", "warning", "seconds"}: has_uv False, with the warning,
@@ -297,7 +298,7 @@ class ImeshAdapter(ToolAdapter):
         try:
             leniency = max(0.0, min(float(uv_leniency), 1.0))
         except (TypeError, ValueError):
-            leniency = 0.5
+            leniency = UV_LENIENCY
         dst.parent.mkdir(parents=True, exist_ok=True)
         body = {"src": str(src.resolve()), "dst": str(dst.resolve()), "uv_leniency": leniency}
         return await _post(client, f"{base_url}/spellcast/unwrap", body, WORK_TIMEOUT, UNWRAP_TOO_SLOW)

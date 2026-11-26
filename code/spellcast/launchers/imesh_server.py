@@ -91,6 +91,30 @@ from instant_meshes_brush.session_manager import (
 
 LOG = logging.getLogger("spellcast.imesh")
 
+
+def _join_islands(positions: Any, vmapping: Any, triangles: Any, coordinates: Any) -> tuple[Any, Any, Any] | None:
+    """uv.ATLAS_REFINE: xatlas's small islands joined onto their neighbours (uv_islands); None when none joins, or
+    when the join fails (it never costs an unwrap: xatlas's own atlas stays)."""
+    import uv_islands                                    # launchers/ (numpy: imported where it is used)
+
+    started = time.perf_counter()
+    try:
+        vmapping, triangles, coordinates, joined = uv_islands.join_small_charts(
+            positions, vmapping, triangles, coordinates)
+    except Exception:
+        LOG.exception("the small UV islands were left as xatlas made them")
+        return None
+    if not joined:
+        return None
+    LOG.info("joined %d small UV islands onto their neighbours (%.1f s)", joined, time.perf_counter() - started)
+    return vmapping, triangles, uv_islands.packing_units(coordinates)
+
+
+if not hasattr(uv, "ATLAS_REFINE"):
+    LOG.warning("this Instant Meshes package has no uv.ATLAS_REFINE: the small UV islands stay as xatlas makes them "
+                "until Spellcast3D's installer brings the package up to date")
+uv.ATLAS_REFINE = _join_islands        # every unwrap made here: Retopo's three methods and the viewer's own
+
 # Upstream reaps sessions after 30 idle minutes, sized for throwaway browser
 # tabs; the hub keeps one session per prop and an artist may leave it for a
 # while, so the TTL is raised. The count stays at upstream's 8 because RAM is
@@ -114,6 +138,10 @@ SESSION_GONE = ("This Instant Meshes session no longer exists: sessions are lost
                 "to start a new one (brush strokes that were not accepted are lost).")
 
 
+UV_LENIENCY = 1.0                       # the hub's projects.UV_LENIENCY: xatlas's largest islands
+uv.DEFAULT_LENIENCY = UV_LENIENCY       # a viewer session's own (its page's UV slider follows the session's)
+
+
 class RetopoRequest(BaseModel):
     src: str
     dst: str
@@ -121,7 +149,7 @@ class RetopoRequest(BaseModel):
     pure_quad: bool = False
     crease_angle: float = Field(-1.0, le=180.0)      # degrees; negative = no creases
     smooth_iter: int = Field(2, ge=0, le=MAX_SMOOTH_ITER)
-    uv_leniency: float = Field(0.5, ge=0.0, le=1.0)
+    uv_leniency: float = Field(UV_LENIENCY, ge=0.0, le=1.0)
     rosy: Literal[2, 4, 6] = 4                       # the viewer's Output mesh: 4/4 quads, 6/3 triangles,
     posy: Literal[3, 4] = 4                          # 2/4 quad-dominant
     extrinsic: bool = True                           # the viewer's "Smooth flow"
@@ -132,7 +160,7 @@ class RetopoRequest(BaseModel):
 class UnwrapRequest(BaseModel):
     src: str                                        # the low poly (OBJ, or any mesh file this tool reads)
     dst: str                                        # the .obj to write, with UVs
-    uv_leniency: float = Field(0.5, ge=0.0, le=1.0)
+    uv_leniency: float = Field(UV_LENIENCY, ge=0.0, le=1.0)
 
 
 class SessionRequest(BaseModel):

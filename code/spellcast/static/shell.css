@@ -459,16 +459,16 @@ pre.log {
   border-color: transparent; color: #fff; background: linear-gradient(135deg, #9486ff, var(--accent-deep));
 }
 /* A stage's number boxes on the picture, along its bottom edge (view.tileSizes: Retopo's sizes, in thousands of
-   vertices): a row on a dark glass, their unit after them. They take none of the list's height. A box holds "12.25"
-   at its font with room for the caret; three of them and "k verts" fit a tile of the narrower column (--col-w), where
-   "k vertices" no longer did. */
+   vertices): a row on a dark glass across the tile, the boxes sharing its width, their unit after them. They take
+   none of the list's height. Even in the narrower column (--col-w) a box holds "12.25" at its font with room for the
+   caret, where "k vertices" after three of them no longer fitted. */
 .tile-sizes {
-  position: absolute; left: 10px; bottom: 10px; z-index: 2; max-width: calc(100% - 20px);
+  position: absolute; left: 10px; right: 10px; bottom: 7px; z-index: 2;
   display: flex; align-items: center; gap: 4px; padding: 4px 8px 4px 4px; border-radius: 10px;
   background: rgba(16, 19, 24, 0.8); backdrop-filter: blur(4px); cursor: default;
 }
 .tile-size {
-  width: 40px; height: 22px; padding: 0; border-radius: 6px; border: 1px solid var(--line-2);
+  flex: 1 1 0; min-width: 40px; height: 25px; padding: 0; border-radius: 6px; border: 1px solid var(--line-2);
   background: var(--field); color: var(--text); text-align: center; outline: none;
   font: 650 13px/1 var(--font); font-variant-numeric: tabular-nums; transition: border-color 0.12s;
 }

@@ -16,7 +16,8 @@ the work changes sides:
     gpu  geometry  the remesh guided by that BVH (uploaded for the step, the card copy let go when it returns),
                    simplify, the clean-up, the degenerate faces, and the GPU half of CuMesh.uv_unwrap (the fast
                    clustering into charts) with the vertex normals
-    cpu  unwrap    the rest of CuMesh.uv_unwrap: xatlas on the charts (always CPU code)
+    cpu  unwrap    the rest of CuMesh.uv_unwrap: xatlas on the charts (always CPU code); then, Spellcast3D's own,
+                   the atlas's small islands joined onto their neighbours (uv_islands) and the atlas packed again
     gpu  bake      the texels' places on the mesh (nvdiffrast in UV space), moved onto the decoded mesh (its BVH
                    again: the same tree uploaded once more, or built again with an older cumesh), the texture
                    volume sampled there
@@ -24,8 +25,9 @@ the work changes sides:
 
 Each step is to_glb's (and uv_unwrap's) code in their order, with their dtypes, devices, arguments and
 empty_cache() points; to_glb's verbose and tqdm lines are left out (the launcher runs it with verbose off), its bar
-is reported through px._update_progress instead. What is new is only at the cuts: a GPU step ends by bringing what
-the next step reads to the CPU and freeing everything it put on the card, and the step after takes it back. Those
+is reported through px._update_progress instead. What is new, besides the joined islands, is only at the cuts: a
+GPU step ends by bringing what the next step reads to the CPU and freeing everything it put on the card, and the
+step after takes it back. Those
 moves copy values exactly, and the one computation that changed place - the vertex normals, which to_glb reads
 after the unwrap - reads a mesh the unwrap does not touch.
 
@@ -163,6 +165,40 @@ def fill_after_remesh(cumesh: Any, mesh: Any) -> Any:
     except Exception as exc:        # a repair never costs the mesh: the remesh goes on as it was
         print(f"[spellcast] Note: could not close the remesh's small holes ({type(exc).__name__}: {exc}).", flush=True)
         return mesh
+
+
+def join_islands(cumesh: Any, positions: Any, vmap: Any, faces: Any, uvs: Any) -> tuple[Any, Any, Any]:
+    """xatlas's atlas (CPU tensors: vmap into positions, faces over the split vertices, uvs) with its small islands
+    joined onto their neighbours (uv_islands) and packed again by xatlas from those UVs: far fewer crumbs, the
+    same triangles in the same order. As it was when nothing joins, or PIXAL3D_JOIN_ISLANDS is off; the join never
+    costs the mesh: if it fails, xatlas's atlas stays."""
+    if os.environ.get("PIXAL3D_JOIN_ISLANDS", "").strip().lower() in ("off", "0", "false", "no"):
+        return vmap, faces, uvs
+    import numpy as np
+    import torch
+    import uv_islands
+
+    started = time.perf_counter()
+    try:
+        joined_vmap, joined_faces, joined_uvs, joined = uv_islands.join_small_charts(
+            positions.numpy(), vmap.numpy(), faces.numpy(), uvs.numpy())
+        if joined == 0:
+            return vmap, faces, uvs
+        atlas = cumesh.Atlas()
+        atlas.add_mesh(torch.from_numpy(np.ascontiguousarray(positions.numpy()[joined_vmap], dtype=np.float32)),
+                       torch.from_numpy(np.ascontiguousarray(joined_faces, dtype=np.int32)),
+                       uvs=torch.from_numpy(np.ascontiguousarray(uv_islands.packing_units(joined_uvs),
+                                                                 dtype=np.float32)))
+        atlas.compute_charts(use_input_mesh_uvs=True)
+        atlas.pack_charts()
+        xref, packed_faces, packed_uvs = atlas.get_mesh(0)
+    except Exception as exc:
+        print(f"[spellcast] Note: the small UV islands were left as xatlas made them ({type(exc).__name__}: {exc}).",
+              flush=True)
+        return vmap, faces, uvs
+    print(f"[spellcast] Joined {joined:,} small UV islands onto their neighbours "
+          f"({time.perf_counter() - started:.1f} s).", flush=True)
+    return torch.from_numpy(joined_vmap)[xref.long()].to(vmap.dtype), packed_faces, packed_uvs
 
 
 def host_trees() -> bool:
@@ -748,9 +784,10 @@ class _Glb:
             uvs.append(x_uvs)
             cnt += vmap.shape[0]
         vmaps = torch.cat(vmaps, dim=0)
-        vertices = state["unwrap_vertices"][vmaps]
         faces = torch.cat(faces, dim=0)
         uvs = torch.cat(uvs, dim=0)
+        vmaps, faces, uvs = join_islands(cumesh, state["unwrap_vertices"], vmaps, faces, uvs)
+        vertices = state["unwrap_vertices"][vmaps]
         normals = state["normals"][vmaps]   # to_glb: mesh.read_vertex_normals()[out_vmaps]
         state.update(out_vertices=vertices, out_faces=faces, out_uvs=uvs, out_normals=normals)
 
