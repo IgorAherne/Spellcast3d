@@ -75,17 +75,23 @@ paints them in one go and they agree in colour. A view's camera then looks at it
            as a seam between views is -> {"painted": texels}; then "finish" with "tone": false
     {"cmd": "fades", "repaints": [{"mask", "picture", "eye", "forward", "up", "tan", "wide", "size", "fade",
                                    "hidden", "layer", "hand_paint", "unpainted"}, ..],
-     "outs": [<glb or null per repaint>] or null}
+     "outs": [<glb or null per repaint>] or null, "earlier": [<optional: repaints as above, oldest first>],
+     "gently": <optional>}
         -> the repaints put onto the model as loaded, one after the other, each as "look" ("pictures": false) and
            "repaint" (its kept picture) with its fade - a "hidden" one puts nothing on -, then what was
            painted by hand on its step over it ("hand_paint": its paint layer, below); the model after each
            written to its "out" where there is one (and, before its hand paint, to its "unpainted"), quickly and
-           without loss (model_with's quick), the "layer"s where asked. What a change does not change is kept from
-           call to call (each repaint's look, picture and weights per fade, by its camera and files; a paint layer
-           while its file stays the same): a change of one repaint costs its blend, laying the pictures on and the
-           models (the page's edge fade, its eye on a picture, a picture taken off).
-           Without "outs" only that is made ready (the page picked a repaint). "ahead": the repaint whose weights
-           at the slider's other fades are worked out meanwhile -> {"painted": [..]}
+           without loss (model_with's quick), the "layer"s where asked. A repaint without an "out" is laid like
+           the others and costs no more than that: its model is nobody's to show. What a change does not change
+           is kept from call to call (per repaint and fade what it lays, by its camera and files; a paint layer
+           while its file stays the same), and worked out on threads before it is asked for, the newest repaint
+           first: a change of one repaint costs laying the pictures on and the models written (the page's edge
+           fade, its eye on a picture, a picture taken off). "earlier": the repaints before the model loaded -
+           this call does not lay them, a later one from an earlier model may: worked out ahead as well, one
+           at a time with "gently" (nobody waits for them yet).
+           Without "outs" nothing is laid: that work is set going and the answer comes at once (the page shows the
+           model, or the pointer is at its pictures or at a repaint's slider). "ahead": the repaint whose weights
+           at the slider's other fades are worked out too -> {"painted": [texels per repaint laid]}
     {"cmd": "texture", "glb": <another model of the prop loaded: the same surface>}
         -> that model in the loaded one's place, for "fades" to put the repaints onto: its file and its texture
            are read, the surface and what is kept of the repaints stay (the painted views hidden, or shown
@@ -592,8 +598,10 @@ class Prop:
                 fade: float = 1.0) -> dict[str, Any]:
         return self.repaints.repaint(self._looked("repaint"), picture, keep, layer, fade)
 
-    def fades(self, repaints: list[dict[str, Any]], outs: list[str] | None, ahead: int | None = None) -> dict[str, Any]:
-        return self.repaints.fades(repaints, [_lens(asked) for asked in repaints], outs, ahead)
+    def fades(self, repaints: list[dict[str, Any]], outs: list[str] | None, ahead: int | None = None,
+              earlier: list[dict[str, Any]] | None = None, gently: bool = False) -> dict[str, Any]:
+        return self.repaints.fades(repaints, [_lens(asked) for asked in repaints], outs, ahead,
+                                   [(asked, _lens(asked)) for asked in earlier or ()], gently)
 
     def retexture(self, glb_path: Path) -> dict[str, Any]:
         """The module doc's "texture": another model of this prop in the loaded one's place - its file and its
@@ -963,7 +971,8 @@ COMMANDS: dict[str, Callable[[Prop, dict[str, Any]], dict[str, Any]]] = {
     "left": lambda prop, r: prop.left(Path(r["picture"])),
     "repaint": lambda prop, r: prop.repaint(Path(r["picture"]), _path(r, "keep"), _path(r, "layer"),
                                             float(r.get("fade") or 1.0)),
-    "fades": lambda prop, r: prop.fades(list(r["repaints"]), r.get("outs"), r.get("ahead")),
+    "fades": lambda prop, r: prop.fades(list(r["repaints"]), r.get("outs"), r.get("ahead"), r.get("earlier"),
+                                        r.get("gently") is True),
     "texture": lambda prop, r: prop.retexture(Path(r["glb"])),
     "finish": lambda prop, r: prop.finish(Path(r["out"]), bool(r.get("debug")), r.get("tone") is not False,
                                           _path(r, "hand_paint"), _path(r, "unpainted")),

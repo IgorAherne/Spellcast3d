@@ -498,7 +498,9 @@ def repaint_record(glb: str, fade: float = 1.0, layer: str = REPAINT_LAYER, unde
     it went onto (`under`; None: no longer known), the picture that went on, the `layer` the page shows on the
     model while the pointer is over that picture, and how many times as far as a seam the repaint's edge fades
     into what is around it. `hidden`: the artist hid it (the eye on its picture) - it keeps its place among the
-    repaints and puts nothing on: its model is the one it went onto, with what was painted by hand on its step."""
+    repaints and puts nothing on: its model is the one it went onto, with what was painted by hand on its step.
+    The model's FILE is there for a step and for the model the prop shows; a repaint put on again for a later
+    one's sake has the record and its pictures alone (adapters/omnitexture.py _put_on_again)."""
     folder = retouch_folder(glb)
     return {"glb": glb, "under": under, "picture": f"{folder}/{REPAINT_PICTURE}", "layer": f"{folder}/{layer}",
             "fade": fade, **({"hidden": True} if hidden else {})}

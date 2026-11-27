@@ -90,9 +90,9 @@ TRIFLOW_REPOS = (TRIFLOW, *(f"{TRIFLOW}/{d.relative_to(paths.TRIFLOW_DIR).as_pos
 # runtime, which torch and tools/python ship.
 TRIFLOW_WHEELS = ("torchsparse-2.1.0+cu128torch2.8-cp311-cp311-win_amd64.whl",
                   "pyfqmr_triflow-0.5.0+triflow-cp311-cp311-win_amd64.whl")
-# Instant Meshes' UV unwrap: xatlas-python 0.0.11 with xatlas's chart-merging pass fixed (this project's forks; its source
-# is not a submodule here, so its sidecar's source_commit is not checked against a pin).
-IMESH_WHEELS = ("xatlas-0.0.11+spellcast3d.1-cp311-cp311-win_amd64.whl",)
+# Instant Meshes' UV unwrap: xatlas-python 0.0.11 with its xatlas made faster, the same atlas (this project's forks; its
+# source is not a submodule here, so its sidecar's source_commit is not checked against a pin).
+IMESH_WHEELS = ("xatlas-0.0.11+spellcast3d.2-cp311-cp311-win_amd64.whl",)
 OWN_WHEELS = TRIFLOW_WHEELS + IMESH_WHEELS
 WHEEL_BUILD_SCRIPTS = {"torchsparse": "code/release/wheels/torchsparse/build_torchsparse_win.bat",
                        "pyfqmr_triflow": "code/release/wheels/pyfqmr-triflow/build_pyfqmr_triflow_win.bat",

@@ -231,21 +231,26 @@ class Hub:
             raise ProjectError("This prop's Omni-Texture is being painted on: your painting is being saved. Try "
                                "again in a moment.", 409)
 
-    async def fade_omnitexture(self, project: str, prop_id: str, glb: Any, fade: Any,
-                                prepare: bool = False) -> dict[str, Any]:
-        """A repaint of the prop's Omni-Texture with its edge faded `fade` times as far (adapters/omnitexture.py
-        refade: the worker alone, no image generator) -> {"prop", "renamed": {step as it was: step as it is}}.
-        prepare: the page picked that repaint - the worker is made ready for its fade -> {"ready": True}."""
+    async def ready_omnitexture(self, project: str, prop_id: str, glb: Any, every: bool) -> dict[str, Any]:
+        """The worker that puts the prop's repaints on again is made ready ahead of a change (adapters/omnitexture.py
+        make_ready: for a click on the newest repaint, on `every` one, or for the slider of the repaint `glb`) ->
+        {"ready": whether it was}. Not while any job waits or runs: the memory and the processor are the tools'
+        first, and a change then only takes as long as it did without."""
         from .adapters import omnitexture
 
         self.check_omnitexture_idle(project, prop_id)
-        if prepare:
-            block = self.store.get_prop(project, prop_id)["omnitexture"]
-            try:
-                await asyncio.to_thread(omnitexture.refade, self.store.prop_dir(project, prop_id), block, glb, None)
-            except StageError as e:
-                raise ProjectError(str(e), 409) from e
-            return {"ready": True}
+        if self.jobs.active_projects():
+            return {"ready": False}
+        block = self.store.get_prop(project, prop_id)["omnitexture"]
+        return {"ready": await asyncio.to_thread(omnitexture.make_ready, self.store.prop_dir(project, prop_id),
+                                                 block, glb, every)}
+
+    async def fade_omnitexture(self, project: str, prop_id: str, glb: Any, fade: Any) -> dict[str, Any]:
+        """A repaint of the prop's Omni-Texture with its edge faded `fade` times as far (adapters/omnitexture.py
+        refade: the worker alone, no image generator) -> {"prop", "renamed": {step as it was: step as it is}}."""
+        from .adapters import omnitexture
+
+        self.check_omnitexture_idle(project, prop_id)
         if not isinstance(fade, (int, float)) or isinstance(fade, bool) or not 1.0 <= fade <= omnitexture.MAX_FADE:
             raise ProjectError(f"A repaint's fade is a number from 1 to {omnitexture.MAX_FADE:g}.", 422)
         self.fading.add((project, prop_id))
@@ -1065,19 +1070,22 @@ def create_app(adapters: dict[str, ToolAdapter] | None = None, *,
         """{"glb": the step a repaint made (omnitexture.repaints), "fade": 1-8}: that repaint goes onto the
         model again with its edge faded that many times as far into what is around it, the later repaints onto
         that; the image generator is not needed -> {"prop", "renamed": {step as it was: step as it is now}} (the
-        steps from that one on are new files). {"glb", "prepare": true}: the page picked that repaint - the
-        worker is made ready, so that the slider's first change is quick -> {"ready": true}. 409 while a
+        model it shows is a new file). With "prepare": true nothing changes: the worker is made ready, so that
+        the change that follows is quick - for a click on the newest repaint (the page shows the model), with
+        "all": true on any of them (the pointer is at the pictures), with "glb" for that repaint's slider ->
+        {"ready": whether it was} (not beside a job, nor when memory is short). 409 while a
         Omni-Texture job of the prop waits or runs, another fade is being made, or what the repaint was made from
         is no longer kept; 422 another fade."""
-        return await hub.fade_omnitexture(project, prop_id, body.get("glb"), body.get("fade"),
-                                           prepare=body.get("prepare") is True)
+        if body.get("prepare") is True:
+            return await hub.ready_omnitexture(project, prop_id, body.get("glb"), body.get("all") is True)
+        return await hub.fade_omnitexture(project, prop_id, body.get("glb"), body.get("fade"))
 
     @app.post("/api/projects/{project}/props/{prop_id}/omnitexture/hide")
     async def hide_in_omnitexture(project: str, prop_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """{"glb": the model the page shows, "repaint": the model a repaint made | "views": true, "hidden": true |
         false}: the eye on a picture - that repaint, or the painted views all at once, no longer shows on the
         model, or shows again; it stays in the list either way. The image generator is not needed -> {"prop",
-        "renamed": {step as it was: step as it is now}} (as a fade: the steps that hold it are new files, none is
+        "renamed": {step as it was: step as it is now}} (as a fade: the model it shows is a new file, no step is
         added). 409 while an Omni-Texture job of the prop waits or runs or another change of it is being made,
         when the page shows another model, or what it takes is no longer kept; 422 without "hidden"."""
         if not isinstance(body.get("hidden"), bool):

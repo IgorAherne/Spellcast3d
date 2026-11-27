@@ -1,13 +1,14 @@
-"""Build Spellcast3D's xatlas wheel (xatlas-python 0.0.11 with its vendored xatlas's chart-merging pass fixed: the
-user's forks, checked out at temp_code/xatlas-python with extern/xatlas on its spellcast3d branch), cp311
-win_amd64, into <checkout>/dist; copy the wheel into code/whl and write its sidecar (code/whl/xatlas.json) by hand
-after the checks below. MSVC's environment is taken from vcvars64.bat inside Python (Git Bash cannot pass
+"""Build Spellcast3D's xatlas wheel (xatlas-python 0.0.11 with its vendored xatlas made faster, the same atlas: the
+chart-merging pass, then the chart growing and the task scheduler; the user's forks, checked out at
+temp_code/xatlas-python with extern/xatlas on its spellcast3d branch), cp311 win_amd64, into <checkout>/dist; copy
+the wheel into code/whl, name it in install/components.py XATLAS_WHEEL and write its sidecar (code/whl/xatlas.json)
+by hand after the checks below. MSVC's environment is taken from vcvars64.bat inside Python (Git Bash cannot pass
 ProgramFiles(x86) to a .bat); scikit-build-core, cmake and ninja come through pip's isolated build. About a minute.
 
-The checks: with PyPI's 0.0.11 installed, save layouts with code/devtools/triflow/xatlas/profile_unwrap.py --save on
-the tree and ork meshes and the synthetic grids (make_synthetic.py) at leniency 0.5 and 1.0; with this wheel in a
-scratch venv, run the same with --compare: every case must print "identical ... : yes" (done on 2026-11-04: nine
-cases, the tree 164 s -> 1.1 s).
+The checks, against the wheel before (the first of ours against PyPI's 0.0.11): unpack both with
+`pip install --no-deps --target <folder>`, and with each folder first on PYTHONPATH unwrap the same retopology
+meshes with instant_meshes_brush.uv.unwrap at leniency 0.5 and 1.0; every array of every layout (uv, faces, chart,
+cut, cut_face, cut_slot, cut_chart, the counts) must be equal bit for bit. The sidecar records the cases.
 
     <imesh venv>/Scripts/python.exe code/release/wheels/xatlas/build_xatlas_win.py [checkout] [dist]
 """

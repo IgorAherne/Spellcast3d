@@ -71,6 +71,7 @@ was, when they cannot be put on: a new result saved without them would have thei
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ctypes
 import dataclasses
 import json
@@ -83,7 +84,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -207,7 +208,8 @@ MASK_LEFT_WARNING = ("Qwen-Image kept the shape of your mask in its picture, so 
 # (a view taken off), or the 3D model's own texture while the artist hides the views (show_views) - and those
 # repaints (parts_of). The records the kept steps' models are made of are kept (records_after), the others go.
 MAX_FADE = 8.0                  # the page's slider ends there, and the worker's fades (tests hold the three together)
-FADE_IDLE = 120.0               # s the kept worker stays loaded after a change, for the next one (RAM: ~1 GB)
+FADE_IDLE = 120.0               # s the kept worker stays loaded after a change, for the next one (RAM: 1-2 GB)
+READY_MIN_RAM_MB = 4096         # free RAM it takes to start that worker ahead of a change (make_ready)
 NO_FADE = ("That repaint cannot be faded again: the model it was painted onto is no longer kept. Mask the place "
            "and render it again.")
 NO_HIDE = "That repaint cannot be hidden or shown again: the model it was painted onto is no longer kept."
@@ -954,7 +956,7 @@ def _carry_repaints(prop_dir: Path, result: str, repaints: list[dict[str, Any]])
     line = [result, *(record["glb"] for record in repaints)]
     how = {record["glb"]: _laid(record) for record in repaints}
     try:
-        renamed = _put_on_again(prop_dir, line, 1, how, None)
+        renamed = _put_on_again(prop_dir, line, 0, 1, how, None, every=True)
     finally:
         with _fade_lock:
             _drop_session()
@@ -1053,27 +1055,19 @@ def records_after(steps: list[str], repaints: list[dict[str, Any]],
 
 
 def line_of(block: Mapping[str, Any]) -> list[str | None]:
-    """What a fade of one of the shown model's repaints puts on again: the models it is made of, oldest first -
-    the result its repaints lie on (parts_of), then each repaint's -, and after them the steps Ctrl+Y leads on
-    to, as long as each is a repaint of the one before."""
-    shown = block.get("glb")
-    root, chain = parts_of(block, shown)
-    line = [root, *(r["glb"] for r in chain)]
-    records = _repaints(block)
-    steps = [s for s in block.get("steps") or [] if isinstance(s, str)]
-    for later in steps[steps.index(shown) + 1:] if shown in steps else []:
-        if (records.get(later) or {}).get("under") != line[-1]:
-            break
-        line.append(later)
-    return line
+    """What the model shown is made of, oldest first: the result its repaints lie on (parts_of), then the model
+    each repaint made. A change of one repaint puts it and those after it on again."""
+    root, chain = parts_of(block, block.get("glb"))
+    return [root, *(r["glb"] for r in chain)]
 
 
 class FadeSession:
     """A worker that keeps one of a prop's models loaded (`model`), for the repaints after it to be put on again
-    (_put_on_again: the page's edge fade, its eye on a picture, a picture taken off): loaded once, each repaint's
-    look and picture read once, each weight per fade worked out once (the worker's "fades"), so that a change
-    costs the blend of the one repaint changed, laying the pictures on and writing the models. It holds memory
-    of the PC alone, none of the graphics card's. Stopped after FADE_IDLE seconds unused."""
+    (_put_on_again: the page's edge fade, its eye on a picture, a picture taken off): loaded once - another model
+    of the same line takes its place by its texture alone (retexture) -, what each repaint lays worked out once
+    per fade and ahead of the change that needs it (the worker's "fades"), so that a change costs laying the
+    pictures on and writing the one model shown next. It holds memory of the PC alone, none of the graphics
+    card's. Stopped after FADE_IDLE seconds unused."""
 
     def __init__(self, prop_dir: Path, model: str) -> None:
         self.prop_dir, self.model = prop_dir, model
@@ -1088,16 +1082,10 @@ class FadeSession:
             self.close()
             raise
 
-    def serves(self, prop_dir: Path, line: list[str | None], first: int) -> bool:
-        """Whether this session's model lies before the repaint at line[first], every repaint between the two
-        can be put on again (it puts them on from its model), and its worker still runs."""
-        if prop_dir != self.prop_dir or self.model not in line[:first] or not self.worker.alive():
-            return False
-        return all(_kept_pictures(prop_dir, old) for old in line[line.index(self.model) + 1:first])
-
     def retexture(self, model: str) -> None:
-        """Another model of the prop takes the loaded one's place: the same surface with another texture (the
-        painted views hidden, or shown again), so only that is read (the worker's "texture")."""
+        """Another model of the prop takes the loaded one's place: the same surface with another texture (an
+        earlier or later model of its line; the painted views hidden, or shown again), so only that is read (the
+        worker's "texture")."""
         self.worker.call({"cmd": "texture", "glb": str(self.prop_dir / model)})
         self.model = model
 
@@ -1125,22 +1113,50 @@ _fading: FadeSession | None = None
 _fade_lock = threading.Lock()
 
 
-def _session_for(prop_dir: Path, line: list[str | None], first: int, was: str | None = None) -> FadeSession:
-    """The session for the repaints from line[first] on, under _fade_lock: the one kept when it serves, else one
-    made anew (the model before that repaint loaded). `was`: the model line[0] takes the place of, the same
-    surface with another texture - a session kept on that one is given this one's texture."""
+def _serves(prop_dir: Path, line: list[str | None], was: str | None = None) -> bool:
+    """Whether the kept session can go on for `line`, under _fade_lock: it holds one of its models (or `was`: a
+    model no longer in the line that had the same surface) - so another's texture can be read in its place and
+    what the worker keeps of the repaints stays - and its worker still runs."""
+    return (_fading is not None and _fading.prop_dir == prop_dir and _fading.model in (*line, was)
+            and _fading.worker.alive())
+
+
+def _session_for(prop_dir: Path, line: list[str | None], base: int, was: str | None = None) -> FadeSession:
+    """The session with line[base] loaded, under _fade_lock: the one kept when it serves (_serves), else one made
+    anew."""
     global _fading
-    if _fading is not None and was is not None and (_fading.prop_dir, _fading.model) == (prop_dir, was):
+    if not _serves(prop_dir, line, was):
+        _drop_session()
+    if _fading is not None and _fading.model != line[base]:
         try:
-            _fading.retexture(line[0])
+            _fading.retexture(line[base])
         except StageError:
             _drop_session()                     # (loaded anew below)
-    if _fading is not None and not _fading.serves(prop_dir, line, first):
-        _drop_session()
     if _fading is None:
-        _fading = FadeSession(prop_dir, line[first - 1])
+        _fading = FadeSession(prop_dir, line[base])
     _fading.busy()
     return _fading
+
+
+@contextlib.contextmanager
+def _session_at(prop_dir: Path, line: list[str | None], base: int, was: str | None = None,
+                changes: bool = True) -> Iterator[FadeSession]:
+    """The kept session with line[base] loaded (_session_for) for one use, under _fade_lock; unused again after
+    it. A use that fails lets the session go: what its worker holds is no longer known - nor, after a failed
+    rename, which model: the caller deletes the one it wrote, and the next change writes another under that
+    name. One that changes nothing (`changes` False: the worker is only made ready) lets it go only when the
+    worker stopped."""
+    session: FadeSession | None = None
+    try:
+        session = _session_for(prop_dir, line, base, was)
+        yield session
+    except BaseException:
+        if session is not None and _fading is session and (changes or not session.worker.alive()):
+            _drop_session()
+        raise
+    finally:
+        if session is not None and _fading is session:
+            session.idle()
 
 
 def _drop_session() -> None:
@@ -1208,6 +1224,13 @@ def _kept_model(prop_dir: Path, model: Any) -> bool:
     return isinstance(model, str) and (prop_dir / model).is_file()
 
 
+def _base_in(prop_dir: Path, line: list[str | None], first: int) -> int | None:
+    """Where in `line` the model stands that the repaints from line[first] on are put onto again: the nearest
+    before them whose file is kept (a repaint put on again for a later one's sake has none: _put_on_again), else
+    None. Every repaint after it goes on again, so each of those needs its kept pictures (_kept_pictures)."""
+    return next((base for base in range(first - 1, -1, -1) if _kept_model(prop_dir, line[base])), None)
+
+
 @dataclasses.dataclass
 class _Faded:
     """A step made again (put on again): its folder while it is written, the folder it becomes, and its
@@ -1217,28 +1240,51 @@ class _Faded:
     record: dict[str, Any]
 
 
+def _lying(prop_dir: Path, old: str, how: Mapping[str, Any]) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """The repaint that made `old` -> (its folder, its request.json, what the worker's "fades" is asked of it: its
+    mask, picture and camera, and `how` it lies: _laid)."""
+    folder = prop_dir / projects.retouch_folder(old)
+    record = json.loads((folder / "request.json").read_text(encoding="utf-8"))
+    camera = retouch_camera({**(record.get("retouch") or {}), "mask": projects.REPAINT_MASK})
+    return folder, record, {"mask": str(folder / projects.REPAINT_MASK),
+                            "picture": str(folder / projects.REPAINT_PICTURE), "size": SIZE, **how,
+                            **{key: camera[key] for key in CAMERA if key in camera}}
+
+
+def _earlier(prop_dir: Path, line: list[str], base: int,
+             how: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The repaints up to line[base], as "fades" is asked to keep them ready: it lays none of them now - a later
+    change from an earlier model may. One that can no longer be read is left out: it is no part of this change."""
+    asked = []
+    for old in line[1:base + 1]:
+        try:
+            if _kept_pictures(prop_dir, old):
+                asked.append(_lying(prop_dir, old, how[old])[2])
+        except (StageError, OSError, ValueError, KeyError):
+            pass
+    return asked
+
+
 def _ask_fades(prop_dir: Path, line: list[str], base: int, first: int, how: Mapping[str, Mapping[str, Any]],
-               picked: str | None, made: dict[str, _Faded] | None) -> tuple[list[dict[str, Any]], list[str | None]]:
-    """What the worker's "fades" is asked: every repaint after line[base] as it lies (`how`: _laid) and what was
-    painted by hand on its step, and - unless only made ready (no `made`) - a model per repaint from line[first]
-    on, each in a new folder numbered after the prop's last, the repaint's pictures and its step's hand paint
+               picked: str | None, made: dict[str, _Faded],
+               every: bool) -> tuple[list[dict[str, Any]], list[str | None]]:
+    """What the worker's "fades" lays and writes for a change -> (every repaint after line[base] as it lies -
+    `how`: _laid - with what was painted by hand on its step; the model to write for each, or None). Each repaint
+    from line[first] on gets a new folder numbered after the prop's last, its pictures and its step's hand paint
     linked into it (`made`, filled as the folders are; the layer of the repaint `picked`, whose fade changes,
-    written anew)."""
+    written anew) - and the last of them its model: the one the prop shows next. The others are laid for that
+    one's sake, and have no model unless `every` step is to have one."""
     asked: list[dict[str, Any]] = []
     outs: list[str | None] = []
     root = prop_dir / FOLDER
     number = int(_next_folder(root).name[3:])
     for old in line[base + 1:]:
-        folder = prop_dir / projects.retouch_folder(old)
-        record = json.loads((folder / "request.json").read_text(encoding="utf-8"))
-        camera = retouch_camera({**(record.get("retouch") or {}), "mask": projects.REPAINT_MASK})
-        ask = {"mask": str(folder / projects.REPAINT_MASK), "picture": str(folder / projects.REPAINT_PICTURE),
-               "size": SIZE, **how[old], **{key: camera[key] for key in CAMERA if key in camera}}
+        folder, record, ask = _lying(prop_dir, old, how[old])
         hand = (prop_dir / old).with_name(projects.HAND_PAINT)
         if hand.is_file():
             ask["hand_paint"] = str(hand)
         asked.append(ask)
-        if made is None or line.index(old) < first:
+        if line.index(old) < first:
             outs.append(None)
             continue
         target = root / f"ot_{number:03d}"
@@ -1254,51 +1300,80 @@ def _ask_fades(prop_dir: Path, line: list[str], base: int, first: int, how: Mapp
             ask["layer"] = str(work / projects.RETOUCH_FOLDER / projects.REPAINT_LAYER)
         if hand.is_file():
             _link(hand, work / projects.HAND_PAINT)
+        written = every or old == line[-1]
+        if written and hand.is_file():
             ask["unpainted"] = str(work / projects.UNPAINTED_MODEL)
-        outs.append(str(work / "omnitexture.glb"))
+        outs.append(str(work / "omnitexture.glb") if written else None)
     return asked, outs
 
 
-def _put_on_again(prop_dir: Path, line: list[str], first: int, how: Mapping[str, Mapping[str, Any]],
-                  picked: str | None, write: bool = True, was: str | None = None) -> dict[str, str]:
-    """The repaints of `line` - the model they lie on, then the model each made (line_of) - put onto the model
-    again from line[first] on, each as it lies (`how`: _laid - its fade; nothing of a hidden one) and its step's
-    hand paint over it, the ones before it as they are: by the worker alone, in a session kept for the next
+def _put_on_again(prop_dir: Path, line: list[str], base: int, first: int, how: Mapping[str, Mapping[str, Any]],
+                  picked: str | None, was: str | None = None, every: bool = False) -> dict[str, str]:
+    """The repaints of `line` - the model they lie on, then the model each made (line_of) - put on again from
+    line[first] on, onto the kept model line[base] (_base_in), each as it lies (`how`: _laid - its fade; nothing
+    of a hidden one) with its step's hand paint over it: by the worker alone, in a session kept for the next
     change (FadeSession) -> {model as it was: model as it is now}. Qwen-Image is not asked: what went onto the
     model is kept with each repaint (in the texture's tone, with its mask and camera).
-    Every model from line[first] on becomes a new folder (a model's file is never written twice: the page keeps
-    the ones it has shown); its pictures are hard links. `picked`: the repaint whose fade the page's slider sets,
-    its other fades worked out ahead. Without `write` only the session is made ready -> {}. `was`: the model
-    line[0] takes the place of (_session_for)."""
+    Every repaint from line[first] on gets a new folder and name (a model's file is never written twice: the page
+    keeps the ones it has shown), its pictures hard links; a model is written for the last alone - the one the
+    prop shows next, whatever the number of repaints before it - or for `every` one of them (each a step Ctrl+Z
+    walks: _carry_repaints). `picked`: the repaint whose fade the page's slider sets, its other fades worked out
+    ahead. `was`: a model no longer in the line whose surface the kept worker may hold (_serves)."""
     made: dict[str, _Faded] = {}
     renamed: dict[str, str] = {}
     with _fade_lock:
-        session: FadeSession | None = None
         try:
-            session = _session_for(prop_dir, line, first, was)
-            base = line.index(session.model)
-            asked, outs = _ask_fades(prop_dir, line, base, first, how, picked, made if write else None)
-            session.worker.call({"cmd": "fades", "repaints": asked, "outs": outs if write else None,
-                                 "ahead": None if picked is None else first - base - 1})
-            for old, new in made.items():
-                (new.work / projects.RETOUCH_FOLDER / "request.json").write_text(json.dumps(new.record, indent=1),
-                                                                        encoding="utf-8")
-                os.replace(new.work, new.target)
-                renamed[old] = (new.target / "omnitexture.glb").relative_to(prop_dir).as_posix()
+            with _session_at(prop_dir, line, base, was) as session:
+                asked, outs = _ask_fades(prop_dir, line, base, first, how, picked, made, every)
+                session.worker.call({"cmd": "fades", "repaints": asked, "outs": outs,
+                                     "earlier": _earlier(prop_dir, line, base, how),
+                                     "ahead": None if picked is None else first - base - 1})
+                for old, new in made.items():
+                    (new.work / projects.RETOUCH_FOLDER / "request.json").write_text(
+                        json.dumps(new.record, indent=1), encoding="utf-8")
+                    os.replace(new.work, new.target)
+                    renamed[old] = (new.target / "omnitexture.glb").relative_to(prop_dir).as_posix()
         except BaseException as exc:
             for new in made.values():
                 shutil.rmtree(new.work, ignore_errors=True)
-            if _fading is session:
-                # What the worker holds is no longer known - nor, after a failed rename, which model: the caller
-                # deletes the one it wrote for this change, and the next change writes another under that name.
-                _drop_session()
             if isinstance(exc, (OSError, ValueError, KeyError)):
                 raise StageError(f"That repaint could not be put on again ({type(exc).__name__}: {exc}).") from exc
             raise
-        finally:
-            if session is not None and _fading is session:
-                session.idle()
     return renamed
+
+
+def make_ready(prop_dir: Path, block: Mapping[str, Any], glb: Any = None, every: bool = False) -> bool:
+    """The kept worker made ready ahead of a change of the shown model's repaints, so that the change finds its
+    work done; nothing is written -> whether it was made ready. The page shows the model: what a click on the
+    newest repaint lays at once, the earlier ones one at a time (nobody waits for them yet) - or at once too,
+    `every` (the pointer is at the pictures). Each repaint as shown: a hidden one may be shown again. For the
+    repaint that made `glb` (the pointer is at its slider): its other fades, and no earlier ones. Not when a
+    worker would have to be started with less than READY_MIN_RAM_MB of RAM free.
+    Whatever stands in a change's way stands in this one's: the change says what, this only answers False."""
+    line = line_of(block)
+    if glb is not None and glb not in line[1:]:
+        return False
+    first = len(line) - 1 if glb is None else line.index(glb)
+    base = _base_in(prop_dir, line, first)
+    if base is None or not all(_kept_pictures(prop_dir, old) for old in line[base + 1:]):
+        return False
+    records = _repaints(block)
+    how = {old: {**_laid(records[old]), "hidden": False} for old in line[1:]}
+    on_slider = glb is not None and records[glb].get("hidden") is not True
+    try:
+        with _fade_lock:
+            free = None if _serves(prop_dir, line) else free_ram_mb()
+            if free is not None and free < READY_MIN_RAM_MB:
+                return False
+            with _session_at(prop_dir, line, base, changes=False) as session:
+                session.worker.call({"cmd": "fades", "outs": None,
+                                     "repaints": [_lying(prop_dir, old, how[old])[2] for old in line[base + 1:]],
+                                     "earlier": _earlier(prop_dir, line, base, how) if glb is None else [],
+                                     "gently": not every,
+                                     "ahead": first - base - 1 if on_slider else None})
+    except (StageError, OSError, ValueError, KeyError):
+        return False
+    return True
 
 
 def _remade(line: list[str], renamed: Mapping[str, str],
@@ -1309,13 +1384,13 @@ def _remade(line: list[str], renamed: Mapping[str, str],
             for before, old in zip(line, line[1:]) if old in renamed]
 
 
-def _made_again(block: Mapping[str, Any], renamed: Mapping[str, str], repaints: list[dict[str, Any]],
+def _made_again(block: Mapping[str, Any], shown: Mapping[str, str], repaints: list[dict[str, Any]],
                 bases: list[dict[str, Any]]) -> dict[str, Any]:
-    """The patch for prop["omnitexture"] once models of its steps were made again under new names (`renamed`),
-    with those models' records: "glb", "steps", "repaints", "bases", "stale" as it was. No step is added: Ctrl+Z
-    walks the same changes as before."""
-    steps = [renamed.get(s, s) for s in block.get("steps") or [] if isinstance(s, str)]
-    return {"glb": renamed.get(block.get("glb"), block.get("glb")), "steps": steps,
+    """The patch for prop["omnitexture"] once the model shown was made again under a new name (`shown`: {as it
+    was: as it is now}), with the records it is made of: "glb", "steps", "repaints", "bases", "stale" as it was.
+    No step is added, and the other steps keep their models as they were made: Ctrl+Z shows each as it was."""
+    steps = [shown.get(s, s) for s in block.get("steps") or [] if isinstance(s, str)]
+    return {"glb": shown.get(block.get("glb"), block.get("glb")), "steps": steps,
             **records_after(steps, [*_repaints(block).values(), *repaints], [*(block.get("bases") or []), *bases]),
             "stale": block.get("stale") is True}
 
@@ -1324,33 +1399,25 @@ def refade(prop_dir: Path, block: Mapping[str, Any], glb: Any, fade: float | Non
            hidden: bool | None = None) -> tuple[dict[str, Any], dict[str, str]] | None:
     """The repaint that made the model `glb` goes onto the model again with its edge faded `fade` times as far
     (the page's slider on a repaint of the model shown) or - `hidden`, the page's eye on it - hidden or shown
-    again, and the repaints after it onto that, each as it was (_put_on_again, from the model it went onto) ->
-    (the patch for prop["omnitexture"]: _made_again; {model as it was: model as it is now}). A model of another
-    step that holds the repaint as it was keeps it so. With neither (the page picked the repaint) only the worker
-    is made ready -> None; None too when it is hidden or shown as asked already. NO_FADE / NO_HIDE when the model
-    it went onto, or a repaint's kept pictures, are gone."""
+    again, and the repaints after it onto that, each as it was (_put_on_again) -> (the patch for
+    prop["omnitexture"]: _made_again; {the model shown as it was: as it is now}), or None when it is hidden or
+    shown as asked already. NO_FADE / NO_HIDE when no model before it, or a repaint's kept pictures, are left."""
     line = line_of(block)
     records = _repaints(block)
     first = line.index(glb) if isinstance(glb, str) and glb in line else 0
-    if first == 0 or not _kept_model(prop_dir, line[first - 1]) \
-            or not all(old in records and _kept_pictures(prop_dir, old) for old in line[first:]):
+    base = _base_in(prop_dir, line, first)
+    if base is None or not all(_kept_pictures(prop_dir, old) for old in line[base + 1:]):
         raise StageError(NO_FADE if hidden is None else NO_HIDE)
     how = {old: _laid(records[old]) for old in line[1:]}
-    if fade is None and hidden is None:
-        # Made ready: a repaint on the model for its fade (the slider's other values worked out ahead), a hidden
-        # one to be shown again.
-        ahead = None if how[glb]["hidden"] else glb
-        how[glb]["hidden"] = False
-        _put_on_again(prop_dir, line, first, how, ahead, write=False)
-        return None
-    if fade is None and hidden == how[glb]["hidden"]:
+    if fade is None and hidden in (None, how[glb]["hidden"]):
         return None                             # (it is so already)
     if fade is not None:
         how[glb]["fade"] = _fade_of(fade)
     if hidden is not None:
         how[glb]["hidden"] = hidden
-    renamed = _put_on_again(prop_dir, line, first, how, glb if fade is not None else None)
-    return _made_again(block, renamed, _remade(line, renamed, how), []), renamed
+    renamed = _put_on_again(prop_dir, line, base, first, how, glb if fade is not None else None)
+    shown = {line[-1]: renamed[line[-1]]}
+    return _made_again(block, shown, _remade(line, renamed, how), []), shown
 
 
 def _base_from(prop_dir: Path, made: Path, hand: Path | None, link: bool) -> str:
@@ -1417,16 +1484,17 @@ def show_views(prop_dir: Path, prop: Mapping[str, Any],
         raise StageError(NO_VIEWS.format(why="the model that takes their place is no longer kept"))
     # (the 3D stage writes its model anew in place: copied; a result's is never written twice: linked)
     record["glb"] = _base_from(prop_dir, source, hand if hand.is_file() else None, link=not hidden)
-    renamed = {root: record["glb"]}
     how = {old: _laid(records[old]) for old in line[1:]}
     over = [record["glb"], *line[1:]]
+    renamed: dict[str, str] = {}
     try:
         if len(over) > 1:
-            renamed.update(_put_on_again(prop_dir, over, 1, how, None, was=root))
+            renamed = _put_on_again(prop_dir, over, 0, 1, how, None, was=root)
     except BaseException:
         shutil.rmtree((prop_dir / record["glb"]).parent, ignore_errors=True)
         raise
-    return _made_again(block, renamed, _remade(over, renamed, how), [record]), renamed
+    shown = {line[-1]: renamed.get(line[-1], record["glb"])}
+    return _made_again(block, shown, _remade(over, renamed, how), [record]), shown
 
 
 def _index_of(view: str) -> int:
@@ -1583,13 +1651,11 @@ def take_off(prop_dir: Path, prop: Mapping[str, Any], view: Any = None, repaint:
     repaints = [r["glb"] for r in chain]
     held = views_of(block, root)
     # line: the model without the picture - the result its repaints lie on, then those; from line[first] on they
-    # are put on again (the ones before are named too: a worker kept on a model before them serves).
+    # are put on again.
     of_view = repaint is None
     if not of_view and repaint in repaints:
         first = repaints.index(repaint) + 1
         line = [root, *repaints[:first - 1], *repaints[first:]]
-        if not _kept_model(prop_dir, line[first - 1]):
-            raise StageError(NOT_UNDER)
     elif of_view and isinstance(view, str) and view in [v["folder"] for v in held]:
         if views_hidden(block, root):
             raise StageError(HIDDEN_VIEWS)
@@ -1600,7 +1666,14 @@ def take_off(prop_dir: Path, prop: Mapping[str, Any], view: Any = None, repaint:
         line, first = [root, *repaints], 1
     else:
         raise StageError(GONE)
-    if not all(_kept_pictures(prop_dir, old) for old in line[first:]):
+    # The newest repaint taken off: the model under it is the new step - put on again too when it has no file (it
+    # was only ever laid for the sake of the repaint now taken off).
+    if first == len(line) and not of_view and not _kept_model(prop_dir, line[-1]):
+        first -= 1
+    base = 0 if of_view else _base_in(prop_dir, line, first)     # (a view: onto the result composed again, below)
+    if base is None:
+        raise StageError(NOT_UNDER)
+    if not all(_kept_pictures(prop_dir, old) for old in line[base + 1:]):
         raise StageError(LATER_GONE)
     bases: list[dict[str, Any]] = []
     if of_view:
@@ -1610,7 +1683,7 @@ def take_off(prop_dir: Path, prop: Mapping[str, Any], view: Any = None, repaint:
     try:
         if len(line) > first:
             how = {old: _laid(records[old]) for old in line[1:]}
-            renamed = _put_on_again(prop_dir, line, first, how, None, was=root if of_view else None)
+            renamed = _put_on_again(prop_dir, line, base, first, how, None, was=root if of_view else repaint)
             new, glb = _remade(line, renamed, how), renamed[line[-1]]
         elif bases:
             glb = bases[0]["glb"]

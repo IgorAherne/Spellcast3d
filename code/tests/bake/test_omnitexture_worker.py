@@ -1554,9 +1554,8 @@ def test_fades_lay_kept_repaints_on_again_as_a_repaint_would_and_work_the_other_
         prop.fades(asked, [None])
         assert (prop.paint == expected).all(), "from the model as loaded each time"
         (kept,) = prop.repaints.kept.values()
-        assert set(kept["fades"]) < set(ot_repaint.FADE_STEPS), "a call without `ahead` stops the thread"
-        prop.fades(asked, None, ahead=0)                 # (picked again: it starts again from where it was)
-        fades = kept["fades"]
+        prop.fades(asked, None, ahead=0)                 # (picked again: its other fades go on from where they were)
+        fades = kept.fades
         deadline = time.time() + 30
         while not all(fade in fades and fades[fade].done() for fade in ot_repaint.FADE_STEPS) \
                 and time.time() < deadline:
@@ -1658,6 +1657,27 @@ def test_a_steps_hand_paint_goes_on_again_after_its_repaint_and_stays_under_the_
     assert (ot_model.base_colour((tmp_path / "result-made.glb").read_bytes())[0].reshape(-1, 3)[side] == GREY).all()
 
 
+def looks_of(prop: w.Prop) -> list[Path]:
+    """The masks "fades" looks through from now on, as it does (a repaint worked out is one look)."""
+    looks: list[Path] = []
+    look = prop.repaints._look_through
+    prop.repaints._look_through = lambda lens, mask, *more: looks.append(mask) or look(lens, mask, *more)
+    return looks
+
+
+def worked_out(prop: w.Prop, fades: int = 1) -> bool:
+    """Every repaint kept has `fades` of its fades worked out, or more."""
+    return all(len(done := list(kept.fades.values())) >= fades and all(one.done() for one in done)
+               for kept in list(prop.repaints.kept.values()))
+
+
+def until(told, seconds: float = 30.0) -> bool:
+    deadline = time.time() + seconds
+    while not told() and time.time() < deadline:
+        time.sleep(0.02)
+    return told()
+
+
 def two_repaints(tmp_path: Path) -> tuple[w.Prop, list[dict]]:
     """A box and two repaints of its front (what "fades" takes): one mask and one picture, the second through a
     slightly wider lens."""
@@ -1699,7 +1719,8 @@ def test_a_hidden_repaint_puts_nothing_on_and_keeps_its_place_and_its_steps_hand
         assert (at(outs[0], middle) == (40, 160, 90)).all(), "shown again"
         # Hidden and only made ready (the page picked it): nothing is worked out for it.
         prop.repaints.kept.clear()
-        assert prop.fades([hidden], None)["painted"] == [0] and not prop.repaints.kept
+        assert prop.fades([hidden], None) == {"painted": []}
+        assert not any(kept.fades for kept in prop.repaints.kept.values())
     finally:
         prop.close()
 
@@ -1710,9 +1731,7 @@ def test_a_kept_repaint_is_found_wherever_it_stands_and_looked_at_anew_when_its_
     among those asked: with the one before it taken off or hidden, nothing is worked out again - also when the
     hub names the same files in another folder (linked or copied there). A mask written anew is looked at anew."""
     prop, asked = two_repaints(tmp_path)
-    looks: list[Path] = []
-    look = prop.repaints.look
-    prop.repaints.look = lambda lens, mask, pictures=True: looks.append(mask) or look(lens, mask, pictures)
+    looks = looks_of(prop)
     try:
         expected = prop.fades(asked, [None, None])["painted"]
         assert len(looks) == 2 and len(prop.repaints.kept) == 2
@@ -1735,6 +1754,13 @@ def test_a_kept_repaint_is_found_wherever_it_stands_and_looked_at_anew_when_its_
             prop.fades([{**asked[0], "tan": tan}], [None])
         assert len(prop.repaints.kept) == 1 + ot_repaint.KEPT_SPARE and len(looks) == 7
         assert prop.fades([{**asked[0], "tan": 0.33}], [None]) and len(looks) == 7, "the one before the last is still kept"
+        # A call that only makes ready names what the artist is at - the newest repaint, say - and drops none.
+        four = [{**asked[0], "tan": tan} for tan in (0.41, 0.42, 0.43, 0.44)]
+        prop.fades(four, [None] * 4)
+        prop.fades(four[3:], None)
+        assert len(prop.repaints.kept) == 4 + ot_repaint.KEPT_SPARE and len(looks) == 11
+        prop.fades(four, [None] * 4)
+        assert len(looks) == 11, "all four still worked out"
     finally:
         prop.close()
 
@@ -1744,9 +1770,7 @@ def test_another_model_of_the_prop_takes_the_loaded_ones_place_and_the_repaints_
     "fades" then puts the repaints onto that one and writes its file's models; nothing kept of the repaints is
     worked out again. A model with a texture of another size is refused."""
     prop, asked = two_repaints(tmp_path)
-    looks: list[Path] = []
-    look = prop.repaints.look
-    prop.repaints.look = lambda lens, mask, pictures=True: looks.append(mask) or look(lens, mask, pictures)
+    looks = looks_of(prop)
     try:
         front, side = centre_texels(prop, "+Z"), centre_texels(prop, "+X")
         prop.fades(asked[:1], [str(tmp_path / "grey.glb")])
@@ -1806,13 +1830,15 @@ def test_a_steps_hand_paint_goes_onto_another_model_of_the_prop(tmp_path: Path) 
 
 def test_working_ahead_stops_for_good_when_another_repaint_is_picked(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The thread works the picked repaint's other fades out; another repaint picked, it lets go after the fade
-    it is at and the new one's are worked out - not the first one's to the end before them."""
+    """The picked repaint's other fades are worked out one after the other; another repaint picked, the thread lets
+    go after the fade it is at and the new one's are worked out - not the first one's to the end before them."""
     entered, go = threading.Event(), threading.Event()
     weight = ot_repaint.Repaints.weight
+    threads: list[str] = []
 
     def slow(self: ot_repaint.Repaints, look: ot_repaint.Look, fade: float) -> np.ndarray:
-        if threading.current_thread() is not threading.main_thread() and not entered.is_set():
+        if threading.current_thread() is not threading.main_thread():
+            threads.append(threading.current_thread().name)
             entered.set()
             go.wait(30)
         return weight(self, look, fade)
@@ -1821,39 +1847,140 @@ def test_working_ahead_stops_for_good_when_another_repaint_is_picked(
     prop, asked = two_repaints(tmp_path)
     try:
         prop.fades(asked, None, ahead=0)
-        assert entered.wait(30), "the first repaint's other fades are being worked out"
+        assert entered.wait(30), "the repaints are being worked out"
         prop.fades(asked, None, ahead=1)
         go.set()
-        first, second = (kept["fades"] for kept in prop.repaints.kept.values())
-        deadline = time.time() + 30
-        while not all(fade in second and second[fade].done() for fade in ot_repaint.FADE_STEPS) \
-                and time.time() < deadline:
-            time.sleep(0.05)
+        first, second = (kept.fades for kept in prop.repaints.kept.values())
+        assert until(lambda: all(fade in second and second[fade].done() for fade in ot_repaint.FADE_STEPS))
         assert set(second) == set(ot_repaint.FADE_STEPS), "the repaint picked now: every fade worked out"
-        assert len(first) <= 2, "the one picked before: its own fade and the one it was at"
+        assert len(first) <= 2, "the one picked before: its own fade's work, and at most the one the thread was at"
+        assert sum(not name.startswith("aside") for name in threads) <= len(asked), "the other fades: one at a time"
     finally:
         go.set()
         prop.close()
 
 
-def test_a_fade_that_failed_is_worked_out_anew_the_next_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fade's weights that could not be worked out once (the PC short of memory for a moment) are not kept as
-    failed: asked again, they are worked out."""
-    weight, failed = ot_repaint.Repaints.weight, []
+def test_only_the_model_asked_for_is_written_and_it_is_the_same_as_with_every_steps(tmp_path: Path) -> None:
+    """A change of one repaint needs the model the prop shows next, not one per repaint after it: without an "out"
+    a repaint is laid like the others, its step's hand paint with it, and the last model comes out byte for byte
+    as when every step's was written - settled once instead of once a step."""
+    prop, asked = two_repaints(tmp_path)
+    try:
+        layer = paint_layer(tmp_path / "hand-paint.png", centre_texels(prop, "+X"), (250, 5, 5))
+        first = {**asked[0], "hand_paint": str(layer)}
+        prop.fades([{**first, "unpainted": str(tmp_path / "one-made.glb")}, asked[1]],
+                   [str(tmp_path / "one.glb"), str(tmp_path / "two.glb")])
+        settled: list[int] = []
+        resettle = prop.resettle
+        prop.resettle = lambda: settled.append(1) or resettle()
+        prop.fades([first, asked[1]], [None, str(tmp_path / "last.glb")])
+        assert (tmp_path / "last.glb").read_bytes() == (tmp_path / "two.glb").read_bytes() and len(settled) == 1
+    finally:
+        prop.close()
 
-    def once(self: ot_repaint.Repaints, look: ot_repaint.Look, fade: float) -> np.ndarray:
-        if not failed:
-            failed.append(fade)
+
+def test_repaints_made_ready_are_worked_out_on_threads_the_ones_before_the_loaded_model_too(tmp_path: Path) -> None:
+    """Without "outs" nothing is laid and the answer comes at once: the repaints asked, and those named "earlier"
+    (before the model loaded: another call may lay them), are worked out on threads meanwhile. The call that lays
+    them finds them done and looks at none again. An "earlier" one whose files are gone is left out."""
+    prop, asked = two_repaints(tmp_path)
+    looks = looks_of(prop)
+    try:
+        gone = {**asked[0], "mask": str(tmp_path / "tidied" / "mask.png")}
+        assert prop.fades(asked[1:], None, earlier=[gone, *asked[:1]]) == {"painted": []}
+        assert until(lambda: len(prop.repaints.kept) == 2 and worked_out(prop)) and len(looks) == 2
+        made = prop.fades(asked, [None, None])["painted"]
+        assert all(texels > 0 for texels in made) and len(looks) == 2, "laid from what was worked out ahead"
+        # `gently` (the model is only shown: nobody waits for the earlier ones yet): on the one thread aside.
+        threads: list[str] = []
+        look = prop.repaints._look_through
+        prop.repaints._look_through = lambda *args: threads.append(threading.current_thread().name) or look(*args)
+        prop.fades(asked[1:], None, earlier=[{**asked[0], "tan": asked[0]["tan"] * 1.1}], gently=True)
+        assert until(lambda: len(prop.repaints.kept) == 3 and worked_out(prop))
+        assert [name.split("_")[0] for name in threads] == ["aside"]
+    finally:
+        prop.close()
+
+
+def test_a_repaints_look_is_held_only_while_the_slider_is_on_it(tmp_path: Path) -> None:
+    """What a repaint lays at its fade is all a change of another repaint needs of it, and it is small; its look
+    and its picture - tens of megabytes on a real model - stay only for the repaint picked ("ahead"), whose other
+    fades are worked out from them, and so does what it lays at those fades. Making the repaints ready again (the
+    page shows the model) picks no other."""
+    prop, asked = two_repaints(tmp_path)
+    try:
+        prop.fades(asked, [None, None], ahead=1)
+        stop = prop.repaints._stop_ahead
+        prop.fades(asked, None)
+        assert not stop.is_set(), "the slider's other fades are still being worked out"
+        first, second = prop.repaints.kept.values()
+        assert until(lambda: len(second.fades) == len(ot_repaint.FADE_STEPS) and worked_out(prop))
+        assert first.seen is None and second.seen is not None
+        prop.fades(asked, [None, None])
+        assert second.seen is None and stop.is_set(), "picked no longer: let go of"
+        assert list(second.fades) == [asked[1]["fade"]], "its own fade's work is all it keeps"
+    finally:
+        prop.close()
+
+
+def test_a_fade_that_failed_is_worked_out_anew_the_next_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fade's weights that cannot be worked out (the PC short of memory for a moment) are not kept as failed:
+    the call that lays them hears of it, and asked again, they are worked out."""
+    weight, short = ot_repaint.Repaints.weight, threading.Event()
+
+    def unless_short(self: ot_repaint.Repaints, look: ot_repaint.Look, fade: float) -> np.ndarray:
+        if short.is_set():
             raise MemoryError
         return weight(self, look, fade)
 
-    monkeypatch.setattr(ot_repaint.Repaints, "weight", once)
+    monkeypatch.setattr(ot_repaint.Repaints, "weight", unless_short)
     prop, asked = two_repaints(tmp_path)
     try:
+        short.set()
         with pytest.raises(MemoryError):
             prop.fades(asked[:1], [None])
+        short.clear()
         assert prop.fades(asked[:1], [None])["painted"][0] > 0
     finally:
+        prop.close()
+
+
+def test_a_kept_repaint_is_read_where_its_files_lie_now(tmp_path: Path) -> None:
+    """The hub links a repaint's files into a new folder with every change and tidies the old one away. What is
+    kept of the repaint reads them where they are named now: for another fade of it, and for what a thread was
+    still working out from the folder since gone - the call that lays it works that out again."""
+    prop, asked = two_repaints(tmp_path)
+
+    def linked(name: str, fade: float) -> dict:
+        folder = tmp_path / name
+        folder.mkdir()
+        files = {key: folder / Path(asked[0][key]).name for key in ("mask", "picture")}
+        for key, file in files.items():
+            os.link(asked[0][key], file)
+        return {**asked[0], **{key: str(file) for key, file in files.items()}, "fade": fade}
+
+    entered, go = threading.Event(), threading.Event()
+    look = prop.repaints._look_through
+
+    def held_up_on_a_thread(lens, mask, *more):
+        if threading.current_thread() is not threading.main_thread():
+            entered.set()
+            go.wait(30)
+        return look(lens, mask, *more)
+
+    try:
+        painted = prop.fades([linked("first", 2.0)], [None])["painted"]
+        shutil.rmtree(tmp_path / "first")
+        assert prop.fades([linked("second", 3.0)], [None])["painted"] >= painted, "another fade of it"
+        assert len(prop.repaints.kept) == 1, "the same repaint, kept"
+        prop.repaints._look_through = held_up_on_a_thread
+        prop.fades([linked("third", 4.0)], None)                  # a thread sets out to read that folder ...
+        assert entered.wait(30)
+        shutil.rmtree(tmp_path / "third")                         # ... which a change tidies away meanwhile
+        threading.Timer(0.3, go.set).start()
+        assert prop.fades([linked("fourth", 4.0)], [None])["painted"] >= painted
+    finally:
+        go.set()
         prop.close()
 
 

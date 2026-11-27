@@ -42,6 +42,13 @@ ST = "omnitexture/ot_001/omnitexture.glb"
 FINISHED = {"done", "error", "cancelled"}
 
 
+@pytest.fixture(autouse=True)
+def _ram_to_spare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests' PC has the RAM to start a worker early, whatever the real one has free (a test of the budgets
+    says otherwise itself)."""
+    monkeypatch.setattr(omnitexture, "free_ram_mb", lambda: 64_000)
+
+
 def _give_omnitexture(store: ProjectStore, project: str, prop_id: str, number: int = 1, **patch: Any) -> str:
     """Give a prop the file of an Omni-Texture (ot_NNN) and its block, made from its mesh.glb, one view painted
     (a result without views is the prop's own texture) -> the glb's path."""
@@ -1653,7 +1660,7 @@ def test_a_change_that_fails_lets_the_kept_worker_go(tmp_path: Path, monkeypatch
         raise PermissionError(5, "Access is denied")
 
     try:
-        omnitexture.refade(prop_dir, block, steps[1], None)
+        assert omnitexture.make_ready(prop_dir, block, steps[1])
         with monkeypatch.context() as held:
             held.setattr(os, "replace", refused)
             with pytest.raises(StageError, match="could not be put on again"):
@@ -1669,11 +1676,12 @@ def test_a_change_that_fails_lets_the_kept_worker_go(tmp_path: Path, monkeypatch
 def test_a_repaint_is_put_on_again_with_another_fade_and_the_later_ones_onto_it(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The page's fade slider on a repaint: the worker alone - no
-    Qwen-Image - reads the step before that repaint once and keeps it, with each repaint's sight and picture, for
-    the next change (FadeSession): every fade after the first is one "fades" call, the picked repaint with its new
-    fade, the later ones with theirs. Every step from that one on is a new folder, the repaint's pictures linked
-    into it; the prop's steps and repaints name them, the model shown follows. Picking a repaint makes the worker
-    ready and writes nothing. Unused, the worker is stopped (FADE_IDLE)."""
+    Qwen-Image - reads the model before that repaint once and keeps it for the next change (FadeSession): every
+    fade after the first is one "fades" call, the picked repaint with its new fade, the later ones with theirs.
+    Every repaint from that one on gets a new folder, its pictures linked into it, and the last of them its model:
+    the one the prop shows next, whatever the number of repaints before it. The steps before keep their models as
+    they were made. The pointer at a repaint's slider makes the worker ready and writes nothing. Unused, the
+    worker is stopped (FADE_IDLE)."""
     prop_dir = tmp_path / "prop"
     steps = _repainted(prop_dir, 2)
     block = {"glb": steps[2], "steps": steps, "stale": False,
@@ -1681,30 +1689,33 @@ def test_a_repaint_is_put_on_again_with_another_fade_and_the_later_ones_onto_it(
     workers: list[FakeFades] = []
     monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
     try:
-        # Picked: the model before the repaint loaded, the repaints' sight read - nothing written.
-        assert omnitexture.refade(prop_dir, block, steps[1], None) is None
+        # Made ready for its slider: the model before the repaint loaded, the repaints' sight read - nothing
+        # written.
+        assert omnitexture.make_ready(prop_dir, block, steps[1])
         (worker,) = workers
         load, ready = worker.calls
         assert Path(load["glb"]) == prop_dir / steps[0] and load["plan"] is False and ready["outs"] is None
         assert ready["ahead"] == 0, "the picked repaint's other fades worked out meanwhile"
+        assert ready["earlier"] == []
         assert [asked["fade"] for asked in ready["repaints"]] == [1.0, 2.0]
         assert sorted(p.name for p in (prop_dir / "omnitexture").iterdir()) == ["ot_001", "ot_002", "ot_003", "refade.tmp"]
-        # Let go of at x3: one call, the models of the two steps from it on written into new folders.
+        # Let go of at x3: one call; both repaints in new folders, the model of the one shown written.
         patch, renamed = omnitexture.refade(prop_dir, block, steps[1], 3.0)
         new = [f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (4, 5)]
-        assert renamed == {steps[1]: new[0], steps[2]: new[1]}
-        assert patch == {"glb": new[1], "steps": [steps[0], *new], "stale": False,
-                         "repaints": [repaint_record(new[0], 3.0, under=steps[0]), repaint_record(new[1], 2.0, under=new[0])],
+        assert renamed == {steps[2]: new[1]}, "the model shown"
+        assert patch == {"glb": new[1], "steps": [steps[0], steps[1], new[1]], "stale": False,
+                         "repaints": [repaint_record(steps[1], 1.0, under=steps[0]),      # (the step before: as it was)
+                                      repaint_record(new[0], 3.0, under=steps[0]), repaint_record(new[1], 2.0, under=new[0])],
                          "bases": []}
         faded = worker.calls[-1]
         assert faded["cmd"] == "fades" and [asked["fade"] for asked in faded["repaints"]] == [3.0, 2.0]
         first, later = faded["repaints"]
         assert first["eye"] == RETOUCH["eye"] and Path(first["picture"]).name == "projected.png"
         assert "ot_004" in first["layer"] and "ot_005" in later["layer"], "a layer where there was none"
-        assert ["ot_004.tmp" in faded["outs"][0], "ot_005.tmp" in faded["outs"][1]] == [True, True]
+        assert faded["outs"][0] is None and "ot_005.tmp" in faded["outs"][1], "one model: the one shown"
         for n, fade in ((4, 3.0), (5, 2.0)):
             folder = prop_dir / "omnitexture" / f"ot_{n:03d}"
-            assert (folder / "omnitexture.glb").is_file() and not folder.with_name(folder.name + ".tmp").exists()
+            assert (folder / "omnitexture.glb").is_file() == (n == 5) and not folder.with_name(folder.name + ".tmp").exists()
             assert sorted(p.name for p in (folder / "retouch").iterdir()) == [
                 "answer.png", "layer.webp", "mask.png", "projected.png", "request.json"]
             assert json.loads((folder / "retouch" / "request.json").read_text(encoding="utf-8"))["retouch"]["fade"] == fade
@@ -1716,8 +1727,8 @@ def test_a_repaint_is_put_on_again_with_another_fade_and_the_later_ones_onto_it(
         assert len(workers) == 1 and [call["cmd"] for call in worker.calls].count("load") == 1
         assert [asked["fade"] for asked in worker.calls[-1]["repaints"]] == [5.0, 2.0]
         assert "layer" not in worker.calls[-1]["repaints"][1], "its layer was there: linked"
-        # The newest repaint picked: the same worker serves it (the model before both is loaded); nothing before it
-        # is written again.
+        # The newest repaint picked: the same worker serves it (the model before both is loaded - the repaint
+        # between has none); nothing before it is written again.
         block = {**block, **patch}
         patch, _renamed = omnitexture.refade(prop_dir, block, block["steps"][2], 4.0)
         assert len(workers) == 1 and worker.calls[-1]["outs"][0] is None and worker.calls[-1]["outs"][1]
@@ -1725,28 +1736,158 @@ def test_a_repaint_is_put_on_again_with_another_fade_and_the_later_ones_onto_it(
         # Unused: stopped (here at once).
         monkeypatch.setattr(omnitexture, "FADE_IDLE", 0.05)
         block = {**block, **patch}
-        omnitexture.refade(prop_dir, block, block["steps"][2], None)
+        omnitexture.make_ready(prop_dir, block, block["steps"][2])
         time.sleep(0.4)
         assert worker.stopped and omnitexture._fading is None
         assert not (prop_dir / "omnitexture" / "refade.tmp").exists()
         # The fade stays within what the worker takes; the first step is no repaint; one whose pictures are gone,
         # or whose model before it is, cannot be put on again.
-        assert omnitexture.refade(prop_dir, block, block["steps"][2], 99.0)[0]["repaints"][1]["fade"] \
+        assert omnitexture.refade(prop_dir, block, block["steps"][2], 99.0)[0]["repaints"][-1]["fade"] \
             == omnitexture.MAX_FADE
         for bad in (steps[0], "omnitexture/ot_077/omnitexture.glb", None):
             with pytest.raises(StageError, match="cannot be faded again"):
                 omnitexture.refade(prop_dir, block, bad, 2.0)
         (prop_dir / block["steps"][2]).with_name("retouch").joinpath("projected.png").unlink()
         with pytest.raises(StageError, match="cannot be faded again"):
-            omnitexture.refade(prop_dir, block, block["steps"][1], 2.0)
+            omnitexture.refade(prop_dir, block, omnitexture.line_of(block)[1], 2.0)
     finally:
         omnitexture.close_fades()
 
 
-def test_a_fade_of_another_prop_or_after_another_change_loads_its_model_anew(
+def test_the_worker_is_made_ready_for_what_the_artist_is_at_within_a_budget(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """One worker is kept at a time: a fade of another prop, or of this prop once its repaints changed otherwise
-    (a new repaint, or one taken back), stops it and loads the model it needs."""
+    """The page shows a model with repaints: the worker loads the kept model before the newest and is asked what a
+    click on that one lays, and the repaints before that model ("earlier") one at a time ("gently"); with the
+    pointer at the pictures (`every`), those at once - each as shown: a hidden one may be shown again. Nothing
+    is written, and no repaint is the slider's. No worker is started for it with little RAM free (one kept
+    serves, whatever is free), and a model without repaints has nothing to make ready."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 3)
+    block = {"glb": steps[3], "steps": steps,
+             "repaints": [repaint_record(step, under=before, hidden=step == steps[2])
+                          for before, step in zip(steps, steps[1:])]}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+    free = [omnitexture.READY_MIN_RAM_MB - 1]
+    monkeypatch.setattr(omnitexture, "free_ram_mb", lambda: free[0])
+    folder = lambda asked: Path(asked["picture"]).parent.parent.name       # noqa: E731
+    try:
+        assert omnitexture.make_ready(prop_dir, block) is False and not workers, "short of RAM: none started"
+        free[0] = omnitexture.READY_MIN_RAM_MB
+        assert omnitexture.make_ready(prop_dir, block) is True
+        (worker,) = workers
+        load, ready = worker.calls
+        assert Path(load["glb"]) == prop_dir / steps[2] and ready["outs"] is None and ready["ahead"] is None
+        assert [folder(asked) for asked in ready["repaints"]] == ["ot_004"] and ready["gently"] is True
+        free[0] = 0
+        assert omnitexture.make_ready(prop_dir, block, every=True) is True, "the worker kept serves"
+        every = worker.calls[-1]
+        assert every["gently"] is False and every["outs"] is None and every["ahead"] is None
+        for asked in (ready, every):
+            assert [folder(one) for one in asked["earlier"]] == ["ot_002", "ot_003"]
+            assert not any(one["hidden"] for one in [*asked["repaints"], *asked["earlier"]])
+        assert omnitexture.make_ready(prop_dir, block, steps[3]) is True
+        slider = worker.calls[-1]
+        assert (slider["ahead"], slider["earlier"]) == (0, []), "the pointer at a slider: that repaint's fades alone"
+        bare = {"glb": steps[0], "steps": steps[:1], "repaints": []}
+        assert omnitexture.make_ready(prop_dir, bare) is False and len(worker.calls) == 4
+        assert omnitexture.make_ready(prop_dir, block, "omnitexture/ot_077/omnitexture.glb") is False
+        assert sorted(p.name for p in (prop_dir / "omnitexture").glob("ot_*")) == ["ot_001", "ot_002", "ot_003", "ot_004"]
+    finally:
+        omnitexture.close_fades()
+
+
+def test_a_worker_that_could_not_be_made_ready_is_kept_unless_it_stopped(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Making ready changes nothing, so a failure of it leaves the kept worker as it was - what it holds is still
+    known - and only answers False: the change that follows says what is wrong. A worker that stopped is let go."""
+    class Refusing(MortalFades):
+        refuses = False
+
+        def call(self, request: dict[str, Any]) -> dict[str, Any]:
+            if self.refuses and request["cmd"] == "fades":
+                raise StageError("Omni-Texture failed (a folder tidied away meanwhile).")
+            return super().call(request)
+
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 2)
+    block = {"glb": steps[2], "steps": steps,
+             "repaints": [repaint_record(step, under=before) for before, step in zip(steps, steps[1:])]}
+    workers: list[Refusing] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(Refusing()) or workers[-1])
+    try:
+        assert omnitexture.make_ready(prop_dir, block) is True
+        (worker,) = workers
+        worker.refuses = True
+        assert omnitexture.make_ready(prop_dir, block, every=True) is False
+        assert omnitexture._fading is not None and not worker.stopped, "kept"
+        worker.refuses = False
+        _patch, renamed = omnitexture.refade(prop_dir, block, steps[2], 2.0)
+        assert len(workers) == 1 and list(renamed) == [steps[2]]
+        worker.stopped = True
+        assert omnitexture.make_ready(prop_dir, {**block, **_patch}) is True and len(workers) == 2, "replaced"
+    finally:
+        omnitexture.close_fades()
+
+
+def test_an_earlier_repaint_that_cannot_be_read_does_not_stand_in_a_later_ones_way(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A change lays the repaints after the kept model it starts from; the ones before it are only kept ready for
+    a later change. One of those whose pictures are gone, or whose record cannot be read, is left out - the
+    change itself goes through. Asked for itself, it is refused as ever."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 4)
+    block = {"glb": steps[4], "steps": steps,
+             "repaints": [repaint_record(step, under=before) for before, step in zip(steps, steps[1:])]}
+    (prop_dir / steps[1]).with_name("retouch").joinpath("projected.png").unlink()
+    (prop_dir / steps[2]).with_name("retouch").joinpath("request.json").write_text("{", encoding="utf-8")
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+    folder = lambda asked: Path(asked["picture"]).parent.parent.name       # noqa: E731
+    try:
+        assert omnitexture.make_ready(prop_dir, block, every=True) is True
+        assert [folder(asked) for asked in workers[0].calls[-1]["earlier"]] == ["ot_004"]
+        patch, _renamed = omnitexture.refade(prop_dir, block, steps[4], None, True)
+        assert patch["repaints"][-1]["hidden"] is True
+        assert [folder(asked) for asked in workers[0].calls[-1]["earlier"]] == ["ot_004"]
+        with pytest.raises(StageError, match="cannot be hidden"):
+            omnitexture.refade(prop_dir, block, steps[1], None, True)
+    finally:
+        omnitexture.close_fades()
+
+
+def test_a_repaint_between_the_kept_model_and_the_one_changed_needs_its_pictures(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After a change of an early repaint the later ones have no model of their own: a change of the newest then
+    starts from the model before them all and lays each again. One of them without its pictures: the change is
+    refused in plain words before anything is asked of the worker, and nothing is made ready."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 3)
+    block = {"glb": steps[3], "steps": steps, "stale": False,
+             "repaints": [repaint_record(step, under=before) for before, step in zip(steps, steps[1:])]}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+    try:
+        patch, _renamed = omnitexture.refade(prop_dir, block, steps[1], None, True)
+        block = {**block, **patch}
+        line = omnitexture.line_of(block)
+        assert [(prop_dir / model).is_file() for model in line] == [True, False, False, True]
+        (prop_dir / line[2]).with_name("retouch").joinpath("mask.png").unlink()
+        asked = len(workers[0].calls)
+        with pytest.raises(StageError, match="cannot be hidden"):
+            omnitexture.refade(prop_dir, block, line[3], None, True)
+        assert omnitexture.make_ready(prop_dir, block) is False and len(workers[0].calls) == asked
+        with pytest.raises(StageError, match="can no longer be put on again"):
+            omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=line[3])
+    finally:
+        omnitexture.close_fades()
+
+
+def test_a_fade_of_another_prop_loads_its_model_anew_and_another_repaint_of_the_prop_reads_a_texture(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One worker is kept at a time: a fade of another prop stops it and loads that prop's model. Another repaint
+    of the same prop keeps it: the model before that repaint has the same surface, so its texture alone is read
+    in the loaded one's place."""
     workers: list[FakeFades] = []
     monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
     try:
@@ -1759,9 +1900,20 @@ def test_a_fade_of_another_prop_or_after_another_change_loads_its_model_anew(
         omnitexture.refade(one, block_one, steps_one[1], 2.0)
         omnitexture.refade(two, block_two, steps_two[2], 2.0)
         assert len(workers) == 2 and workers[0].stopped and not workers[1].stopped
-        # the second prop's first repaint: its model before it is not the one loaded
-        omnitexture.refade(two, block_two, steps_two[1], None)
-        assert len(workers) == 3 and workers[1].stopped
+        # the second prop's first repaint: the model before it is not the one loaded - its texture is read
+        assert omnitexture.make_ready(two, block_two, steps_two[1])
+        assert len(workers) == 2 and not workers[1].stopped
+        texture, ready = workers[1].calls[-2:]
+        assert (texture["cmd"], Path(texture["glb"])) == ("texture", two / steps_two[0]) and ready["cmd"] == "fades"
+        # a model of the same prop that is none of this line's (another result: maybe another surface) is loaded
+        other = [f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (8, 9)]
+        for model in other:
+            (two / model).parent.mkdir()
+            (two / model).write_bytes(b"glTF")
+        _kept_repaint(two, other[1], 9)
+        block_other = {"glb": other[1], "steps": other, "repaints": [repaint_record(other[1], under=other[0])]}
+        assert omnitexture.make_ready(two, block_other)
+        assert len(workers) == 3 and workers[1].stopped and Path(workers[2].calls[0]["glb"]) == two / other[0]
     finally:
         omnitexture.close_fades()
     assert workers[2].stopped
@@ -1805,8 +1957,8 @@ def test_a_fade_under_way_is_not_stopped_by_the_page_readying_another_repaint(
     made: dict[str, Any] = {}
     fade = threading.Thread(target=lambda: made.update(fade=_outcome(omnitexture.refade, one, block_one,
                                                                     steps_one[1], 2.0)))
-    ready = threading.Thread(target=lambda: made.update(ready=_outcome(omnitexture.refade, two, block_two,
-                                                                      steps_two[1], None)))
+    ready = threading.Thread(target=lambda: made.update(ready=_outcome(omnitexture.make_ready, two, block_two,
+                                                                      steps_two[1])))
     try:
         fade.start()
         assert entered.wait(10)
@@ -1817,7 +1969,7 @@ def test_a_fade_under_way_is_not_stopped_by_the_page_readying_another_repaint(
         fade.join(10)
         ready.join(10)
         assert not isinstance(made["fade"], StageError), made["fade"]
-        assert made["ready"] is None and len(workers) == 2 and workers[0].stopped and not workers[1].stopped
+        assert made["ready"] is True and len(workers) == 2 and workers[0].stopped and not workers[1].stopped
     finally:
         go.set()
         omnitexture.close_fades()
@@ -1832,7 +1984,7 @@ def test_a_kept_worker_that_stopped_by_itself_is_replaced(tmp_path: Path, monkey
     steps = _repainted(prop_dir, 1)
     block = {"glb": steps[1], "steps": steps, "repaints": [repaint_record(steps[1], under=steps[0])]}
     try:
-        omnitexture.refade(prop_dir, block, steps[1], None)
+        assert omnitexture.make_ready(prop_dir, block, steps[1])
         workers[0].stopped = True
         patch, _renamed = omnitexture.refade(prop_dir, block, steps[1], 2.0)
         assert len(workers) == 2 and patch["repaints"][0]["fade"] == 2.0
@@ -1907,6 +2059,51 @@ def test_a_repaint_taken_off_is_one_more_step_and_the_one_before_still_holds_it(
         (prop_dir / steps[0]).unlink()
         with pytest.raises(StageError, match="no longer kept"):
             omnitexture.take_off(prop_dir, {"omnitexture": {**block, "glb": steps[1]}}, repaint=steps[1])
+    finally:
+        omnitexture.close_fades()
+
+
+def test_a_repaint_taken_off_keeps_the_worker_that_holds_its_model(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The kept worker holds the model before the newest repaint (made ready as the page showed the model). The
+    repaint that made that model taken off, it is no model of the line any more - the same surface all the same:
+    the worker serves on, by the texture of the model before it."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 3)
+    block = {"glb": steps[3], "steps": steps, "bases": [], "stale": False,
+             "repaints": [repaint_record(step, under=before) for before, step in zip(steps, steps[1:])]}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+    try:
+        assert omnitexture.make_ready(prop_dir, block) and omnitexture._fading.model == steps[2]
+        patch = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=steps[2])
+        (worker,) = workers
+        assert [call["cmd"] for call in worker.calls] == ["load", "fades", "texture", "fades"]
+        assert Path(worker.calls[2]["glb"]) == prop_dir / steps[1] and (prop_dir / patch["glb"]).is_file()
+    finally:
+        omnitexture.close_fades()
+
+
+def test_the_newest_repaint_taken_off_leaves_a_step_with_its_model(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After a change of an early repaint the later ones have no model of their own. The newest then taken off,
+    the model under it is the prop's next step: it is put on again and written - a step always has its file."""
+    prop_dir = tmp_path / "prop"
+    steps = _repainted(prop_dir, 2)
+    block = {"glb": steps[2], "steps": steps, "bases": [], "stale": False,
+             "repaints": [repaint_record(step, under=before) for before, step in zip(steps, steps[1:])]}
+    workers: list[FakeFades] = []
+    monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
+    try:
+        patch, _renamed = omnitexture.refade(prop_dir, block, steps[1], 3.0)
+        block = {**block, **patch}
+        line = omnitexture.line_of(block)
+        assert not (prop_dir / line[1]).is_file(), "laid for the newest one's sake: no model of its own"
+        patch = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=line[2])
+        assert (prop_dir / patch["glb"]).is_file() and patch["steps"][-1] == patch["glb"]
+        put_on = workers[0].calls[-1]
+        assert [asked["fade"] for asked in put_on["repaints"]] == [3.0] and put_on["outs"] == [put_on["outs"][0]]
+        assert omnitexture.parts_of({**block, **patch}, patch["glb"])[1][-1]["fade"] == 3.0
     finally:
         omnitexture.close_fades()
 
@@ -2177,14 +2374,14 @@ def test_the_fades_worker_is_let_go_when_the_model_it_loaded_is_painted(
     patch = tmp_path / "patch.rgba"
     patch.write_bytes(b"\x01" * 64)
     try:
-        omnitexture.refade(prop_dir, block, steps[2], None)
+        assert omnitexture.make_ready(prop_dir, block, steps[2])
         kept = omnitexture._fading
         assert kept is not None and kept.model == steps[1]
         omnitexture.hand_paint(prop_dir, steps[2], patch, 4, 4)
         assert omnitexture._fading is kept and not kept.worker.stopped, "a later step painted: still serves"
         omnitexture.hand_paint(prop_dir, steps[1], patch, 4, 4)
         assert omnitexture._fading is None and kept.worker.stopped, "the model it loaded painted: let go"
-        omnitexture.refade(prop_dir, block, steps[2], None)
+        assert omnitexture.make_ready(prop_dir, block, steps[2])
         assert omnitexture._fading is not None and omnitexture._fading is not kept
     finally:
         omnitexture.close_fades()
@@ -2192,9 +2389,9 @@ def test_the_fades_worker_is_let_go_when_the_model_it_loaded_is_painted(
 
 def test_a_fade_puts_each_steps_hand_paint_on_again_in_its_new_folder(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fade of an earlier repaint makes the steps from it on again: each painted by hand has its paint layer
-    put on again over its repaint (the worker's "fades": "hand_paint"), its model as made written beside its
-    model ("unpainted"), and its new folder keeps the layer (a hard link)."""
+    """A fade of an earlier repaint puts the repaints from it on again: each step painted by hand has its paint
+    layer put on again over its repaint (the worker's "fades": "hand_paint"), and its new folder keeps the layer
+    (a hard link); the model shown has its model as made written beside it ("unpainted")."""
     prop_dir = tmp_path / "prop"
     steps = _repainted(prop_dir, 2)
     block = {"glb": steps[2], "steps": steps,
@@ -2203,14 +2400,15 @@ def test_a_fade_puts_each_steps_hand_paint_on_again_in_its_new_folder(
     workers: list[FakeFades] = []
     monkeypatch.setattr(omnitexture, "Worker", lambda: workers.append(FakeFades()) or workers[-1])
     try:
-        _patch, renamed = omnitexture.refade(prop_dir, block, steps[1], 3.0)
+        patch, _renamed = omnitexture.refade(prop_dir, block, steps[1], 3.0)
     finally:
         omnitexture.close_fades()
     asked = workers[0].calls[-1]["repaints"]
     assert [Path(ask["hand_paint"]) for ask in asked] == layers
-    for old, ask in zip(steps[1:], asked):
-        folder = (prop_dir / renamed[old]).parent
-        assert Path(ask["unpainted"]) == folder.with_name(folder.name + ".tmp") / "unpainted.glb"
+    folders = [(prop_dir / record["glb"]).parent for record in patch["repaints"][-2:]]
+    assert "unpainted" not in asked[0], "no model of the one before the model shown"
+    assert Path(asked[1]["unpainted"]) == folders[1].with_name(folders[1].name + ".tmp") / "unpainted.glb"
+    for old, folder in zip(steps[1:], folders):
         assert (folder / "hand-paint.png").read_bytes() == b"paint of " + old.encode()
         assert os.stat(folder / "hand-paint.png").st_nlink == 2, "linked, not copied"
 
@@ -2260,10 +2458,10 @@ def test_a_repaint_taken_off_takes_its_steps_hand_paint_with_it_and_keeps_the_la
 def test_a_repaint_hidden_keeps_its_place_and_one_kept_worker_serves_every_change(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The page's eye on a repaint: the worker is asked it "hidden" (nothing of it goes on), its record keeps its
-    place and its fade, and the steps from it on are made again in new folders as by a fade - no step is added.
-    Shown again the same way. The worker kept on the model before it serves what follows - another repaint's eye,
-    a fade, a repaint taken off - without loading again; one that is so already is left alone. A copy of a
-    hidden repaint's model (the repaint after it taken off) is hidden too."""
+    place and its fade, and the model shown is made again as by a fade - one model, whichever repaint it is; no
+    step is added, and the steps before keep theirs. Shown again the same way. The worker kept on the model before
+    it serves what follows - another repaint's eye, a fade, a repaint taken off - without loading again; one that
+    is so already is left alone. The model under a hidden repaint (the repaint after it taken off) is hidden too."""
     prop_dir = tmp_path / "prop"
     steps = _repainted(prop_dir, 3)
     records = [repaint_record(step, fade, under=before) for before, step, fade in zip(steps, steps[1:], (1.0, 2.0, 3.0))]
@@ -2277,19 +2475,21 @@ def test_a_repaint_hidden_keeps_its_place_and_one_kept_worker_serves_every_chang
     try:
         patch, renamed = omnitexture.refade(prop_dir, block, steps[1], None, hidden=True)
         new = [f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (5, 6, 7)]
-        assert renamed == dict(zip(steps[1:], new))
-        assert patch["glb"] == new[2] and patch["steps"] == [steps[0], *new], "no step added"
-        assert patch["repaints"] == [repaint_record(new[0], 1.0, under=steps[0], hidden=True),
+        assert renamed == {steps[3]: new[2]}, "the model shown"
+        assert patch["glb"] == new[2] and patch["steps"] == [*steps[:3], new[2]], "no step added, the others as made"
+        assert patch["repaints"] == [*records[:2], repaint_record(new[0], 1.0, under=steps[0], hidden=True),
                                      repaint_record(new[1], 2.0, under=new[0]), repaint_record(new[2], 3.0, under=new[1])]
+        assert [(prop_dir / model).is_file() for model in new] == [False, False, True], "one model written"
         (worker,) = workers
         load, put_on = worker.calls
-        assert Path(load["glb"]) == prop_dir / steps[0] and put_on["ahead"] is None and all(put_on["outs"])
+        assert Path(load["glb"]) == prop_dir / steps[0] and put_on["ahead"] is None
+        assert [bool(out) for out in put_on["outs"]] == [False, False, True]
         assert [(asked["hidden"], asked["fade"]) for asked in put_on["repaints"]] == [(True, 1.0), (False, 2.0), (False, 3.0)]
         assert "layer" not in put_on["repaints"][0] or "ot_005" in put_on["repaints"][0]["layer"]
         block = {**block, **patch}
         assert omnitexture.refade(prop_dir, block, new[0], None, hidden=True) is None, "hidden already"
-        # Pointed at while hidden: made ready to be shown again - asked as shown, none of the slider's fades ahead.
-        assert omnitexture.refade(prop_dir, block, new[0], None) is None
+        # Made ready while hidden: to be shown again - asked as shown, none of the slider's fades ahead.
+        assert omnitexture.make_ready(prop_dir, block, new[0])
         ready = worker.calls[-1]
         assert ready["outs"] is None and ready["ahead"] is None and ready["repaints"][0]["hidden"] is False
         # The newest hidden too: the worker kept on the model before the first writes that step alone.
@@ -2301,20 +2501,20 @@ def test_a_repaint_hidden_keeps_its_place_and_one_kept_worker_serves_every_chang
         # A fade of the one between them leaves both hidden; the first shown again.
         patch, _renamed = omnitexture.refade(prop_dir, block, new[1], 4.0)
         block = {**block, **patch}
-        assert hidden(block) == [True, False, True] and block["repaints"][1]["fade"] == 4.0
-        patch, _renamed = omnitexture.refade(prop_dir, block, block["steps"][1], None, hidden=False)
+        assert hidden(block) == [True, False, True] and omnitexture.parts_of(block, block["glb"])[1][1]["fade"] == 4.0
+        patch, _renamed = omnitexture.refade(prop_dir, block, omnitexture.line_of(block)[1], None, hidden=False)
         block = {**block, **patch}
         assert hidden(block) == [False, False, True] and worker.calls[-1]["repaints"][0]["hidden"] is False
         assert len(block["steps"]) == 4 and all((prop_dir / step).is_file() for step in block["steps"])
         # The one between taken off: the newest goes on again onto the first, hidden as it is - the same worker.
-        first = block["steps"][1]
-        taken = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=block["steps"][2])
+        first, between = omnitexture.line_of(block)[1:3]
+        taken = omnitexture.take_off(prop_dir, {"omnitexture": block}, repaint=between)
         assert [asked["hidden"] for asked in worker.calls[-1]["repaints"]] == [False, True]
         assert [bool(out) for out in worker.calls[-1]["outs"]] == [False, True]
         assert taken["steps"] == [*block["steps"], taken["glb"]]
         assert taken["repaints"][-1] == repaint_record(taken["glb"], 3.0, under=first, hidden=True)
         assert len(workers) == 1 and [call["cmd"] for call in worker.calls].count("load") == 1
-        # The newest taken off with nothing to put on again: the model under it once more, hidden as that one is.
+        # The newest taken off: the model under it - never written, so put on again -, hidden as that one is.
         block = {**block, **taken}
         patch, _renamed = omnitexture.refade(prop_dir, block, first, None, hidden=True)
         block = {**block, **patch}
@@ -2351,8 +2551,8 @@ def test_the_painted_views_hidden_give_way_to_the_3d_models_own_texture_and_come
         assert omnitexture.show_views(prop_dir, prop, hidden=False) is None, "shown already"
         patch, renamed = omnitexture.show_views(prop_dir, prop, hidden=True)
         bare, onto = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (3, 4))
-        assert renamed == {steps[0]: bare, steps[1]: onto}
-        assert patch["glb"] == onto and patch["steps"] == [bare, onto], "no step added"
+        assert renamed == {steps[1]: onto}, "the model shown"
+        assert patch["glb"] == onto and patch["steps"] == [steps[0], onto], "no step added, the one before as made"
         assert patch["bases"] == [{"glb": bare, "views": listed, "hidden": True, "shown": steps[0]}]
         assert patch["repaints"] == [repaint_record(onto, 2.0, under=bare)]
         assert (prop_dir / bare).read_bytes() == b"glTF mesh" and os.stat(prop_dir / bare).st_nlink == 1, "a copy"
@@ -2368,7 +2568,7 @@ def test_the_painted_views_hidden_give_way_to_the_3d_models_own_texture_and_come
         layer = _hand_painted(prop_dir, bare)
         patch, renamed = omnitexture.show_views(prop_dir, hidden, hidden=False)
         back, again = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (5, 6))
-        assert renamed == {bare: back, onto: again} and patch["steps"] == [back, again]
+        assert renamed == {onto: again} and patch["steps"] == [steps[0], again]
         assert patch["bases"] == [{"glb": back, "views": listed}] and patch["repaints"] == [repaint_record(again, 2.0, under=back)]
         folder = (prop_dir / back).parent
         assert (folder / "unpainted.glb").read_bytes() == b"glTF" and os.stat(folder / "unpainted.glb").st_nlink == 2
@@ -2402,7 +2602,7 @@ def test_the_painted_views_hidden_give_way_to_the_3d_models_own_texture_and_come
 
 def test_the_pages_eye_hides_a_picture_and_what_is_hidden_stays_so(api: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST .../omnitexture/hide: a repaint, or the painted views all at once, hidden or shown again -> the prop,
-    its steps made again and which is which; the bake made from the model it showed is out of date. What is
+    the model it shows made again and which that is; the bake made from the model it showed is out of date. What is
     hidden is so when the project is read again, and the result the hidden views lie on stays when older folders
     are tidied away. Refused without "hidden", while the page shows another model, and while another change of
     the prop's Omni-Texture is being made."""
@@ -2445,7 +2645,7 @@ def test_the_pages_eye_hides_a_picture_and_what_is_hidden_stays_so(api: Any, mon
         assert views.status_code == 200, views.text
         bare, onto = (f"omnitexture/ot_{n:03d}/omnitexture.glb" for n in (4, 5))
         block = views.json()["prop"]["omnitexture"]
-        assert views.json()["renamed"] == {first: bare, third: onto} and block["steps"] == [bare, onto]
+        assert views.json()["renamed"] == {third: onto} and block["steps"] == [first, onto]
         assert block["bases"] == [{"glb": bare, "hidden": True, "shown": first, "views": [
             {"folder": front, "picture": f"{front}/answer.png", "layer": None}]}]
         assert (prop_dir / bare).read_bytes() == (prop_dir / "mesh" / "mesh.glb").read_bytes()
@@ -2476,10 +2676,23 @@ def test_a_fade_and_a_job_of_one_prop_never_run_together(api: Any, paint: FakePa
     finally:
         hub.fading.discard(("Demo", pid))
     readied: list[Any] = []
-    monkeypatch.setattr(omnitexture, "refade", lambda *args: readied.append(args))
-    monkeypatch.setattr(hub.jobs, "active_props", lambda project, stage=None: {pid})
-    refused = client.post(f"/api/projects/Demo/props/{pid}/omnitexture/fade", json={"glb": first, "prepare": True})
-    assert refused.status_code == 409 and not readied
+    monkeypatch.setattr(omnitexture, "make_ready", lambda *args: readied.append(args[2:]) or True)
+    url = f"/api/projects/Demo/props/{pid}/omnitexture/fade"
+    with monkeypatch.context() as busy:
+        busy.setattr(hub.jobs, "active_props", lambda project, stage=None: {pid})
+        refused = client.post(url, json={"glb": first, "prepare": True})
+        assert refused.status_code == 409 and not readied
+    # Nor beside a job of any other prop: the memory and the processor are the tools' first. The page is told so,
+    # and the change that follows is only as slow as without.
+    with monkeypatch.context() as busy:
+        busy.setattr(hub.jobs, "active_projects", lambda: {"Another"})
+        left = client.post(url, json={"prepare": True, "all": True})
+        assert (left.status_code, left.json()) == (200, {"ready": False}) and not readied
+    # With no job about: what the page says the artist is at goes to the adapter.
+    for body, asked in (({"prepare": True}, (None, False)), ({"prepare": True, "all": True}, (None, True)),
+                        ({"glb": first, "prepare": True}, (first, False))):
+        made = client.post(url, json=body)
+        assert (made.status_code, made.json(), readied.pop()) == (200, {"ready": True}, asked)
 
 
 def test_the_page_the_hub_and_the_worker_agree_on_the_fade_and_on_the_clay() -> None:

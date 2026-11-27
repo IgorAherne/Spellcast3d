@@ -186,6 +186,111 @@ export function texelHex(data) {
   return `#${sum.map((s) => Math.round(s / n).toString(16).padStart(2, '0')).join('')}`;
 }
 
+export const DAB_REACH = 2;         // a dab changes the stroke's mask this many pixels past its radius, at most
+
+/** The screen box ({x0, y0, x1, y1}, px) of `dabs` ([{x, y, r}]) with their reach, joined to `box` when given. */
+export function dabsBox(dabs, box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }) {
+  for (const d of dabs) {
+    box.x0 = Math.min(box.x0, d.x - d.r - DAB_REACH);
+    box.x1 = Math.max(box.x1, d.x + d.r + DAB_REACH);
+    box.y0 = Math.min(box.y0, d.y - d.r - DAB_REACH);
+    box.y1 = Math.max(box.y1, d.y + d.r + DAB_REACH);
+  }
+  return box;
+}
+
+/**
+ * Where a mesh's corners lie on the screen: `position` (x, y, z per corner, in the mesh's own space) through `matrix`
+ * (the camera's view-projection times the mesh's world matrix: 16 numbers, column by column) onto a `width` x
+ * `height` px screen, y down -> `into` (Float32Array, 3 per corner): x px, y px, w (w <= 0: behind the camera).
+ */
+export function screenCorners(position, matrix, width, height, into = new Float32Array(position.length)) {
+  const [m0, m1, , m3, m4, m5, , m7, m8, m9, , m11, m12, m13, , m15] = matrix;
+  for (let i = 0; i < position.length; i += 3) {
+    const x = position[i];
+    const y = position[i + 1];
+    const z = position[i + 2];
+    const w = m3 * x + m7 * y + m11 * z + m15;
+    into[i] = ((m0 * x + m4 * y + m8 * z + m12) / w * 0.5 + 0.5) * width;
+    into[i + 1] = (0.5 - (m1 * x + m5 * y + m9 * z + m13) / w * 0.5) * height;
+    into[i + 2] = w;
+  }
+  return into;
+}
+
+const FOOT_CELL = 8;                // px: the cells a stroke's footprint is kept in
+
+/**
+ * Where one stroke's dabs have been on a `width` x `height` px screen, in cells of FOOT_CELL px, to tell the
+ * triangles under the stroke from the rest - no dab reaches those, so drawing them would change nothing:
+ *   cells(screen, into) -> per triangle of `screen` (screenCorners) the cells its box lies in (Uint16Array, 4 per
+ *     triangle: column and row of the first, of the last); a triangle off the screen has none, one with a corner
+ *     behind the camera all of them (it may show anywhere);
+ *   add(dabs): the cells under these dabs ([{x, y, r}], their reach included) are the stroke's too;
+ *   under(cells, into) -> how many corners it wrote into `into` (an index with room for every corner): those of the
+ *     triangles with a cell of the stroke's, in the triangles' own order.
+ */
+export function createFootprint(width, height) {
+  const columns = Math.max(1, Math.ceil(width / FOOT_CELL));
+  const rows = Math.max(1, Math.ceil(height / FOOT_CELL));
+  const marked = new Uint8Array(columns * rows);
+  const sums = new Int32Array((columns + 1) * (rows + 1));     // marked cells above and left of each cell corner
+  const column = (x) => Math.min(columns - 1, Math.max(0, Math.floor(x / FOOT_CELL)));
+  const row = (y) => Math.min(rows - 1, Math.max(0, Math.floor(y / FOOT_CELL)));
+  return {
+    cells(screen, into = new Uint16Array((screen.length / 9) * 4)) {
+      for (let s = 0, t = 0; s + 8 < screen.length; s += 9, t += 4) {
+        let x0 = -Infinity;
+        let y0 = -Infinity;
+        let x1 = Infinity;
+        let y1 = Infinity;
+        if (screen[s + 2] > 0 && screen[s + 5] > 0 && screen[s + 8] > 0) {
+          x0 = Math.min(screen[s], screen[s + 3], screen[s + 6]);
+          y0 = Math.min(screen[s + 1], screen[s + 4], screen[s + 7]);
+          x1 = Math.max(screen[s], screen[s + 3], screen[s + 6]);
+          y1 = Math.max(screen[s + 1], screen[s + 4], screen[s + 7]);
+        }
+        const off = !(x1 >= 0 && y1 >= 0 && x0 < width && y0 < height);
+        into[t] = off ? 1 : column(x0);
+        into[t + 1] = off ? 1 : row(y0);
+        into[t + 2] = off ? 0 : column(x1);
+        into[t + 3] = off ? 0 : row(y1);
+      }
+      return into;
+    },
+    add(dabs) {
+      for (const d of dabs) {
+        const reach = d.r + DAB_REACH;
+        if (d.x + reach < 0 || d.y + reach < 0 || d.x - reach >= width || d.y - reach >= height) continue;
+        for (let r = row(d.y - reach); r <= row(d.y + reach); r++) marked.fill(1, r * columns + column(d.x - reach), r * columns + column(d.x + reach) + 1);
+      }
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0, inRow = 0; c < columns; c++) {
+          inRow += marked[r * columns + c];
+          sums[(r + 1) * (columns + 1) + c + 1] = sums[r * (columns + 1) + c + 1] + inRow;
+        }
+      }
+    },
+    under(cells, into) {
+      const wide = columns + 1;
+      let n = 0;
+      for (let t = 0, corner = 0; t < cells.length; t += 4, corner += 3) {
+        const c0 = cells[t];
+        const c1 = cells[t + 2] + 1;
+        if (c1 <= c0) continue;
+        const above = cells[t + 1] * wide;
+        const below = (cells[t + 3] + 1) * wide;
+        if (sums[below + c1] - sums[above + c1] - sums[below + c0] + sums[above + c0] === 0) continue;
+        into[n] = corner;
+        into[n + 1] = corner + 1;
+        into[n + 2] = corner + 2;
+        n += 3;
+      }
+      return n;
+    },
+  };
+}
+
 /**
  * The texture tiles a stroke may have changed, for undo: every triangle in front of the camera that faces it (or
  * any, `twoSided`) and whose screen box meets the stroke's (`box`, px, the brush radius included) marks the tiles

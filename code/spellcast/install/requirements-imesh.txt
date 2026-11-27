@@ -9,8 +9,9 @@ uvicorn[standard]==0.53.0
 python-multipart==0.0.32
 trimesh==5.1.0
 pillow==12.3.0
-# xatlas: Spellcast3D's own build (code/whl/xatlas-0.0.11+spellcast3d.1-cp311-cp311-win_amd64.whl, installed after
-# this file with --no-deps): PyPI's 0.0.11 with xatlas's chart-merging pass fixed (install/components.py XATLAS_WHEEL).
+# xatlas: Spellcast3D's own build (code/whl/xatlas-0.0.11+spellcast3d.2-cp311-cp311-win_amd64.whl, installed after
+# this file with --no-deps): PyPI's 0.0.11 with xatlas's chart merging, chart growing and task scheduler made
+# faster, the same atlas (install/components.py XATLAS_WHEEL).
 assimp-py==1.1.0
 # The Projection stage's ray casting (launchers/spellbake, CPU only, so it runs on any GPU): Intel Embree 4
 # with TBB, 13.1 MB wheel, BSD licence (Embree and TBB: Apache-2.0), needs only numpy. Pinned: its GIL

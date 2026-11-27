@@ -7,7 +7,8 @@
 // two lines, how to use the tool that is up. While a tool is up the left button paints; Alt + left, the middle and the
 // right button still move the camera as everywhere (viewer3d.js dragAction). Shift + moving sideways over the model
 // sizes the brush, as on the Images picture. A tool taken up in the lit view ("All") moves the view to "Base colour",
-// what the brushes paint, flat; any other view stays as it is.
+// what the brushes paint, flat - and the stage keeps it for the prop's next models, as a view the artist picked; any
+// other view stays as it is.
 // Ctrl+Z / Ctrl+Y take strokes back and bring them back; the painting is saved into the model's files a moment after
 // each change.
 //
@@ -164,7 +165,7 @@ export function createSaver({ project, propId, glb, session, save = saveToBake }
  * The tools of one view that shows a model to paint (options: see the top of this file): {el (the one node for the
  * viewport), bind({viewer, project, propId, glb, select(view), begin?}) (resolves once the model's painter is there, or it
  * cannot be painted), unbind(), session(make), painting(), pick(tool), pending(), flush(), painted(), destroy()}.
- * select: picks a map view (the map bar's own).
+ * select: moves the model to a map view on the artist's behalf (the map bar's select, `byArtist`).
  */
 export function createPaintBar(options = {}) {
   const {

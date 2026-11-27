@@ -16,13 +16,15 @@ touched, and nothing is built inside a clone.
         on the GPU (ImplicitGEMM and GatherScatter, fp32 and fp16).
 
     xatlas\build_xatlas_win.py
-        xatlas 0.0.11+spellcast3d.1 (MIT, mworchel/xatlas-python 0.0.11 with its vendored jpcy/xatlas f700c77
-        carrying Spellcast3D's fix of ClusteredCharts::mergeCharts: the user's forks, checked out at
-        temp_code\xatlas-python), CPU only, for Instant Meshes' UV unwrap (installed into code\venvs\imesh in
-        place of PyPI's 0.0.11, whose chart merging was cubic in the number of seed charts: 164 s for a
-        22,800-triangle tree, 1.1 s now, the same atlas bit for bit). Needs Visual Studio 2022 with the C++
-        tools; cmake and ninja come through pip. About a minute. The docstring says how the atlas is checked
-        against PyPI's wheel (code\devtools\triflow\xatlas\profile_unwrap.py --save / --compare).
+        xatlas 0.0.11+spellcast3d.2 (MIT, mworchel/xatlas-python 0.0.11 with its vendored jpcy/xatlas f700c77
+        carrying Spellcast3D's two speed fixes: the user's forks, checked out at temp_code\xatlas-python), CPU
+        only, for Instant Meshes' UV unwrap (installed into code\venvs\imesh in place of PyPI's 0.0.11). The
+        fixes, each with the same atlas bit for bit: ClusteredCharts::mergeCharts, which was cubic in the number
+        of seed charts (164 s for a 22,800-triangle tree, 1.1 s now), and the chart growing and task scheduler
+        (a chart's boundary grid rebuilt for every face tried, and a spinning wait(): about half the time of an
+        unwrap; the same patch is in the cumesh wheel below). Needs Visual Studio 2022 with the C++ tools;
+        cmake and ninja come through pip. About a minute. The docstring says how the atlas is checked against
+        the wheel before.
 
     pyfqmr-triflow\build_pyfqmr_triflow_win.bat
         pyfqmr-triflow 0.5.0+triflow (MIT, DerKleineLi/pyfqmr-triflow @ c93a767, the commit TriFlow
@@ -30,7 +32,7 @@ touched, and nothing is built inside a clone.
         git. About a minute. smoke_pyfqmr_triflow.py simplifies a mesh the way TriFlow does.
 
     cumesh\build_cumesh_win.bat
-        cumesh 0.0.1.post6+cu128torch2.8 (MIT, Microsoft TRELLIS.2's mesh library) from the user's fork
+        cumesh 0.0.1.post7+cu128torch2.8 (MIT, Microsoft TRELLIS.2's mesh library) from the user's fork
         IgorAherne/CuMesh, branch spellcast3d, at the commit patch_cumesh_win.PINS["fork"] names: JeffreyXiang/CuMesh
         main @ 12289e1 merged (its CUDA stream handling for Blackwell, the M=0 guard, its own Windows build), cubvh @
         ce92267 vendored in third_party/cubvh (the commit upstream pins; three of our edits are cubvh's, and its
@@ -52,7 +54,9 @@ touched, and nothing is built inside a clone.
         code\devtools\pixal3d-lowmem\cumesh-fork\bvh_cross_wheel_queries.py holds two wheels' answers to each
         other), the ray-stab's inside test for any subset of a query's points with each point's own seed and an
         any-hit ray query (post6, 2026-11-08: cuBVH.raystab_inside and cuBVH.ray_hits, the same verdicts bit for
-        bit; code\devtools\pixal3d-lowmem\round-n\geometry\stab_identity.py), Pixal3D's
+        bit; code\devtools\pixal3d-lowmem\round-n\geometry\stab_identity.py), the vendored xatlas's chart
+        growing and task scheduler faster (post7: the same atlas byte for byte, the UV unwrap's xatlas part of
+        three props in 2.1 / 3.7 / 1.5 s instead of 2.9 / 6.5 / 3.2 s), Pixal3D's
         memory edits of remeshing.py - and `patch_cumesh_win.py check` (run by the build first; --no-check skips
         it) holds the fork's commit equal to upstream + cubvh + those hunks, file by file (README.md aside).
         --src: any clone of the fork that has the pinned commit (default: release\cache\wheels\src\cumesh,

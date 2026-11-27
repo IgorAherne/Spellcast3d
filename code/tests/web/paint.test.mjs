@@ -11,12 +11,12 @@
 //   node --test code/tests/web/paint.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { letGo, moveTo, press, pressAt, standInModel, standInViewer, strokeAt } from './standin_card.mjs';
+import { THREE, letGo, moveTo, press, pressAt, standInModel, standInViewer, strokeAt } from './standin_card.mjs';
 
 const STATIC = new URL('../../spellcast/static/js/', import.meta.url);
 const {
-  DEFAULT_SIZE, MAX_SIZE, MIN_SIZE, createPressureReader, createStroke, createUndo, dirtyTiles, dragSize, patchOf,
-  posToSize, sizeToPos, texelHex, tileRects,
+  DAB_REACH, DEFAULT_SIZE, MAX_SIZE, MIN_SIZE, createFootprint, createPressureReader, createStroke, createUndo, dabsBox,
+  dirtyTiles, dragSize, patchOf, posToSize, screenCorners, sizeToPos, texelHex, tileRects,
 } = await import(new URL('stages/paintstroke.js', STATIC));
 
 const pen = (pressure) => ({ pointerType: 'pen', pressure });
@@ -146,6 +146,81 @@ test('the undo tiles: what a stroke can reach, grown by the gutter, back faces o
   assert.equal(grown[2], 1, 'the margin reaches the next tile');
   const behind = { uv: quad.uv.slice(0, 6), screen: new Float32Array([0, 0, -1, 0, 0, -1, 0, 0, -1]) };
   assert.equal(dirtyTiles({ ...behind, box: { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 }, size: 64, tiles: 4 }).reduce((a, b) => a + b), 0);
+});
+
+test('a mesh\'s corners on the stroke\'s screen: as the camera\'s matrix puts them, y down, with their depth', () => {
+  const camera = new THREE.PerspectiveCamera(40, 2, 0.1, 100);
+  camera.position.set(0.3, 0.2, 3);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const position = new Float32Array([0, 0, 0, 0.5, -0.25, 0.1, -1, 1, -2, 0, 0, 10]);
+  const screen = screenCorners(position, matrix.elements, 200, 100);
+  for (let c = 0; c < 4; c++) {
+    const v = new THREE.Vector4(position[c * 3], position[c * 3 + 1], position[c * 3 + 2], 1).applyMatrix4(matrix);
+    const want = [(v.x / v.w * 0.5 + 0.5) * 200, (0.5 - v.y / v.w * 0.5) * 100, v.w].map(Math.fround);
+    assert.deepEqual([...screen.subarray(c * 3, c * 3 + 3)], want);
+  }
+  assert.ok(screen[11] < 0, 'the last corner is behind the camera');
+  const again = new Float32Array(12);
+  assert.equal(screenCorners(position, matrix.elements, 200, 100, again), again, 'into the array given');
+});
+
+test('a stroke\'s footprint tells the triangles under it from the rest, which no dab reaches', () => {
+  // On a 64 x 64 px screen: a triangle at the top left, one at the bottom right, one off the screen, and one with a
+  // corner behind the camera.
+  const screen = new Float32Array([
+    2, 2, 1, 10, 2, 1, 2, 10, 1,
+    50, 50, 1, 60, 50, 1, 50, 60, 1,
+    -40, -40, 1, -30, -40, 1, -40, -30, 1,
+    30, 30, 1, 31, 30, -1, 30, 31, 1,
+  ]);
+  const foot = createFootprint(64, 64);
+  const cells = foot.cells(screen);
+  const index = new Uint32Array(12);
+  const drawn = () => [...index.subarray(0, foot.under(cells, index))];
+  assert.deepEqual(drawn(), [], 'no dab yet: nothing to draw');
+  foot.add([{ x: 6, y: 6, r: 3 }]);
+  assert.deepEqual(drawn(), [0, 1, 2, 9, 10, 11], 'the one under the dab, and the one that may show anywhere');
+  foot.add([{ x: 500, y: 500, r: 5 }]);
+  assert.deepEqual(drawn(), [0, 1, 2, 9, 10, 11], 'a dab off the screen marks nothing');
+  foot.add([{ x: 47, y: 47, r: 1 }]);
+  assert.deepEqual(drawn(), [0, 1, 2, 3, 4, 5, 9, 10, 11],
+    'the stroke so far, in the triangles\' own order: a dab\'s reach is enough');
+  assert.deepEqual(dabsBox([{ x: 6, y: 6, r: 3 }, { x: 47, y: 47, r: 1 }]),
+    { x0: 3 - DAB_REACH, y0: 3 - DAB_REACH, x1: 48 + DAB_REACH, y1: 48 + DAB_REACH });
+});
+
+test('no triangle within a dab\'s reach is ever left out of a footprint', () => {
+  let seed = 7;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const [width, height] = [300, 180];
+  for (let round = 0; round < 20; round++) {
+    const triangles = 200;
+    const screen = new Float32Array(triangles * 9);
+    for (let i = 0; i < screen.length; i += 3) {
+      const first = i % 9 === 0;
+      screen[i] = first ? random() * (width + 80) - 40 : screen[i - (i % 9)] + random() * 30 - 15;
+      screen[i + 1] = first ? random() * (height + 80) - 40 : screen[i + 1 - (i % 9)] + random() * 30 - 15;
+      screen[i + 2] = 1;
+    }
+    const foot = createFootprint(width, height);
+    const cells = foot.cells(screen);
+    const dabs = Array.from({ length: 6 }, () => ({ x: random() * width, y: random() * height, r: 1 + random() * 12 }));
+    foot.add(dabs.slice(0, 3));
+    foot.add(dabs.slice(3));
+    const index = new Uint32Array(triangles * 3);
+    const drawn = new Set(index.subarray(0, foot.under(cells, index)).filter((corner) => corner % 3 === 0));
+    for (let t = 0; t < triangles; t++) {
+      const xs = [0, 3, 6].map((k) => screen[t * 9 + k]);
+      const ys = [1, 4, 7].map((k) => screen[t * 9 + k]);
+      const reached = dabs.some((d) => Math.max(...xs) >= d.x - d.r - DAB_REACH && Math.min(...xs) <= d.x + d.r + DAB_REACH
+        && Math.max(...ys) >= d.y - d.r - DAB_REACH && Math.min(...ys) <= d.y + d.r + DAB_REACH);
+      const onScreen = Math.max(...xs) >= 0 && Math.max(...ys) >= 0 && Math.min(...xs) < width && Math.min(...ys) < height;
+      if (reached && onScreen) assert.ok(drawn.has(t * 3), `round ${round}, triangle ${t}`);
+    }
+    assert.ok(drawn.size < triangles, 'and not simply all of them');
+  }
 });
 
 test('the tiles become few rectangles that cover them exactly', () => {

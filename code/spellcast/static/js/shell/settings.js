@@ -1,8 +1,8 @@
-// Settings: Advanced (Forge Neo's extra model folders, GPU sharing; GET/PATCH /api/settings - and the
-// animations and the tooltips, which this browser keeps) and Debugging (each tool's state with Start / Stop, its live
-// log, the video memory in use). The tools start and stop by themselves; Debugging is where to look
-// when something seems stuck. Last, folded away, the Omni-Texture test (omnilab.js): a 3D model from a file,
-// OmniTextured without Images and 3D first.
+// Settings: Advanced (Forge Neo's extra model folders, GPU sharing; GET/PATCH /api/settings - and the animations,
+// the tooltips and the 3D view's anti-aliasing, which this browser keeps) and Debugging (each tool's state with
+// Start / Stop, its live log, the video memory in use). The tools start and stop by themselves; Debugging is where
+// to look when something seems stuck. Last, folded away, the Omni-Texture test (omnilab.js): a 3D model from a
+// file, OmniTextured without Images and 3D first.
 
 import { api } from '../api.js';
 import { h } from '../dom.js';
@@ -14,6 +14,7 @@ import { attempt, confirmDialog, modal, toast, toastError } from '../ui.js';
 import { licenseChip } from '../licenses.js';
 import { logTail, openLogsFolder } from './logtail.js';
 import { motionPref, setMotionPref } from './anim.js';
+import { plainEdges, setPlainEdges } from './graphics.js';
 import { setTooltips, tooltipsOn } from './tooltips.js';
 import { omniTextureLab } from './omnilab.js';
 
@@ -40,6 +41,7 @@ export async function openSettings(section = 'advanced') {
   let gpuExclusive = s.gpu_exclusive !== false;
   let motion = motionPref();
   let tooltips = tooltipsOn();
+  let plain = plainEdges();
   const dirs = h('textarea', {
     class: 'input mono', rows: 3, spellcheck: 'false',
     placeholder: 'D:\\AI\\models\\Stable-diffusion',
@@ -68,7 +70,12 @@ export async function openSettings(section = 'advanced') {
           + 'plain: the stages cross-fade. Only this browser remembers the choice.'),
         toggle(tooltips, (v) => { tooltips = v; }, 'Show tooltips',
           'The explanations that appear when the pointer rests on a button or a picture, also why a button '
-          + 'cannot be pressed. Errors are still shown. Only this browser remembers the choice.'))),
+          + 'cannot be pressed. Errors are still shown. Only this browser remembers the choice.'),
+        toggle(plain, (v) => { plain = v; }, 'Faster 3D view: no anti-aliasing',
+          'The 3D model is drawn without smoothing its edges, so they look a little jagged: about a third less work '
+          + 'for the graphics chip that draws this page, and less of its memory. Worth it when the 3D view feels '
+          + 'slow - a high-resolution screen driven by the processor’s built-in graphics. The page loads again '
+          + 'when you save. Only this browser remembers the choice.'))),
     h('details', { class: 'fold settings-fold', open: section === 'diagnostics' },
       h('summary', null, 'Debugging'),
       diag.el),
@@ -88,9 +95,17 @@ export async function openSettings(section = 'advanced') {
         onclick: async (close) => {
           const ckpt = dirs.value.split(/\r?\n/).map((l) => l.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
           // What this browser keeps: applied at once, no restart.
-          const moved = motion !== motionPref() || tooltips !== tooltipsOn();
+          const moved = motion !== motionPref() || tooltips !== tooltipsOn() || plain !== plainEdges();
           if (motion !== motionPref()) setMotionPref(motion);
           if (tooltips !== tooltipsOn()) setTooltips(tooltips);
+          // But for the 3D view's anti-aliasing, which a view's canvas is made with: kept once everything else is
+          // saved, and the page then loads again.
+          const redrawn = () => {
+            if (plain === plainEdges()) return false;
+            setPlainEdges(plain);
+            location.reload();
+            return true;
+          };
           // Only what the artist changed is written, so settings.json keeps following the defaults otherwise.
           const patch = {};
           const restart = [];   // running tools that only see the change after a restart
@@ -101,7 +116,7 @@ export async function openSettings(section = 'advanced') {
           }
           if (!Object.keys(patch).length) {
             close(moved);
-            if (moved) toast('Settings saved.', 'success');
+            if (!redrawn() && moved) toast('Settings saved.', 'success');
             return;
           }
           try {
@@ -112,6 +127,7 @@ export async function openSettings(section = 'advanced') {
           }
           close(true);
           await offerRestart(restart);
+          redrawn();
         },
       },
     ],

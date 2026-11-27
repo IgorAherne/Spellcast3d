@@ -18,9 +18,11 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isTyping } from './dom.js';
 import { fullMotion } from './shell/anim.js';
+import { plainEdges } from './shell/graphics.js';
 import { store } from './store.js';
 
 const CACHE_SIZE = 2;   // high-poly GLBs are big; keep only the last two in memory
+const LAYERS_KEPT = 4;  // ... and of the pictures shown alone on a model (setLayer), the last few
 // A model is downloaded only once its prop has stayed on screen this long (ms): going through the props
 // with the arrow keys must not fetch and parse every model on the way.
 const LOAD_DELAY = 200;
@@ -187,11 +189,14 @@ class ModelViews {
 
   /**
    * The picture at `url`, laid out like the model's base colour map (one Omni-Texture view's share of it), as a
-   * texture on the same UVs; onReady(texture) once it can be drawn (at once when it was loaded before).
+   * texture on the same UVs; onReady(texture) once it can be drawn (at once when it was loaded before). The
+   * LAYERS_KEPT asked for last stay on the graphics card: a prop may have dozens, each as large as its texture.
    */
   layer(url, onReady) {
     let entry = this.layers.get(url);
-    if (!entry) {
+    if (entry) {
+      this.layers.delete(url);       // asked for last: the last to go
+    } else {
       const like = this.meshes.flatMap(({ own }) => [own].flat()).find((m) => m.map)?.map;
       entry = { ready: false, waiting: [] };
       entry.texture = new THREE.TextureLoader().load(url, () => {
@@ -209,7 +214,12 @@ class ModelViews {
         entry.texture.center.copy(like.center);
         entry.texture.rotation = like.rotation;
       }
-      this.layers.set(url, entry);
+    }
+    this.layers.set(url, entry);
+    for (const [old, { texture }] of this.layers) {
+      if (this.layers.size <= LAYERS_KEPT) break;
+      this.layers.delete(old);
+      texture.dispose();
     }
     if (entry.ready) onReady(entry.texture);
     else entry.waiting.push(onReady);
@@ -404,7 +414,7 @@ class Viewer {
     this.orbiting = false; // a model's "all" view is on screen: OrbitLights light it (orbitLight)
     this.holdLight = false;   // those lights hold still (a brush is up)
     this.place = null;     // where the model last on screen stood (show's keepView)
-    this.frameAt = 0;      // when the animation loop drew its last frame (ms)
+    this.lightsAt = 0;     // when the lights of "all" last moved on (ms)
     this.layerUrl = null;  // the layer shown over the view (setLayer)
   }
 
@@ -415,7 +425,7 @@ class Viewer {
 
   init() {
     if (this.renderer) return;
-    const r = makeRenderer();
+    const r = makeRenderer({ antialias: !plainEdges() });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     r.domElement.className = 'viewer-canvas';
     this.renderer = r;
@@ -491,13 +501,14 @@ class Viewer {
     document.addEventListener('keydown', this.onKeyDown);
     this.renderer.setAnimationLoop((now) => {
       this.controls.update();
-      const step = Math.min(now - this.frameAt, ORBIT_STEP_MS);
-      this.frameAt = now;
       // The lights of "all" hold still where they are while a job works (3D, retopo...: nothing is drawn but what
       // the artist moves), while a brush is up and with "Reduced" animations, and go on from there. A hidden tab
-      // draws no frames at all.
-      if (this.orbiting && !jobWorks() && !this.holdLight && fullMotion()) {
-        this.orbit.turn((step / ORBIT_MS) * Math.PI * 2);
+      // draws no frames at all. Their turning alone asks for ORBIT_FPS frames a second, not for every frame the
+      // screen can show: a lit frame of a large model is most of what a small graphics chip can do in that time.
+      const since = now - this.lightsAt;
+      if (this.orbiting && !jobWorks() && !this.holdLight && fullMotion() && since >= 1000 / ORBIT_FPS - 1) {
+        this.orbit.turn((Math.min(since, ORBIT_STEP_MS) / ORBIT_MS) * Math.PI * 2);
+        this.lightsAt = now;
         this.dirty = true;
       }
       if (this.dirty) {
@@ -841,6 +852,7 @@ const jobWorks = () => (store.jobs || []).some((j) => j.status === 'running' || 
 const ORBIT_FRAME = [[1, 0, 0], [0, Math.SQRT1_2, Math.SQRT1_2], [0, -Math.SQRT1_2, Math.SQRT1_2]];
 const ORBIT_SEED = 1;
 const ORBIT_MS = 10000;      // one turn of a light round the model
+const ORBIT_FPS = 30;        // the frames a second their turning asks for (the artist's own moves get every frame)
 const ORBIT_STEP_MS = 100;   // the most one frame moves them: after a hidden tab they go on from where they were
 const ORBIT_RADIUS = 1.25;   // their distance from the model's centre, in model radii (half its box's diagonal)
 // Six lights of one strength that do not fade light a model from every side alike: its shading hardly changes as

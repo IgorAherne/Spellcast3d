@@ -173,6 +173,15 @@ const prop = (glb = REPAINT, steps = [RESULT, REPAINT]) => ({
   },
   retopo: { obj: null, settings: {} },
 });
+/** The prop with a second, newer repaint on its model (older: the first one hidden or not). */
+const NEWER = 'omnitexture/ot_001/retouch_002/omnitexture.glb';
+const twice = (olderHidden = false) => {
+  const p = prop(NEWER, [RESULT, REPAINT, NEWER]);
+  p.omnitexture.repaints = [
+    { glb: REPAINT, picture: 'omnitexture/ot_001/retouch_001/picture.png', under: RESULT, fade: 1, hidden: olderHidden },
+    { glb: NEWER, picture: 'omnitexture/ot_001/retouch_002/picture.png', under: REPAINT, fade: 1 }];
+  return p;
+};
 /** A second prop, chosen and waiting for its Omni-Texture: "Omni-Texture the chosen" has it to paint. */
 const waiting = () => ({
   id: 'p_2', name: 'Crate', images: { chosen: 'images/0001.png', candidates: ['images/0001.png'], views: [] },
@@ -207,7 +216,7 @@ globalThis.fetch = async (path, init = {}) => {
     return answer(null);
   }
   if (path.includes('/omnitexture/mask')) return answer({ mask: 'omnitexture/masks/0001.png' });
-  if (path.includes('/omnitexture/')) return answer(hub.answer ? hub.answer(path, body) : { prop: store.project.props[0], renamed: {} });
+  if (path.includes('/omnitexture/')) return answer(await (hub.answer ? hub.answer(path, body) : { prop: store.project.props[0], renamed: {} }));
   return answer({});
 };
 
@@ -247,6 +256,8 @@ async function mount(props = [prop()]) {
     .filter((b) => b.tagName !== 'SPAN');
   const tool = (name) => buttons().find((b) => label(b) === name);
   tool('Orbit').click();               // (the brush is the page's: a tool may still be up from the view before)
+  // (... and the view is the stage's: it keeps the one the artist, or a tool of theirs, picked last)
+  host.all((e) => e.tagName === 'BUTTON' && e.textContent === 'All')[0]?.click();
   return { host, ctx, release, tools, buttons, tool, label, update: () => OMNI.update(ctx) };
 }
 
@@ -425,6 +436,26 @@ test('a prop that was never OmniTextured has the tools on its 3D model: the firs
   OMNI.unmount();
 });
 
+test('a tool taken up in "All" moves the view to Base colour, and the repaint\'s model comes up there too - not in "All" again', async () => {
+  const stage = await mount();
+  stage.release();
+  assert.equal(viewer.view, 'all');
+  stage.tool('Mask marker').click();
+  assert.equal(viewer.view, 'basecolor', 'what the brushes paint, flat');
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  stage.host.byClass('mk-render')[0].click();        // "Render Masked": the marker goes down, the job paints ...
+  await settle();
+  const NEXT = 'omnitexture/ot_001/retouch_002/omnitexture.glb';
+  store.jobs = [];                                    // ... and ends with the prop on its next step
+  store.project.props[0] = prop(NEXT, [RESULT, REPAINT, NEXT]);
+  stage.update();
+  await settle();
+  assert.ok(viewer.shown.at(-1).includes(NEXT), 'the repaint\'s model is on screen');
+  assert.equal(viewer.view, 'basecolor', 'in the view the artist was working in');
+  OMNI.unmount();
+});
+
 test('a result of the prop\'s own texture on a 3D model made again since shows nowhere: not in the viewport, not among the painted views', async () => {
   const stale = () => ({ ...begun(), omnitexture: {
     ...begun().omnitexture, stale: true, steps: [RESULT, REPAINT],  glb: REPAINT,
@@ -502,19 +533,84 @@ test('a tile\'s box chooses the prop for Omni-Texture; a click on the tile no lo
   OMNI.unmount();
 });
 
-test('Alt + click on a painted view or on a repaint shows what Qwen-Image was given; a plain click on a repaint picks it for the fade, on a view does nothing', async () => {
+test('a result with repaints on screen has the hub ready its worker at once, and the newest repaint is the edge fade\'s until another is clicked', async () => {
+  const stage = await mount();
+  const readied = () => hub.calls.filter((c) => c.startsWith('POST'));
+  assert.deepEqual(readied(), [`POST ${API}/omnitexture/fade (prepare)`]);
+  assert.deepEqual(hub.asked, { prepare: true }, 'the model is shown: no repaint named');
+  const [repaint] = stage.host.byClass('ot-repaint');
+  assert.equal(repaint.classList.contains('picked'), true);
+  assert.equal(stage.host.byClass('ot-fade-range')[0].disabled, false, 'the slider is its');
+  // The pointer at the pictures: ready for a click on any of them - asked once, whichever picture it then points
+  // at - and at the slider, for that repaint's other fades.
+  stage.host.byClass('ot-views')[0].fire('pointerenter');
+  stage.host.byClass('ot-tile')[2].fire('pointerenter');
+  await settle();
+  assert.deepEqual([readied().length, hub.asked], [2, { all: true, prepare: true }]);
+  stage.host.byClass('ot-fade')[0].fire('pointerenter');
+  await settle();
+  assert.deepEqual([readied().length, hub.asked], [3, { glb: REPAINT, prepare: true }]);
+  assert.deepEqual(changes(), [], 'nothing changed by any of it');
+  OMNI.unmount();
+  // None clicked and the newest hidden: the slider is for the newest that shows.
+  const two = twice();
+  two.omnitexture.repaints[1].hidden = true;
+  const older = await mount([two]);
+  assert.deepEqual(older.host.byClass('ot-repaint').map((node) => node.classList.contains('picked')), [true, false]);
+  assert.equal(older.host.byClass('ot-fade-range')[0].disabled, false);
+  OMNI.unmount();
+  // A prop's 3D model alone has no repaints to ready.
+  await mount([plain()]);
+  assert.deepEqual(hub.calls.filter((c) => c.startsWith('POST')), []);
+  OMNI.unmount();
+});
+
+test('the edge fade follows the repaint clicked last: hidden by that click it has nothing to fade, shown again it is that one\'s', async () => {
+  const stage = await mount([twice()]);
+  const ringed = () => stage.host.byClass('ot-repaint').map((node) => node.classList.contains('picked'));
+  const slider = () => stage.host.byClass('ot-fade-range')[0];
+  const clickOlder = async (hiddenAfter) => {
+    hub.answer = () => ({ prop: (store.project.props[0] = twice(hiddenAfter)), renamed: {} });
+    stage.host.byClass('ot-tile')[2].fire('click', { altKey: false });
+    await settle();
+    stage.update();
+    await settle();
+  };
+  assert.deepEqual(ringed(), [false, true], 'none clicked: the newest');
+  await clickOlder(true);
+  assert.deepEqual([ringed(), slider().disabled], [[false, false], true], 'the one clicked is hidden: nothing to fade');
+  await clickOlder(false);
+  assert.deepEqual([ringed(), slider().disabled], [[true, false], false], 'shown again: the slider is its');
+  OMNI.unmount();
+});
+
+test('a click on a picture does nothing while another change of the pictures is under way: no change, and the edge fade stays the clicked one\'s', async () => {
+  const stage = await mount([twice()]);
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  hub.answer = () => held.then(() => ({ prop: (store.project.props[0] = twice(true)), renamed: {} }));
+  const tiles = stage.host.byClass('ot-tile');
+  tiles[2].fire('click', { altKey: false });       // the older repaint: hidden, once the hub answers
+  await settle();
+  tiles[0].fire('click', { altKey: false });       // meanwhile: the painted views' eye, and the newer repaint
+  tiles[3].fire('click', { altKey: false });
+  await settle();
+  assert.deepEqual(changes(), [`POST ${API}/omnitexture/hide`], 'the one change asked, no other beside it');
+  release();
+  await settle();
+  stage.update();
+  await settle();
+  assert.equal(stage.host.byClass('ot-fade-range')[0].disabled, true, 'still the older one\'s, which is hidden now');
+  OMNI.unmount();
+});
+
+test('Alt + click on a painted view or on a repaint shows what Qwen-Image was given, and hides nothing', async () => {
   const stage = await mount();
   const asked = () => hub.calls.filter((c) => c.includes('request.json'));
-  const windows = () => document.body.all((e) => e.classList.contains('ot-inputs')).length;
   const [view] = stage.host.byClass('ot-view');
   const [repaint] = stage.host.byClass('ot-repaint');
+  const [viewTile, , repaintTile] = stage.host.byClass('ot-tile');
   assert.ok(view.title.endsWith('Alt + click: what Qwen-Image was given for it.') && repaint.title.endsWith('Alt + click: what Qwen-Image was given for it.'));
-  view.fire('click', { altKey: false });
-  await settle();
-  assert.deepEqual([asked(), windows()], [[], 0], 'a plain click on a view opens nothing');
-  repaint.fire('click', { altKey: false });
-  await settle();
-  assert.deepEqual([asked(), repaint.classList.contains('picked')], [[], true], 'a plain click on a repaint picks it for the edge fade');
   const real = globalThis.fetch;
   const record = { prompt: 'restore the image', pictures: ['picture 1: 1-viewport.png', 'picture 2: 2-depth.png', 'picture 3: 3-example.png'],
     seed: 7, steps: 8, strength: 0.9, model: 'turbo',
@@ -524,10 +620,10 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
     return String(path).includes('request.json') ? { ok: true, status: 200, json: async () => record } : { ok: true, status: 200 };
   };
   try {
-    repaint.fire('click', { altKey: true });
+    repaintTile.fire('click', { altKey: true });
     await settle();
     assert.deepEqual(asked(), ['GET /files/Props/props/p_1/omnitexture/ot_001/retouch_001/request.json'], 'the repaint\'s own folder');
-    assert.equal(repaint.classList.contains('picked'), true, 'the Alt + click did not unpick it');
+    assert.deepEqual(changes(), [], 'nothing hidden');
     const [shown] = document.body.all((e) => e.classList.contains('ot-inputs'));
     const said = shown.all((e) => e.tagName === 'FIGCAPTION').map((e) => e.textContent);
     assert.deepEqual(said, [
@@ -536,7 +632,7 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
       'Picture 3, the example: the prop’s own picture of its front',
       'Qwen-Image’s painting', 'Its lighting taken off', 'What went onto the model']);
     assert.ok(shown.all((e) => e.classList.contains('hint')).some((e) => e.textContent.includes('the second picture')), 'it says a picture was made again');
-    view.fire('click', { altKey: true });
+    viewTile.fire('click', { altKey: true });
     await settle();
     assert.equal(asked().length, 2, 'a painted view\'s record too');
     // Masked from behind the side its picture shows: the picture went mirrored, and the caption says so. Older
@@ -546,7 +642,7 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
       [{ example_view: 'front left' }, 'the model from the front left, the nearest camera around it'],
       [{}, 'the model without the mask']]) {
       record.retouch = { ...retouch, tries: [] };
-      repaint.fire('click', { altKey: true });
+      repaintTile.fire('click', { altKey: true });
       await settle();
       const older = document.body.all((e) => e.classList.contains('ot-inputs')).at(-1);
       assert.ok(older.all((e) => e.tagName === 'FIGCAPTION').some((e) => e.textContent === `Picture 3, the example: ${said}`), said);
@@ -554,7 +650,7 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
     // A repaint of today is drawn anew where the view is masked and held to the view elsewhere (its record's
     // "redrawn"): picture 1 is worded so, and what was drawn anew is shown after the pictures it saw.
     record.redrawn = 'redrawn.png';
-    repaint.fire('click', { altKey: true });
+    repaintTile.fire('click', { altKey: true });
     await settle();
     const held = document.body.all((e) => e.classList.contains('ot-inputs')).at(-1)
       .all((e) => e.tagName === 'FIGCAPTION').map((e) => e.textContent);
@@ -566,7 +662,7 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
     Object.assign(record, { pictures: ['picture 1: 1-render.png', 'picture 2: prop: mesh/views/0_front.png'],
       shown: 'depth', example: 'front', start_image: '1-render.png', painted_where: '2-mask.png' });
     const captions = async () => {
-      view.fire('click', { altKey: true });
+      viewTile.fire('click', { altKey: true });
       await settle();
       return document.body.all((e) => e.classList.contains('ot-inputs')).at(-1)
         .all((e) => e.tagName === 'FIGCAPTION').map((e) => e.textContent);
@@ -587,7 +683,7 @@ test('Alt + click on a painted view or on a repaint shows what Qwen-Image was gi
   OMNI.unmount();
 });
 
-test('the eye in a picture\'s middle hides it on the model and shows it again: a repaint alone, the painted views all together; Alt + click there is the picture\'s own', async () => {
+test('a click anywhere on a picture hides it on the model and shows it again, the eye in its middle says which: a repaint alone, the painted views all together; Alt + click there is the picture\'s own', async () => {
   const stage = await mount();
   stage.release();
   const eyes = () => stage.host.byClass('ot-eye');
@@ -599,9 +695,10 @@ test('the eye in a picture\'s middle hides it on the model and shows it again: a
   assert.ok(eyes().slice(0, 2).every((eye) => stage.label(eye).startsWith('Hide the painted views - all of them')));
   assert.equal(stage.label(eyes()[2]), 'Hide this repaint: the model shows what is under it');
 
-  // The repaint's eye: it alone is asked hidden; its tile stays, dim under the crossed eye, and is no longer picked.
+  // A click on the repaint's picture, wherever: it alone is asked hidden; its tile stays, dim under the crossed
+  // eye, and the edge fade has nothing to fade.
   hub.answer = () => shown({ glb: MADE_AGAIN, steps: [RESULT, MADE_AGAIN], repaints: [repaint(true)] });
-  eyes()[2].fire('click', { altKey: false });
+  stage.host.byClass('ot-tile')[2].fire('click', { altKey: false });
   await settle();
   assert.deepEqual([changes(), hub.asked], [[`POST ${API}/omnitexture/hide`], { glb: REPAINT, repaint: REPAINT, hidden: true }]);
   stage.update();
@@ -609,11 +706,11 @@ test('the eye in a picture\'s middle hides it on the model and shows it again: a
   assert.deepEqual(off(), [false, false, true]);
   assert.equal(stage.label(eyes()[2]), 'Show this repaint on the model again');
   const [picture] = stage.host.byClass('ot-repaint');
-  picture.fire('click', { altKey: false });
   assert.equal(picture.classList.contains('picked'), false, 'no edge to fade while it is hidden');
+  assert.equal(stage.host.byClass('ot-fade-range')[0].disabled, true);
   assert.ok(picture.title.includes('hidden: it is not on the model'));
   hub.answer = () => shown({ glb: MADE_AGAIN, steps: [RESULT, MADE_AGAIN], repaints: [repaint(false)] });
-  eyes()[2].fire('click', { altKey: false });
+  eyes()[2].fire('click', { altKey: false });        // (the eye itself is as good a place to click)
   await settle();
   assert.deepEqual(hub.asked, { glb: MADE_AGAIN, repaint: MADE_AGAIN, hidden: false }, 'shown again');
 
@@ -673,8 +770,7 @@ test('a picture\'s share shows on the model while the pointer is anywhere on its
 test('a fade waits until the hand paint is in the files', async () => {
   const stage = await mount();
   paintBase(stage);
-  stage.host.byClass('ot-repaint')[0].click();      // the repaint picked for the slider
-  const range = stage.host.byClass('ot-fade-range')[0];
+  const range = stage.host.byClass('ot-fade-range')[0];      // (the newest repaint's)
   range.value = 2;
   range.fire('change');
   await waitsForThePaint(stage, [`POST ${API}/omnitexture/fade`]);

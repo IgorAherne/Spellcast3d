@@ -54,7 +54,8 @@ EIGEN_URL, EIGEN_PIN = patch.PINS["eigen"]
 # bit for bit; post3: the ray-stab's inside test with an any-hit traversal, the same verdicts bit for bit; post4: the
 # same edits on upstream's main of 2026-03 - its CUDA stream handling for Blackwell, the M=0 guard, its Windows build,
 # cubvh's namespace - built from the user's fork; post5: cuBVH's tree built on several threads, the same tree byte
-# for byte; post6: the ray-stab's inside test for any subset of a call's points, the same verdicts bit for bit)
+# for byte; post6: the ray-stab's inside test for any subset of a call's points, the same verdicts bit for bit;
+# post7: xatlas's chart growing and task scheduler faster, the same atlas byte for byte)
 # and the local label of the torch build: pip installs a wheel over
 # an installed one only when its version is greater, and Pixal3D's install.py installs the wheels of its whl folder
 # on every run. It lives in the fork's pyproject.toml (hunk local-version).
@@ -118,6 +119,9 @@ def vcvars_env(vcvars: Path) -> dict[str, str]:
             env[k] = v
     if "VCToolsVersion" not in env:
         sys.exit(f"vcvars64 did not set up MSVC: {vcvars}")
+    # cmd's `set` spells it as the parent process does (Path from PowerShell, PATH from Git Bash)
+    for key in [k for k in env if k.upper() == "PATH" and k != "PATH"]:
+        env["PATH"] = env.pop(key)
     return env
 
 
@@ -319,7 +323,8 @@ def main() -> int:
                    "verdicts bit for bit); cuBVH's tree built on several threads (the same tree byte for byte); the "
                    "ray-stab's inside test for any subset of a call's points (raystab_inside: each point's rays "
                    "seeded from its index in the full query, the same verdicts bit for bit) and an any-hit ray_hits "
-                   "query (equal to ray_trace's hit >= 0); Pixal3D's memory edits of remeshing.py (chunked BVH "
+                   "query (equal to ray_trace's hit >= 0); xatlas's chart growing and task scheduler faster (the "
+                   "same atlas byte for byte); Pixal3D's memory edits of remeshing.py (chunked BVH "
                    "queries and frees, value-neutral). Upstream's own Windows build (setup.py since f149d59) as it is",
             "hunks": [{"id": h["id"], "file": h["file"], "commit": h["commit"]} for h in patch.HUNKS],
             "structure": patch.STRUCTURE,

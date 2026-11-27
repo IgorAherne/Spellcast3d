@@ -7,8 +7,11 @@
 // the 3D model (the switch at its top right); on the right, the pictures that went onto the model: with the pointer
 // over one the model shows that view's share alone, drawn as the view chosen under the viewport draws the model
 // (viewer3d.js setLayer); Alt + click on one shows what Qwen-Image was given for it and what it answered (showInputs);
-// its × takes it off the model again (takeOff: Ctrl+Z brings it back), and the eye in its middle hides it there or
-// shows it again (setHidden: the painted views all together, a repaint alone). Retopo reads the 3D model's shape
+// its × takes it off the model again (takeOff: Ctrl+Z brings it back), and a click anywhere on it hides it there or
+// shows it again - the eye in its middle says which (setHidden: the painted views all together, a repaint alone).
+// The hub is asked to ready its worker for that click as a result with repaints comes on screen, and for a click
+// on any of them as the pointer comes to the pictures (readyWorker), so that the first click is as quick as the
+// next - where the hub sees fit: not beside a job. Retopo reads the 3D model's shape
 // either way; Projection bakes the result's colours, as shown, while it is used (rules.omnitextureUsed).
 // The artist may paint with the marker and the clone stamp of the viewport's bottom-right corner (saved into the step
 // shown as hand paint), and mask what came out wrong with the mask marker and have it painted again as seen from
@@ -45,7 +48,7 @@ const INTRO = 'Tick the box beside each prop on the left that needs Omni-Texture
   + 'also paint on it, or mask a part and have only that painted again, without choosing it.';
 const TICK = 'Tick the box beside its tile on the left to choose it for Omni-Texture.';
 const WHOLE = 'Take the whole Omni-Texture off this model';
-// The eye in the middle of a picture of the list, by what a click on it does.
+// The eye in the middle of a picture of the list, by what a click on the picture does.
 const VIEWS_EYE = {
   hide: 'Hide the painted views - all of them, they go together: the model shows its own texture in their place',
   show: 'Show the painted views on the model again',
@@ -423,6 +426,7 @@ function buildProp(prop) {
         framed = true;
         if (shown === key) onScreen = t.step ? { step: t.step } : { model: t.model };
         syncMask(cur());
+        readyWorker(false);
       });
   }
 
@@ -459,18 +463,20 @@ function buildProp(prop) {
     mask.bind({
       viewer, project: projectId(), propId: id, glb: step || model, step: off ? TAKEN_OFF : null,
       steps: step || off ? p.omnitexture.steps || [] : [],
-      select: (mode) => pane.maps.select(mode), begin: step ? null : begin,
+      select: (mode) => pane.maps.select(mode, true), begin: step ? null : begin,
     });
   }
 
   // ---- right: the prop, its result's numbers and the pictures painted -------------------------------------------
   const heading = boxHeading();
   const stats = h('div');
-  const pictures = h('div', { class: 'ot-views' });
-  // The repaints of what the artist masked stand among the views; the one clicked owns the slider under them
-  // (stages/fadeslider.js), and the prop then shows the model made again.
+  const pictures = h('div', { class: 'ot-views', onpointerenter: () => readyWorker(true) });
+  // The repaints of what the artist masked stand among the views; the one clicked last - until one is clicked, the
+  // newest that shows - owns the slider under them while it shows (stages/fadeslider.js), and the prop then shows
+  // the model made again.
   let repaints = [];        // those the model shown holds (renderResult)
-  let picked = -1;          // the one clicked
+  let picked = -1;          // the one clicked last (none: the newest that shows)
+  const pickedRepaint = () => repaints[picked] ?? repaints.findLast((r) => !r.hidden) ?? null;
   const fade = createFadeSlider(id, {
     before: () => mask.settle(),
     faded: (project, done) => {
@@ -483,8 +489,9 @@ function buildProp(prop) {
   // model without it is the prop's next step, so Ctrl+Z (stages/maskbar.js) shows the picture again. The × beside
   // the heading takes the whole Omni-Texture off the same way: the step after it is none of its models
   // (rules.js TAKEN_OFF), and the prop shows its 3D model.
-  // The eye in a picture's middle hides it on the model, or shows it again (POST .../omnitexture/hide, the worker
-  // alone too): the picture stays in the list, dim. As a fade, that is no step of its own - the eye takes it back.
+  // A click on a picture hides it on the model, or shows it again (POST .../omnitexture/hide, the worker alone
+  // too): the picture stays in the list, dim under a crossed eye. As a fade, that is no step of its own - the next
+  // click takes it back.
   const whole = h('button', {
     type: 'button', class: 'ot-x', hidden: true, title: `${WHOLE} (Ctrl+Z brings it back)`, 'aria-label': WHOLE,
     onclick: () => takeOff({ whole: true }, pictures),
@@ -495,13 +502,21 @@ function buildProp(prop) {
   const waits = () => omniTakeOff(cur(), { job: jobFor('omnitexture', id), changing: changing || fade.fading() })
     .waits;
   function syncFade() {
-    fade.show(repaints[picked] || null,
-      { any: repaints.length > 0, locked: !!jobFor('omnitexture', id) || !!changing });
-    pictures.querySelectorAll('.ot-repaint').forEach((node, i) => node.classList.toggle('picked', i === picked));
+    const made = pickedRepaint();
+    const fades = made && !made.hidden ? made : null;        // (a hidden one has no edge to fade)
+    fade.show(fades, { any: repaints.length > 0, locked: !!jobFor('omnitexture', id) || !!changing });
+    pictures.querySelectorAll('.ot-repaint').forEach((node, i) => node.classList.toggle('picked', repaints[i] === fades));
     for (const kind of ['.ot-x', '.ot-eye']) {
       for (const button of pictures.querySelectorAll(kind)) button.disabled = waits();
     }
     whole.disabled = waits();
+  }
+  /**
+   * The hub's worker is asked to be ready for a click on a picture of the result on screen: on the newest repaint
+   * when the result comes on screen, on `every` one when the pointer comes to them.
+   */
+  function readyWorker(every) {
+    if (onScreen?.step && repaints.length && !waits()) fade.ready(every);
   }
   /**
    * A change of the pictures on the model shown, asked of the hub (POST .../omnitexture/<verb> with `body`) while
@@ -512,7 +527,6 @@ function buildProp(prop) {
     const project = projectId();
     changing = tiles;
     for (const waiting of tiles) waiting.classList.add('changing');
-    picked = -1;
     syncFade();
     try {
       await mask.settle();
@@ -528,37 +542,50 @@ function buildProp(prop) {
       syncFade();
     }
   }
-  const takeOff = (what, tile) => change('remove', what, [tile], (project) => {
-    if (what.whole) tookOff(project, id);
-  });
+  const takeOff = (what, tile) => {
+    picked = -1;            // (the repaints' places change)
+    return change('remove', what, [tile], (project) => {
+      if (what.whole) tookOff(project, id);
+    });
+  };
   /** what: {repaint: the model it made} or {views: true} - the painted views go together, all of them. */
   const setHidden = (what, hidden, tiles) => change('hide', { ...what, hidden }, tiles,
     (project, done) => renameModels(project, id, done.renamed));
   /**
-   * A picture of the list in its tile. While the pointer is on it the model shows its `layer` alone (`enter`: what
-   * else happens then). eye: {hidden: it is hidden now, words, toggle(tile)} - the eye in its middle, which hides
-   * it or shows it again; Alt + click there is the picture's own (`inputs`). take: {what: as the hub names it,
-   * words} - the × in its corner, which takes it off the model.
+   * A picture of the list in its tile. While the pointer is on it the model shows its `layer` alone. A click
+   * anywhere on it hides it or shows it again - eye: {hidden: it is hidden now, words,
+   * toggle(tile)}, drawn as the eye in its middle (none: the click does nothing) -, after `pick` (what else a
+   * click means); Alt + click shows what Qwen-Image was given (`inputs`). take: {what: as the hub names it, words} -
+   * the × in its corner, which takes it off the model.
    */
-  function tile(picture, { layer, enter, inputs, eye, take }) {
+  function tile(picture, { layer, inputs, eye, take, pick }) {
+    const clicked = (e) => {
+      e.stopPropagation();
+      if (e.altKey) {
+        inputs();
+      } else if (eye && !waits()) {
+        pick?.();
+        eye.toggle(box);
+      }
+    };
     const box = h('div', {
       class: `ot-tile${eye?.hidden ? ' off' : ''}`,
-      onpointerenter: () => {
-        showLayer(layer);
-        enter?.();
-      },
+      onpointerenter: () => showLayer(layer),
       onpointerleave: () => showLayer(null),
+      onclick: clicked,
     }, picture);
     if (eye) {
       box.append(h('button', {
-        type: 'button', class: 'ot-eye', title: eye.words, 'aria-label': eye.words,
-        onclick: (e) => (e.altKey ? inputs() : eye.toggle(box)),
+        type: 'button', class: 'ot-eye', title: eye.words, 'aria-label': eye.words, onclick: clicked,
       }, icon(eye.hidden ? 'eyeoff' : 'eye')));
     }
     if (take) {
       box.append(h('button', {
         type: 'button', class: 'ot-x', title: `${take.words} (Ctrl+Z brings it back)`, 'aria-label': take.words,
-        onclick: () => takeOff(take.what, box),
+        onclick: (e) => {
+          e.stopPropagation();
+          takeOff(take.what, box);
+        },
       }, icon('x')));
     }
     return box;
@@ -617,10 +644,11 @@ function buildProp(prop) {
     const st = block.glb ? block.stats || {} : {};
     const file = (rel) => (rel ? boxFile(p, rel, 'omnitexture') : null);
     const views = omniViews(block).map((v) => ({ ...v, picture: file(v.picture), layer: file(v.layer) }));
+    const count = repaints.length;
     repaints = omniRepaints(block).map((r) => ({
       ...r, folder: r.picture.slice(0, r.picture.lastIndexOf('/')), picture: file(r.picture), layer: file(r.layer),
     }));
-    if (picked >= repaints.length) picked = -1;
+    if (repaints.length !== count) picked = -1;       // (another repaint, or one fewer: none is clicked)
     const notes = [st.warning, ...(Array.isArray(st.warnings) ? st.warnings : [])];
     const drawn = new Set(views.map((v) => v.sheet || v.folder)).size;      // the pictures Qwen-Image painted
     stats.replaceChildren(statsBlock([
@@ -650,24 +678,21 @@ function buildProp(prop) {
       },
       take: offered.views && { what: { view: v.folder }, words: 'Take this view off the model' },
     }));
-    const repaintTiles = repaints.map((r, i) => {
-      const inputs = () => showInputs(cur(), { folder: r.folder, repaint: i + 1 });
-      return tile(repaintThumb(r, i, repaints, inputs), {
-        layer: r.layer,
-        enter: () => fade.ready(r),
-        inputs,
-        eye: r.fadable && {
-          hidden: r.hidden, words: r.hidden ? REPAINT_EYE.show : REPAINT_EYE.hide,
-          toggle: (box) => setHidden({ repaint: r.glb }, !r.hidden, [box]),
-        },
-        take: offered.repaints && { what: { repaint: r.glb }, words: 'Take this repaint off the model' },
-      });
-    });
+    const repaintTiles = repaints.map((r, i) => tile(repaintThumb(r, i, repaints), {
+      layer: r.layer,
+      inputs: () => showInputs(cur(), { folder: r.folder, repaint: i + 1 }),
+      eye: r.fadable && {
+        hidden: r.hidden, words: r.hidden ? REPAINT_EYE.show : REPAINT_EYE.hide,
+        toggle: (box) => setHidden({ repaint: r.glb }, !r.hidden, [box]),
+      },
+      pick: () => { picked = i; },
+      take: offered.repaints && { what: { repaint: r.glb }, words: 'Take this repaint off the model' },
+    }));
     pictures.replaceChildren(...viewTiles, ...repaintTiles);
     syncFade();
   }
 
-  /** A painted view's picture: pointed at, the model shows the view alone; Alt + click, what Qwen-Image was given. */
+  /** A painted view's picture (its tile takes the clicks): pointed at, the model shows the view alone. */
   const viewThumb = (v, i, views, hidden) => h('img', {
     class: `ot-view${v.layer ? ' has-layer' : ''}`, src: v.picture, alt: `The ${v.side} view`,
     title: `The ${v.side} view (${i + 1} of ${views.length}), ${hidden
@@ -676,30 +701,19 @@ function buildProp(prop) {
       v.layer ? ` While the pointer is here, the model shows ${hidden ? 'what this view painted' : 'this view alone'}.` : ''
     } ${INPUTS_KEY}`,
     loading: 'lazy', draggable: 'false',
-    onclick: (e) => { if (e.altKey) showInputs(cur(), v); },
   });
 
   /**
-   * A repaint's picture: pointed at, the model shows where it went on; clicked, it is picked for the edge fade
-   * (not while it is hidden: there is no edge to see).
+   * A repaint's picture (its tile takes the clicks): pointed at, the model shows where it went on. The one clicked
+   * last is the edge fade's while it shows.
    */
-  const repaintThumb = (made, i, all, inputs) => h('img', {
+  const repaintThumb = (made, i, all) => h('img', {
     class: `ot-view ot-repaint${made.layer ? ' has-layer' : ''}`, src: made.picture, alt: `Repaint ${i + 1}`,
     title: `Repaint ${i + 1} of ${all.length}: what you masked and had painted again, as your view saw it${
-      made.hidden ? ' - hidden: it is not on the model.' : '.'}${
+      made.hidden ? ' - hidden: it is not on the model. Click: show it again.' : '. Click: hide it, to compare.'}${
       made.layer ? ` While the pointer is here, the model shows where it ${made.hidden ? 'lies' : 'went on'}.` : ''
-    }${made.hidden ? '' : ' Click: pick it for the edge fade below.'} ${INPUTS_KEY}`,
+    } ${INPUTS_KEY}`,
     loading: 'lazy', draggable: 'false',
-    onclick: (e) => {
-      if (e.altKey) {
-        inputs();
-        return;
-      }
-      if (made.hidden) return;
-      picked = picked === i ? -1 : i;
-      syncFade();
-      if (picked === i) fade.ready(made);
-    },
   });
 
   function sync(p) {

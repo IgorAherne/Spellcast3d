@@ -10,9 +10,10 @@ there is nothing beyond to fade into, so the repaint itself thins out towards th
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from dataclasses import astuple, dataclass
+from dataclasses import astuple, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ FADE_STEP = 0.5
 FADE_STEPS = tuple(1.0 + FADE_STEP * n for n in range(round((MAX_FADE - 1.0) / FADE_STEP) + 1))
 FADE_MARGIN = 4.0            # reaches around the repainted texels within which the blend is worked out
 KEPT_SPARE = 2               # repaints "fades" keeps beyond those asked: one taken off comes back at once (Ctrl+Z)
+WARMERS = 4                  # threads that work repaints out before they are laid (each: a look, a picture, a blend)
 FULL_SHARE = 90              # the percentile of the mask's blurred share that a fade raises to the whole picture
 NOTHING_MASKED = "Nothing is masked on the model. Paint over what should be made again first."
 MODEL_OUT_OF_SIGHT = "The model is not in sight. Turn the view to what you masked, then render again."
@@ -79,24 +81,53 @@ def _made_from(asked: dict[str, Any], lens: PageLens) -> tuple:
     return (type(lens), *(float(value) for part in astuple(lens) for value in np.ravel(part)), *files)
 
 
+@dataclass
+class Kept:
+    """What "fades" keeps of one repaint from call to call: where its look and its picture come from, the fade it
+    lies with, and per fade its texels, colours and weights (Repaints._onto's) - each a Future, worked out by
+    whoever claims it first. The look and the picture themselves, tens of megabytes, and what it lays at other
+    fades than its own stay only while the page's slider is on this repaint (`held`: those fades are worked out
+    ahead, all from the one look)."""
+    lens: PageLens
+    mask: Path
+    picture: Path
+    fade: float = 1.0
+    fades: dict[float, Future] = field(default_factory=dict)
+    held: bool = False
+    seen: tuple[Look, np.ndarray] | None = None
+    seeing: threading.Lock = field(default_factory=threading.Lock)
+
+    def hold(self, held: bool) -> None:
+        """The page's slider is on this repaint, or not (under Repaints._lock)."""
+        self.held = held
+        if not held:
+            self.seen = None
+            self.fades = {fade: laid for fade, laid in self.fades.items() if fade == self.fade}
+
+
 class Repaints:
     """One prop's repaints: the look through the page's camera, the picture laid onto what it sees of the mask,
-    and - for the page's edge fade - what a change of a fade does not change, kept from call to call."""
+    and - for the page's edge fade and its eye - what a change of one repaint does not change, kept from call to
+    call."""
 
     def __init__(self, prop: Prop) -> None:
         self.prop = prop
         self.at: Look | None = None                  # the last look
         self.encoders = ThreadPoolExecutor(4)        # a fade's models and layers, written side by side
-        self.ahead = ThreadPoolExecutor(1)           # a repaint's other fades, worked out while idle
-        self._stop_ahead = threading.Event()         # of the job working ahead now (each job has its own)
+        self.ahead = ThreadPoolExecutor(WARMERS)     # repaints worked out before "fades" lays them
+        # ... and, one at a time, what nobody waits for yet: the slider's other fades of the repaint it is on (a
+        # long fade's blend is heavy and cannot be broken off: several under way would hold up the change that
+        # comes meanwhile), and the earlier repaints of a model that is only shown.
+        self.aside = ThreadPoolExecutor(1, thread_name_prefix="aside")
+        self._stop_ahead = threading.Event()         # of what is worked out ahead now (each "fades" has its own)
         self._lock = threading.Lock()
-        # fades: per repaint (_made_from) its look, picture and weights per fade; the one used last stands last
-        self.kept: dict[tuple, dict[str, Any]] = {}
+        self.kept: dict[tuple, Kept] = {}            # fades: per repaint (_made_from); the one asked for last stands last
         self._loaded: tuple | None = None            # fades: the model as loaded (Prop.snapshot)
 
     def close(self) -> None:
         self._stop_ahead.set()
         self.ahead.shutdown(wait=True)
+        self.aside.shutdown(wait=True)
         self.encoders.shutdown(wait=True)
 
     def loaded_anew(self) -> None:
@@ -109,6 +140,13 @@ class Repaints:
         """The worker's "look" through `lens`: mask is a picture of the texture's size, white where the artist
         masked. Without `pictures` only where a picture made through this camera before would go. `smooth`: the
         depth map without the model's facets (the page's "No Facets": smooth_depth)."""
+        self.at, answer = self._look_through(lens, mask, pictures, smooth)
+        return answer
+
+    def _look_through(self, lens: PageLens, mask: Path, pictures: bool = False,
+                      smooth: bool = False) -> tuple[Look, dict[str, Any]]:
+        """`look`'s work -> (what the camera sees, the command's answer). Without `pictures` it reads the model's
+        surface alone, so several threads may look at once ("fades" works its repaints out so)."""
         prop, size = self.prop, lens.width
         marked = self._marked(mask)
         masked = marked.reshape(-1)[prop.texel]
@@ -140,7 +178,6 @@ class Repaints:
         seen = int((look.can() & masked).sum())
         if not seen:
             raise BakeError(MASK_OUT_OF_SIGHT)
-        self.at = look
         answer = {"masked": int(masked.sum()), "seen": seen}
         if pictures:
             viewport = to_bytes(self._textured(uv))
@@ -149,7 +186,7 @@ class Repaints:
             if smooth:
                 depth = smooth_depth(depth.reshape(size, size), SMOOTH_SIDE * size, SNAP * prop.scene.diag).reshape(-1)
             answer = {**self._pictures(lens, met.hit, depth_grey(depth[met.hit]), viewport, redrawn), **answer}
-        return answer
+        return look, answer
 
     def _marked(self, mask: Path) -> np.ndarray:
         """The texels the artist masked, (res, res)."""
@@ -263,92 +300,127 @@ class Repaints:
 
     # ---- the repaints put on again, each with its fade -------------------------------------------------------------
     def fades(self, repaints: list[dict[str, Any]], lenses: list[PageLens], outs: list[str] | None,
-              ahead: int | None = None) -> dict[str, Any]:
+              ahead: int | None = None, earlier: list[tuple[dict[str, Any], PageLens]] | tuple = (),
+              gently: bool = False) -> dict[str, Any]:
         """The worker's "fades": the repaints (each through its lens) onto the model as loaded, one after the
         other, each with what was painted by hand on its step over it (Prop.step_models). A "hidden" one puts
         nothing on: its step is the model before it with that step's hand paint. Kept from call to call: the
-        model as loaded, each repaint's look and picture, and its weights per fade - so a change of one repaint
-        costs that one's blend, laying the pictures on, and writing the models; of the repaints no longer asked,
-        the KEPT_SPARE used last (each holds tens of megabytes). `ahead`: the repaint whose
-        weights for the slider's other fades (FADE_STEPS) are worked out meanwhile, on a thread, nearest first, so
-        that the next change finds its own ready."""
+        model as loaded and, per repaint and fade, what it lays (Kept) - so a change of one repaint costs laying
+        the pictures on and writing the models asked for.
+        What is not kept yet is worked out on threads, the newest repaint first: what this call lays (it waits
+        for it), then the repaints of `earlier` - those before the model loaded, which a later call may lay; one
+        at a time when `gently` (the model is only shown) -, then, for the repaint `ahead` (the page's slider is on
+        it), its other fades (FADE_STEPS), one at a time too. Without `outs`
+        nothing is laid: the call only sets that work going, and the next one finds it done or waits for the
+        rest. Without `ahead` as well (the page shows the model) it only adds to the work under way: the slider
+        stays on the repaint it was on. An `earlier` repaint whose files are gone is left out. A change names
+        every repaint of the model: of those it no longer names, the KEPT_SPARE used last stay (a call that only
+        makes ready may name a few, and drops none)."""
         prop = self.prop
-        self._stop_ahead.set()                       # (the thread lets go after the fade it is at)
-        if self._loaded is None:
-            self._loaded = prop.snapshot()
-        prop.restore(self._loaded)
+        kept = [self._kept_repaint(asked, lens) for asked, lens in zip(repaints, lenses)]
+        before = []
+        for asked, lens in earlier:
+            with contextlib.suppress(OSError):
+                before.append(self._kept_repaint(asked, lens))
+        if outs is not None:
+            for key in list(self.kept)[:-(len(kept) + len(before) + KEPT_SPARE)]:
+                del self.kept[key]
+        picked = kept[ahead] if ahead is not None and ahead < len(kept) else None
+        if outs is not None or picked is not None:
+            self._stop_ahead.set()                   # (a thread finishes the repaint it is at and begins no other)
+            self._stop_ahead = threading.Event()
+            with self._lock:
+                for one in self.kept.values():
+                    one.hold(one is picked)
+        stop = self._stop_ahead
+        laid_now = [not asked.get("hidden") or bool(outs is not None and asked.get("layer")) for asked in repaints]
+        for one, needed in reversed(list(zip(kept, laid_now))):
+            if needed:
+                self.ahead.submit(self._work_ahead, one, one.fade, stop)
         writes: list[Future[None]] = []
         painted: list[int] = []
-        kept: list[dict[str, Any] | None] = []
         try:
-            for asked, lens, out in zip(repaints, lenses, outs or [None] * len(repaints)):
+            if outs is not None:
+                if self._loaded is None:
+                    self._loaded = prop.snapshot()
+                prop.restore(self._loaded)
+            for asked, one, needed, out in zip(repaints, kept, laid_now, outs or []):
                 shown = not asked.get("hidden")
-                layer = asked.get("layer") if outs is not None else None
-                kept.append(self._kept_repaint(asked, lens) if shown or layer else None)
-                laid = self._kept_fade(kept[-1], clamped_fade(asked.get("fade"))) if kept[-1] else None
+                laid = self._laid(one, one.fade) if needed else None
                 painted.append(len(laid[0]) if shown else 0)
-                if outs is None:
-                    continue
                 if shown:
                     prop.mix_in(*laid)
-                if layer:                            # (where it lies, or would: the page shows it either way)
-                    writes.append(self.encoders.submit(prop.write_layer, Path(layer), laid[0], on_clay(*laid[1:])))
+                if asked.get("layer"):               # (where it lies, or would: the page shows it either way)
+                    writes.append(self.encoders.submit(prop.write_layer, Path(asked["layer"]), laid[0],
+                                                       on_clay(*laid[1:])))
                 for path, model in prop.step_models(out, asked.get("hand_paint"), asked.get("unpainted")):
                     writes.append(self.encoders.submit(prop.write_model, path, model, True))
         finally:
             wait(writes)                             # (nothing is still being written when the answer goes out)
-            for key in list(self.kept)[:-(len(repaints) + KEPT_SPARE)]:
-                del self.kept[key]
-            if ahead is not None and ahead < len(kept) and kept[ahead]:
-                self._stop_ahead = stop = threading.Event()
-                self.ahead.submit(self._fades_ahead, kept[ahead], float(repaints[ahead].get("fade") or 1.0), stop)
+            for one in reversed(before):
+                (self.aside if gently else self.ahead).submit(self._work_ahead, one, one.fade, stop)
+            if picked is not None:
+                for fade in sorted(FADE_STEPS, key=lambda value: abs(value - picked.fade)):
+                    self.aside.submit(self._work_ahead, picked, fade, stop)
         for written in writes:
             written.result()
         return {"painted": painted}
 
-    def _kept_repaint(self, asked: dict[str, Any], lens: PageLens) -> dict[str, Any]:
-        """What `fades` keeps of a repaint: its look (without pictures), its picture, its weights per fade - by
-        what they are made from (_made_from), so wherever the repaint stands among those asked."""
+    def _kept_repaint(self, asked: dict[str, Any], lens: PageLens) -> Kept:
+        """What `fades` keeps of a repaint, by what its look and picture are made from (_made_from) - so wherever
+        the repaint stands among those asked, and in whichever folder the hub names its files now (it links them
+        into a new one with every change, and tidies the old one away) -, with the fade asked; it now stands
+        last."""
         key = _made_from(asked, lens)
-        kept = self.kept.pop(key, None)
-        if kept is None:
-            self.look(lens, Path(asked["mask"]), pictures=False)
-            kept = {"look": self.at, "whole": self.prop.picture(Path(asked["picture"]), lens.width), "fades": {}}
+        kept = self.kept.pop(key, None) or Kept(lens, Path(asked["mask"]), Path(asked["picture"]))
+        kept.mask, kept.picture = Path(asked["mask"]), Path(asked["picture"])
+        kept.fade = clamped_fade(asked.get("fade"))
         self.kept[key] = kept
         return kept
 
-    def _kept_fade(self, kept: dict[str, Any], fade: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """A kept repaint's texels, colours and weights at `fade` (_onto's): kept, or being worked out ahead (it is
-        waited for), or worked out here."""
-        done, mine = self._claim(kept, fade)
-        if mine:
-            self._work_out(kept, fade, done)
-        return done.result()
-
-    def _claim(self, kept: dict[str, Any], fade: float) -> tuple[Future, bool]:
-        """The Future of a kept repaint's `fade`, and whether the caller is the one to work it out."""
+    def _laid(self, kept: Kept, fade: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """A kept repaint's texels, colours and weights at `fade` (_onto's): kept, or being worked out on another
+        thread (it is waited for), or worked out here - also in the place of a thread that failed: it may have
+        read files a change has taken away since. What fails is not kept, and what fails here is the caller's to
+        hear."""
         with self._lock:
-            done = kept["fades"].get(fade)
-            if done is not None:
-                return done, False
-            done = kept["fades"][fade] = Future()
-            return done, True
-
-    def _work_out(self, kept: dict[str, Any], fade: float, done: Future) -> None:
+            done = kept.fades.get(fade)
+            mine = done is None
+            if mine:
+                done = kept.fades[fade] = Future()
+        if not mine:
+            try:
+                return done.result()
+            except Exception:  # noqa: BLE001 - the other thread's failure
+                with self._lock:
+                    done = kept.fades[fade] = Future()
         try:
-            done.set_result(self._onto(kept["look"], kept["whole"], self.weight(kept["look"], fade)))
+            look, whole = self._seen(kept)
+            done.set_result(self._onto(look, whole, self.weight(look, fade)))
         except BaseException as exc:  # noqa: BLE001 - whoever waits for this fade hears of it
             with self._lock:
-                if kept["fades"].get(fade) is done:  # (not kept: it is worked out anew the next time)
-                    del kept["fades"][fade]
+                if kept.fades.get(fade) is done:
+                    del kept.fades[fade]
             done.set_exception(exc)
+        return done.result()
 
-    def _fades_ahead(self, kept: dict[str, Any], now: float, stop: threading.Event) -> None:
-        """The slider's other fades of a kept repaint worked out, nearest to `now` first, until `stop` is set (the
-        next "fades" sets it)."""
-        for fade in sorted(FADE_STEPS, key=lambda value: abs(value - now)):
-            if stop.is_set():
-                return
-            done, mine = self._claim(kept, fade)
-            if mine:
-                self._work_out(kept, fade, done)
+    def _seen(self, kept: Kept) -> tuple[Look, np.ndarray]:
+        """A kept repaint's look (without pictures) and its picture: the ones held, else made here."""
+        with kept.seeing:
+            seen = kept.seen
+            if seen is None:
+                seen = (self._look_through(kept.lens, kept.mask)[0], self.prop.picture(kept.picture, kept.lens.width))
+                with self._lock:
+                    if kept.held:
+                        kept.seen = seen
+            return seen
+
+    def _work_ahead(self, kept: Kept, fade: float, stop: threading.Event) -> None:
+        """A thread's share of `fades`: one repaint at one fade worked out (_laid), unless the next "fades" came
+        meanwhile (`stop`). A failure is left for the call that lays the repaint."""
+        if stop.is_set():
+            return
+        try:
+            self._laid(kept, fade)
+        except Exception:  # noqa: BLE001
+            pass

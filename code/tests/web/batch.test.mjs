@@ -1099,6 +1099,50 @@ test('Settings has no low-video-memory switch for the 3D generator, and saving n
   }
 });
 
+test('Settings\' "Faster 3D view" is kept, and the page loaded again, only once the save went through', async () => {
+  const { plainEdges, setPlainEdges } = await load('shell/graphics.js');
+  const kept = new Map();
+  const had = { storage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage'), location: globalThis.location };
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, String(v)), removeItem: (k) => kept.delete(k) },
+  });
+  let reloads = 0;
+  globalThis.location = { ...had.location, reload: () => { reloads += 1; } };
+  let refuse = true;
+  globalThis.fetch = async (path, init = {}) => (init.method === 'PATCH' && refuse
+    ? { status: 500, text: async () => JSON.stringify({ detail: 'The settings could not be written.' }) }
+    : { status: 200, text: async () => JSON.stringify({ gpu_exclusive: true, forge: { ckpt_dirs: [] } }) });
+  const timers = holdSlowTimers();
+  try {
+    reset();
+    document.body.replaceChildren();
+    await openSettings();
+    const [dialog] = document.body.children;
+    const save = () => dialog.querySelectorAll('.modal-actions .btn').at(-1).click();
+    const [faster] = dialog.all((e) => e.classList.contains('switch') && e.textContent.includes('Faster 3D view'));
+    assert.ok(!faster.input.checked, 'off unless chosen');
+    faster.input.checked = true;
+    faster.input.fire('change');
+    const [share] = dialog.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'checkbox');
+    share.checked = false;
+    share.fire('change');
+    save();
+    await timers.tick();
+    assert.deepEqual([dialog.open, plainEdges(), kept.size, reloads], [true, false, 0, 0], 'the hub refused: nothing kept yet');
+    refuse = false;
+    save();
+    await timers.tick();
+    assert.deepEqual([dialog.open, plainEdges(), kept.get('spellcast3d.plainEdges'), reloads], [false, true, 'on', 1]);
+  } finally {
+    timers.release();
+    setPlainEdges(false);
+    globalThis.location = had.location;
+    if (had.storage) Object.defineProperty(globalThis, 'localStorage', had.storage);
+    else delete globalThis.localStorage;
+  }
+});
+
 test('the steps the fixtures name are the launcher\'s: each prop\'s fraction rests at the end of its last step', () => {
   const ends = Object.values(PARTS).map(([, end]) => end);
   assert.deepEqual(ends, [...ends].sort((a, b) => a - b));

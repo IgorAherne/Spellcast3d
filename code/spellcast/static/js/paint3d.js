@@ -8,7 +8,10 @@
 // of the model, made when the stroke began, says which surface is in front) and it faces the camera. Each texel is
 // computed from the texture as it was when the stroke began, so a stroke never builds up over itself. The triangles
 // are also drawn grown by a few texels into the gutter around their UV islands, so the seams and the far mip levels
-// get the new colours too. The clone stamp reads the same picture for the UV under the brush plus the offset to its
+// get the new colours too. Only the triangles that lie under the stroke on the screen are drawn (the camera holds
+// still for a stroke, so where each lies is worked out once, as it begins): no dab reaches any other, so the texture
+// comes out the same, and a model of several hundred thousand triangles costs a dab no more than a small one.
+// The clone stamp reads the same picture for the UV under the brush plus the offset to its
 // source, and copies the texture from there. Alt + a click (no drag) with the marker picks the texture's colour
 // under the pointer; Alt + a drag still orbits.
 //
@@ -38,7 +41,9 @@
 // patchOf). Never a picture decoded a second way: a texel nobody painted is never sent.
 
 import * as THREE from 'three';
-import { createStroke, createUndo, dirtyTiles, patchOf, texelHex, tileRects } from './stages/paintstroke.js';
+import {
+  createFootprint, createStroke, createUndo, dabsBox, dirtyTiles, patchOf, screenCorners, texelHex, tileRects,
+} from './stages/paintstroke.js';
 import { undoStamp } from './undo.js';
 
 const TILES = 32;            // undo tiles per side of the texture
@@ -308,8 +313,12 @@ export function paintableParts(views) {
 }
 
 /**
- * The model's triangles for the UV passes, one non-indexed geometry per mesh: as they are ("exact") and grown by
- * `grow` texels around their UV triangle ("gutter", its 3D point and normal extended over the same plane).
+ * A mesh's triangles for the UV passes, corner by corner (no index): as they are ("exact") and grown by `grow` texels
+ * around their UV triangle ("gutter", its 3D point and normal extended over the same plane) ->
+ *   islands: all of the exact triangles, for the islands' mask;
+ *   inside, around: the exact and the grown triangles a stroke draws - those `under` lists (an index both share,
+ *     with room for every corner; Session.paintMask fills it);
+ *   uv, position, grown: the exact corners' UVs and 3D points, and the grown corners' 3D points.
  */
 function uvGeometries(geometry, size, grow) {
   const pos = geometry.getAttribute('position');
@@ -326,7 +335,25 @@ function uvGeometries(geometry, size, grow) {
   const face = new THREE.Vector3();
   const e1 = new THREE.Vector3();
   const e2 = new THREE.Vector3();
+  const n1 = new THREE.Vector2();
+  const n2 = new THREE.Vector2();
   const g = new THREE.Vector2();
+  /** Writes a corner's UV, 3D point and normal into `into` at corner `o`. */
+  const put = (into, o, u, v, p, n) => {
+    into.paintUv[o * 2] = u;
+    into.paintUv[o * 2 + 1] = v;
+    into.position[o * 3] = p.x;
+    into.position[o * 3 + 1] = p.y;
+    into.position[o * 3 + 2] = p.z;
+    into.normal[o * 3] = n.x;
+    into.normal[o * 3 + 1] = n.y;
+    into.normal[o * 3 + 2] = n.z;
+  };
+  const grownPoint = new THREE.Vector3();
+  const grownNormal = new THREE.Vector3();
+  /** l0 * a[0] + l1 * a[1] + l2 * a[2], component by component -> `into`. */
+  const blend = (into, a, l0, l1, l2) => into.set(
+    l0 * a[0].x + l1 * a[1].x + l2 * a[2].x, l0 * a[0].y + l1 * a[1].y + l2 * a[2].y, l0 * a[0].z + l1 * a[1].z + l2 * a[2].z);
   for (let k = 0; k + 2 < count; k += 3) {
     for (let j = 0; j < 3; j++) {
       const v = at(k + j);
@@ -343,23 +370,19 @@ function uvGeometries(geometry, size, grow) {
     const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
     for (let j = 0; j < 3; j++) {
       const o = (k + j);
-      exact.paintUv.set([T[j].x, T[j].y], o * 2);
-      exact.position.set([P[j].x, P[j].y, P[j].z], o * 3);
-      exact.normal.set([N[j].x, N[j].y, N[j].z], o * 3);
-      exact.faceNormal.set([face.x, face.y, face.z], o * 3);
-      gutter.faceNormal.set([face.x, face.y, face.z], o * 3);
+      put(exact, o, T[j].x, T[j].y, P[j], N[j]);
+      face.toArray(exact.faceNormal, o * 3);
+      face.toArray(gutter.faceNormal, o * 3);
       if (Math.abs(area) < 1e-6) {           // no area in UV: nothing to grow
-        gutter.paintUv.set([T[j].x, T[j].y], o * 2);
-        gutter.position.set([P[j].x, P[j].y, P[j].z], o * 3);
-        gutter.normal.set([N[j].x, N[j].y, N[j].z], o * 3);
+        put(gutter, o, T[j].x, T[j].y, P[j], N[j]);
         continue;
       }
       const s = Math.sign(area);
       const cur = T[j];
       const prev = T[(j + 2) % 3];
       const next = T[(j + 1) % 3];
-      const n1 = new THREE.Vector2((cur.y - prev.y) * s, -(cur.x - prev.x) * s).normalize();
-      const n2 = new THREE.Vector2((next.y - cur.y) * s, -(next.x - cur.x) * s).normalize();
+      n1.set((cur.y - prev.y) * s, -(cur.x - prev.x) * s).normalize();
+      n2.set((next.y - cur.y) * s, -(next.x - cur.x) * s).normalize();
       const cos = n1.dot(n2);
       g.copy(n1).add(n2).multiplyScalar(grow / Math.max(0.25, 1 + cos));   // a sharp corner reaches at most 4x
       const ux = cur.x * size + g.x;
@@ -368,20 +391,25 @@ function uvGeometries(geometry, size, grow) {
       const l1 = ((ux - ax) * (cy - ay) - (cx - ax) * (uy - ay)) / area;
       const l2 = ((bx - ax) * (uy - ay) - (ux - ax) * (by - ay)) / area;
       const l0 = 1 - l1 - l2;
-      gutter.paintUv.set([ux / size, uy / size], o * 2);
-      gutter.position.set([0, 1, 2].map((c) => l0 * P[0].getComponent(c) + l1 * P[1].getComponent(c) + l2 * P[2].getComponent(c)), o * 3);
-      gutter.normal.set([0, 1, 2].map((c) => l0 * N[0].getComponent(c) + l1 * N[1].getComponent(c) + l2 * N[2].getComponent(c)), o * 3);
+      put(gutter, o, ux / size, uy / size, blend(grownPoint, P, l0, l1, l2), blend(grownNormal, N, l0, l1, l2));
     }
   }
-  const make = (a) => {
+  const attributes = (a) => ({
+    paintUv: new THREE.BufferAttribute(a.paintUv, 2), position: new THREE.BufferAttribute(a.position, 3),
+    normal: new THREE.BufferAttribute(a.normal, 3), faceNormal: new THREE.BufferAttribute(a.faceNormal, 3),
+  });
+  const make = (attrs, drawn = null) => {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('paintUv', new THREE.BufferAttribute(a.paintUv, 2));
-    geo.setAttribute('position', new THREE.BufferAttribute(a.position, 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(a.normal, 3));
-    geo.setAttribute('faceNormal', new THREE.BufferAttribute(a.faceNormal, 3));
+    for (const [name, attribute] of Object.entries(attrs)) geo.setAttribute(name, attribute);
+    geo.setIndex(drawn);
     return geo;
   };
-  return { exact: make(exact), gutter: make(gutter), uv: exact.paintUv };
+  const exactAttributes = attributes(exact);
+  const under = new THREE.BufferAttribute(new Uint32Array(count), 1).setUsage(THREE.DynamicDrawUsage);
+  return {
+    islands: make(exactAttributes), inside: make(exactAttributes, under), around: make(attributes(gutter), under), under,
+    uv: exact.paintUv, position: exact.position, grown: gutter.position,
+  };
 }
 
 /** A helper mesh that draws `geometry` where `mesh` is (its world matrix copied before each pass). */
@@ -462,17 +490,18 @@ class Session {
     this.paintScene = new THREE.Scene();      // the gutter first, then the islands over it: one pass, one mip update
     this.exactScene = new THREE.Scene();      // the islands alone, for their mask
     this.snapScene = new THREE.Scene();
-    this.corners = [];           // per mesh: its corners' UVs, for the undo tiles
+    // Per mesh: its corners (uvGeometries), and where its grown triangles lie on the stroke's screen (aim).
+    this.corners = [];
     for (const { mesh, own } of this.parts) {
-      const { exact, gutter, uv } = uvGeometries(mesh.geometry, size, grow);
-      const around = follower(gutter, this.materials.marker[0], mesh);
-      const inside = follower(exact, this.materials.marker[1], mesh);
+      const made = uvGeometries(mesh.geometry, size, grow);
+      const around = follower(made.around, this.materials.marker[0], mesh);
+      const inside = follower(made.inside, this.materials.marker[1], mesh);
       around.renderOrder = 0;
       inside.renderOrder = 1;
       inside.userData.inside = true;
       this.paintScene.add(around, inside);
-      this.exactScene.add(follower(exact, this.islandMaterial, mesh));
-      this.corners.push({ mesh, uv, position: exact.getAttribute('position').array });
+      this.exactScene.add(follower(made.islands, this.islandMaterial, mesh));
+      this.corners.push({ mesh, ...made });
       let snapMaterial = this.snapMaterials.get(own.side);
       if (!snapMaterial) {
         snapMaterial = new THREE.ShaderMaterial({ vertexShader: SNAP_VERTEX, fragmentShader: SNAP_FRAGMENT, side: own.side });
@@ -530,11 +559,15 @@ class Session {
       this.shown = target(size, size, this.shownOptions);
       this.pass(this.overlay, new THREE.Scene(), true);      // nothing covered yet
       this.materials.overlay = [this.paintMaterial({ GUTTER: '', OVERLAY: '' }), this.paintMaterial({ OVERLAY: '' })];
-      this.compositeMaterial = new THREE.ShaderMaterial({
+      // The composite, of the whole texture (a quad) and of the texels a stroke's pass just drew (its triangles).
+      const composite = {
         uniforms: { base: { value: this.paint.texture }, overlay: { value: this.overlay.texture }, colour: { value: this.overlayColour } },
-        vertexShader: COPY_VERTEX, fragmentShader: COMPOSITE_FRAGMENT, depthTest: false, depthWrite: false,
-        blending: THREE.NoBlending,
-      });
+        fragmentShader: COMPOSITE_FRAGMENT, depthTest: false, depthWrite: false, blending: THREE.NoBlending,
+      };
+      this.compositeMaterial = new THREE.ShaderMaterial({ ...composite, vertexShader: COPY_VERTEX });
+      this.strokeComposite = new THREE.ShaderMaterial({ ...composite, vertexShader: UV_VERTEX, side: THREE.DoubleSide });
+      this.strokeScene = new THREE.Scene();
+      for (const { around, mesh } of this.corners) this.strokeScene.add(follower(around, this.strokeComposite, mesh));
       this.paint.texture.generateMipmaps = false;
     }
     this.overlayHex = hex;
@@ -544,9 +577,17 @@ class Session {
     else this.viewer.redraw();
   }
 
-  /** Draws the composite again, when there is an overlay (three.js then makes its mip levels). */
-  composite() {
+  /**
+   * Draws the composite again, when there is an overlay (three.js then makes its mip levels): all of it, or -
+   * `underStroke` - the texels of the triangles the stroke's pass just drew, the only ones it changed.
+   */
+  composite(underStroke = false) {
     if (!this.shown) return;
+    if (underStroke) {
+      follow(this.strokeScene);
+      this.pass(this.shown, this.strokeScene);
+      return;
+    }
     this.quad.material = this.compositeMaterial;
     this.pass(this.shown, this.quadScene);
   }
@@ -556,9 +597,9 @@ class Session {
     if (!this.overlay) return;
     this.showMap(this.shown.texture, this.paint.texture);
     this.paint.texture.generateMipmaps = true;    // (made by the fill that follows)
-    for (const one of [this.overlay, this.shown, this.compositeMaterial, ...this.materials.overlay]) one.dispose();
+    for (const one of [this.overlay, this.shown, this.compositeMaterial, this.strokeComposite, ...this.materials.overlay]) one.dispose();
     delete this.materials.overlay;
-    this.overlay = this.shown = this.compositeMaterial = this.overlayHex = null;
+    this.overlay = this.shown = this.compositeMaterial = this.strokeComposite = this.strokeScene = this.overlayHex = null;
   }
 
   /** The target of a layer (null: no overlay yet). */
@@ -666,33 +707,53 @@ class Session {
   }
 
   /**
-   * Paints the stroke's mask into the tool's layer: the gutter around the islands first, then the islands (then the
-   * composite, when there is an overlay).
+   * A stroke begins, seen through `viewProj` on a `width` x `height` px screen: its footprint there is empty, and
+   * each triangle's place on that screen is known - grown into the gutter, which holds the triangle itself.
    */
-  paintMask(tool, layer) {
+  aim(viewProj, width, height) {
+    this.footprint = createFootprint(width, height);
+    const m = new THREE.Matrix4();
+    for (const part of this.corners) {
+      m.multiplyMatrices(viewProj, part.mesh.matrixWorld);
+      part.screen = screenCorners(part.grown, m.elements, width, height, part.screen);
+      part.cells = this.footprint.cells(part.screen, part.cells);
+    }
+  }
+
+  /**
+   * Paints the stroke's mask, which `dabs` were just added to, into the tool's layer: of the triangles under the
+   * stroke so far the gutter around the islands first, then the islands (then the composite, when there is an
+   * overlay).
+   */
+  paintMask(tool, layer, dabs) {
     const [gutter, exact] = this.materials[tool];
+    this.footprint.add(dabs);
+    for (const { cells, under, around, inside } of this.corners) {
+      const count = this.footprint.under(cells, under.array);
+      under.clearUpdateRanges();
+      if (count) {
+        under.addUpdateRange(0, count);
+        under.needsUpdate = true;
+      }
+      around.setDrawRange(0, count);
+      inside.setDrawRange(0, count);
+    }
     follow(this.paintScene);
     this.paintScene.children.forEach((m) => { m.material = m.userData.inside ? exact : gutter; });
     this.pass(this.layer(layer), this.paintScene);
-    this.composite();
+    this.composite(true);
     this.viewer.redraw();
   }
 
   /** What a stroke of `layer` may have changed (the tiles under it), as it was before it -> an undo step, or null. */
   undoStep(viewProj, box, screenW, screenH, layer) {
     const size = this.size;
-    const v = new THREE.Vector4();
+    const m = new THREE.Matrix4();
     const flags = new Uint8Array(TILES * TILES);
-    for (const { mesh, uv, position } of this.corners) {
-      const screen = new Float32Array((position.length / 3) * 3);
-      const m = new THREE.Matrix4().multiplyMatrices(viewProj, mesh.matrixWorld);
-      for (let i = 0, o = 0; i < position.length; i += 3, o += 3) {
-        v.set(position[i], position[i + 1], position[i + 2], 1).applyMatrix4(m);
-        screen[o] = (v.x / v.w * 0.5 + 0.5) * screenW;
-        screen[o + 1] = (0.5 - v.y / v.w * 0.5) * screenH;
-        screen[o + 2] = v.w;
-      }
-      const these = dirtyTiles({ uv, screen, box, size, tiles: TILES, margin: this.margin, twoSided: this.twoSided });
+    for (const part of this.corners) {
+      m.multiplyMatrices(viewProj, part.mesh.matrixWorld);
+      part.screen = screenCorners(part.position, m.elements, screenW, screenH, part.screen);
+      const these = dirtyTiles({ uv: part.uv, screen: part.screen, box, size, tiles: TILES, margin: this.margin, twoSided: this.twoSided });
       for (let i = 0; i < flags.length; i++) flags[i] |= these[i];
     }
     const rects = tileRects(flags, TILES, size);
@@ -976,10 +1037,11 @@ class Session {
     for (const rt of [this.paint, this.before, this.islands, this.overlay, this.shown, this.sightTarget]) rt?.dispose();
     for (const list of Object.values(this.materials)) list.forEach((m) => m.dispose());
     this.compositeMaterial?.dispose();
+    this.strokeComposite?.dispose();
     this.islandMaterial.dispose();
     this.snapMaterials.forEach((m) => m.dispose());
     this.sightMaterials?.forEach((m) => m.dispose());
-    this.paintScene.children.forEach((m) => m.geometry.dispose());
+    for (const { islands, inside, around } of this.corners) for (const geometry of [islands, inside, around]) geometry.dispose();
     this.quad.geometry.dispose();
   }
 }
@@ -1110,15 +1172,12 @@ export function createPainter(viewer, ui) {
       dabArray[i * 4 + 1] = h - d.y;
       dabArray[i * 4 + 2] = d.r;
       dabArray[i * 4 + 3] = d.a;
-      stroke.box.x0 = Math.min(stroke.box.x0, d.x - d.r - 2);
-      stroke.box.x1 = Math.max(stroke.box.x1, d.x + d.r + 2);
-      stroke.box.y0 = Math.min(stroke.box.y0, d.y - d.r - 2);
-      stroke.box.y1 = Math.max(stroke.box.y1, d.y + d.r + 2);
     });
+    dabsBox(dabs, stroke.box);
     dabAttribute.needsUpdate = true;
     dabGeometry.instanceCount = dabs.length;
     stroke.session.pass(mask, dabScene);
-    stroke.session.paintMask(stroke.tool, stroke.layer);
+    stroke.session.paintMask(stroke.tool, stroke.layer, dabs);
     stroke.painted = true;
   }
 
@@ -1154,6 +1213,7 @@ export function createPainter(viewer, ui) {
     s.keepBefore(layer);
     s.pass(mask, new THREE.Scene(), true);     // the snapshot left the clear colour transparent black
     const viewProj = new THREE.Matrix4().multiplyMatrices(viewer.camera.projectionMatrix, viewer.camera.matrixWorldInverse);
+    s.aim(viewProj, size.x, size.y);
     const u = s.uniforms;
     u.viewProj.value.copy(viewProj);
     u.fromClip.value.copy(viewProj).invert();

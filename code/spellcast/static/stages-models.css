@@ -194,30 +194,32 @@
   width: 100%; aspect-ratio: 1; object-fit: contain; display: block; border-radius: 8px; border: 1px solid var(--line-2);
   background: #000;
 }
-/* Alt + click shows what Qwen-Image was given for it; the model shows its share while the pointer is on its tile. */
-.ot-view { cursor: zoom-in; transition: opacity 0.15s; }
+/* A click anywhere on a picture with an eye hides it on the model or shows it again; Alt + click shows what
+   Qwen-Image was given for it; the model shows its share while the pointer is on its tile. */
+.ot-view { transition: opacity 0.15s; }
+.ot-tile:has(> .ot-eye) > .ot-view { cursor: pointer; }
 .ot-tile:hover > .ot-view.has-layer { border-color: rgba(242, 193, 78, 0.9); box-shadow: 0 0 0 1px rgba(242, 193, 78, 0.9); }
-/* A repaint of what the artist masked, among the views: framed in the marker's colour; a click picks it for the
-   fade slider under them. */
-.ot-view.ot-repaint { cursor: pointer; border-color: rgba(255, 92, 244, 0.65); }
+/* A repaint of what the artist masked, among the views: framed in the marker's colour - brighter, the one the fade
+   slider under them moves (clicked last; the newest until one is clicked). */
+.ot-view.ot-repaint { border-color: rgba(255, 92, 244, 0.65); }
 .ot-view.ot-repaint.picked, .ot-tile:hover > .ot-view.ot-repaint.picked { border-color: #ff5cf4; box-shadow: 0 0 0 2px #ff5cf4; }
 /* Each picture's × (as the Images stage's .sv-cand-x) in its corner, faint until the pointer is on the picture: it
    takes the picture off the model. The one beside the views' heading takes them all off. It turns red under the
    pointer, and waits while the prop's Omni-Texture changes. */
 .ot-tile { position: relative; }
 .ot-tile.changing, .ot-views.changing { opacity: 0.4; pointer-events: none; }
-/* The eye in a picture's middle, see-through, there while the pointer is on the picture: a click hides the picture
-   on the model. Hidden, the picture is dim under a crossed eye that stays; a click shows it again. */
+/* The eye in a picture's middle, see-through, there while the pointer is on the picture: what a click anywhere on
+   the picture does. Hidden, the picture is dim under a crossed eye that stays; a click shows it again. */
 .ot-eye {
   position: absolute; top: 50%; left: 50%; translate: -50% -50%; width: 40%; aspect-ratio: 1; padding: 0;
   display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(12, 14, 18, 0.5); color: #fff;
-  cursor: pointer; opacity: 0; transition: opacity 0.12s, scale 0.12s;
+  cursor: pointer; opacity: 0; transition: opacity 0.12s;
 }
 .ot-eye .icon { width: 60%; height: 60%; }
-.ot-tile:hover > .ot-eye, .ot-eye:focus-visible { opacity: 0.55; }
+.ot-tile:hover > .ot-eye, .ot-eye:focus-visible { opacity: 0.8; }
 .ot-tile.off > .ot-eye { opacity: 0.7; }
 .ot-tile.off > .ot-view { opacity: 0.3; }
-.ot-eye:hover:not(:disabled), .ot-tile.off > .ot-eye:hover:not(:disabled) { opacity: 0.95; scale: 1.08; }
+.ot-tile.off:hover > .ot-eye { opacity: 0.95; }
 .ot-eye:disabled { cursor: wait; }
 .ot-x {
   position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; display: grid; place-items: center;

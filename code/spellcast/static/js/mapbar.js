@@ -21,7 +21,8 @@ const HINTS = {
 const WIRE_HINT = 'Draws the model’s edges as lines over it, whichever map it shows.';
 
 /**
- * onChange(mode) is called when the artist picks a view (not when the page picks one: select()). buttons:
+ * onChange(mode) is called when the artist picks a view, or a tool of theirs moves it (not when the page picks one
+ * for the next model: select()). buttons:
  * false leaves the map buttons out. bind(viewer) shows the views of the model the
  * viewer shows now (call it after each show()); hold() keeps the bar in place, dimmed and inert, while
  * the next model loads (the viewport does not jump); unbind() hides the bar. offerWireframe(on, onChange)
@@ -98,9 +99,10 @@ export function mapBar({ onChange, buttons = true } = {}) {
   /** "Look here": the toggle rings and swells once (a stage points at it from a control it goes with). */
   el.ringWireframe = () => { if (wire) beckon(wireBtn); };
   /**
-   * Picks `mode` when the model has it (e.g. to keep the same map while switching models); onChange does not
-   * hear of it, the artist did not pick it. Returns whether the model is in that view now.
+   * Picks `mode` when the model has it; returns whether the model is in that view now. onChange hears of it only
+   * when the artist's own doing moved the view (`byArtist`: a brush taken up in "All" goes to Base colour) - not
+   * when the page keeps a view from model to model.
    */
-  el.select = (mode) => !!viewer?.availableViews().includes(mode) && pick(mode, false);
+  el.select = (mode, byArtist = false) => !!viewer?.availableViews().includes(mode) && pick(mode, byArtist);
   return el;
 }

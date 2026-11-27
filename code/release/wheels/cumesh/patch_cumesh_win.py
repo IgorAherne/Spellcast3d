@@ -16,7 +16,7 @@ its pin). So this file names every change the wheel's sources carry, and the for
 The hunk ids are those of the wheels 0.0.1.post1-post3 (built from b84410e + cubvh ff89002 + these edits); hunks
 upstream made unnecessary are listed in DROPPED.
 
-Eight kinds of edit:
+Nine kinds of edit:
 
 1. Building on Windows with MSVC 2022 + CUDA 12.8: upstream's own Windows build (setup.py since f149d59: /O2
    /std:c++17 /EHsc /permissive- /Zc:__cplusplus, -allow-unsupported-compiler, --extended-lambda; atlas.cu's
@@ -89,6 +89,19 @@ Eight kinds of edit:
    `cuBVH.ray_hits(rays_o, rays_d)`: whether each ray hits the mesh at all, ray_trace(...)[1] >= 0 bit for bit, by the
    any-hit traversal of 6 (ray_trace, the closest-hit query, is untouched).
 
+9. xatlas's chart growing and task scheduler faster, the same atlas byte for byte (0.0.1.post7). The UV unwrap of
+   the 3D stage (CuMesh.uv_unwrap's xatlas part) spent its time in two places. A chart's boundary grid (the overlap
+   test of every face a chart tries to take) cleared all its up-to 512 x 512 cells and walked each cell's list to its
+   end for every edge it inserted, once per face tried: now only the cells the last grid used are cleared, each cell
+   keeps its list's tail, the cells each edge traverses are kept for the grid's check against itself, and
+   piecewise parameterization's checks of a few edges against the grid run from per-edge cell rectangles without
+   the cell lists. And the scheduler woke every worker for every task and the waiting thread spun: now one worker a
+   task, in turn (a woken worker runs tasks from every group until none is left, and the waiting thread runs its
+   group's queued tasks itself, so none is left behind), and wait() sleeps until the group's last task ends. The
+   lists, their order and every test are the same, so the charts and the atlas are; measured on three 3D-stage
+   props with the two wheels: the compute and pack 2.9 / 6.5 / 3.2 s -> 2.1 / 3.7 / 1.5 s, every output byte
+   equal. The same patch is in Spellcast3D's xatlas wheel (code/release/wheels/xatlas).
+
 Measurements and checks: code/logs/profiling/pixal3d-lowmem/round-g/cumesh/REPORT.md (5), round-h/anyhit/REPORT.md
 (6), cumesh-fork/ (the move to the fork, 0.0.1.post4), round-n/geometry/ (8) in Spellcast3D.
 """
@@ -109,13 +122,13 @@ from pathlib import Path
 # JeffreyXiang/CuMesh main that the fork's branch merges; cubvh = "wrap cubvh API with cumesh namespace to avoid
 # symbol conflicts", what that commit's third_party/cubvh points at; eigen = cubvh's submodule (headers only, MPL-2.0).
 PINS = {
-    "fork": ("https://github.com/IgorAherne/CuMesh.git", "6e9875f3c5a49f68ced42a612609465d8f655de2"),
+    "fork": ("https://github.com/IgorAherne/CuMesh.git", "189950a5f7b8024a1bd7db8870c07c2fb5f2fa2d"),
     "upstream": ("https://github.com/JeffreyXiang/CuMesh.git", "12289e1062f0603f2f0d0771b02e1395d247f26f"),
     "cubvh": ("https://github.com/JeffreyXiang/cubvh.git", "ce92267a24ef6ad7d2c8ccbc2ae2c021a6597e70"),
     "eigen": ("https://gitlab.com/libeigen/eigen", "e63d9f6ccb7f6f29f31241b87c542f3f0ab3112b"),
 }
 FORK_BRANCH = "spellcast3d"
-WHEEL_VERSION = "0.0.1.post6+cu128torch2.8"
+WHEEL_VERSION = "0.0.1.post7+cu128torch2.8"
 CUBVH_DIR = "third_party/cubvh"
 EIGEN_DIR = "third_party/cubvh/third_party/eigen"
 DOCS = ("README.md",)           # the fork's own build notes: not checked
@@ -142,13 +155,15 @@ DROPPED = {
     "remeshing-memory-edits": "the whole-file copy of remeshing_pixal3d.py is now the three remeshing-* hunks",
 }
 
+XATLAS_COMMIT = "xatlas: a chart's boundary grid built once per edge set (only its used cells cleared, each cell's tail kept, the edges' cells kept for the self-check, piecewise parameterization's few-edge checks without the cell lists) and the task scheduler waking one worker a task and sleeping instead of spinning in wait(), the same atlas byte for byte; version 0.0.1.post7+cu128torch2.8"
+
 HUNKS: list[dict] = [
     # 1. The Windows wheel.
     {"id": "pyproject-no-torch-pin", "file": "pyproject.toml", "commit": "the fork's a04452a (kept as it is)",
      "old": '    "torch>=2.4.0",\n',
      "new": ('    # we are manually installing torch, so comment this one out, else it tries to overwrite with another version\n'
              '    #"torch>=2.4.0",\n')},
-    {"id": "local-version", "file": "pyproject.toml", "commit": "cubvh: the ray-stab's inside test for any subset of a call's points (post6; before it: the tree built on several threads, post5)",
+    {"id": "local-version", "file": "pyproject.toml", "commit": "xatlas: the chart growing and the task scheduler faster, the same atlas (post7; before it: the ray-stab's inside test for any subset of a call's points, post6)",
      "old": 'version = "0.0.1"\n',
      "new": f'version = "{WHEEL_VERSION}"\n'},
     {"id": "gitignore-vs", "file": ".gitignore", "commit": "the fork's b9ab99b (kept as it is)",
@@ -965,6 +980,56 @@ HUNKS: list[dict] = [
      "commit": "cubvh: an any-hit ray query, ray_trace's hit or miss bit for bit without the search for the nearest hit",
      "old": '__global__ void raytrace_kernel(\n',
      "new": "// Spellcast3D: whether each ray hits the mesh at all - ray_trace's face_id >= 0 for the same ray, bit for bit\n// (ray_intersect_any: the same triangle and box tests as ray_intersect, see above), without the search for the\n// nearest hit after the first.\n__global__ void ray_hits_kernel(\n    uint32_t n_elements, const Vector3f* __restrict__ rays_o, const Vector3f* __restrict__ rays_d,\n    bool* __restrict__ hits, const TriangleBvhNode* __restrict__ nodes, const Triangle* __restrict__ triangles\n) {\n    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;\n    if (i >= n_elements) return;\n\n    Vector3f ro = rays_o[i];\n    Vector3f rd = rays_d[i];\n\n    hits[i] = TriangleBvh4::ray_intersect_any(ro, rd, nodes, triangles);\n}\n\n__global__ void raytrace_kernel(\n"},
+
+    # 9. xatlas's chart growing and task scheduler (post7): the same atlas byte for byte.
+    {"id": 'xatlas-grid-and-scheduler-1', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\tgroup.queueLock.unlock();\n\t\tgroup.ref++;\n\t\t// Wake up a worker to run this task.\n\t\tfor (uint32_t i = 0; i < m_workers.size(); i++) {\n\t\t\tm_workers[i].wakeup = true;\n\t\t\tm_workers[i].cv.notify_one();\n\t\t}\n\t}\n\n',
+     "new": '\t\tgroup.queueLock.unlock();\n\t\tgroup.ref++;\n\t\t// Wake up a worker to run this task: one per task, in turn. A woken worker runs tasks from every group\n\t\t// until none is left, and the thread that waits on a group runs its queued tasks itself, so no task is\n\t\t// left behind; waking every worker for every task cost the thread queuing thousands of tasks (one per\n\t\t// chart when packing) most of its time.\n\t\tWorker &worker = m_workers[m_nextWorker.fetch_add(1) % m_workers.size()];\n\t\tworker.wakeup = true;\n\t\tworker.cv.notify_one();\n\t}\n\n'},
+    {"id": 'xatlas-grid-and-scheduler-2', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\t\tgroup.ref--;\n\t\t}\n\t\t// Even though the task queue is empty, workers can still be running tasks.\n\t\twhile (group.ref > 0)\n\t\t\tstd::this_thread::yield();\n\t\tgroup.free = true;\n\t\thandle->value = UINT32_MAX;\n',
+     "new": '\t\t\tgroup.ref--;\n\t\t}\n\t\t// Even though the task queue is empty, workers can still be running tasks. Sleep until the last one\n\t\t// finishes instead of spinning: a spinning thread takes a core (or its SMT sibling) from the workers.\n\t\tif (group.ref > 0) {\n\t\t\tstd::unique_lock<std::mutex> lock(group.doneMutex);\n\t\t\tgroup.doneCv.wait(lock, [&group] { return group.ref.load() == 0; });\n\t\t}\n\t\tgroup.free = true;\n\t\thandle->value = UINT32_MAX;\n'},
+    {"id": 'xatlas-grid-and-scheduler-3', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\tstd::atomic<uint32_t> ref; // Increment when a task is enqueued, decrement when a task finishes.\n\t\tvoid *userData;\n\t};\n\n',
+     "new": '\t\tstd::atomic<uint32_t> ref; // Increment when a task is enqueued, decrement when a task finishes.\n\t\tvoid *userData;\n\t\tstd::mutex doneMutex; // wait() sleeps on doneCv until ref is 0.\n\t\tstd::condition_variable doneCv;\n\t};\n\n'},
+    {"id": 'xatlas-grid-and-scheduler-4', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\tstd::atomic<bool> m_shutdown;\n\tuint32_t m_maxGroups;\n\tstatic thread_local uint32_t m_threadIndex;\n\n',
+     "new": '\tstd::atomic<bool> m_shutdown;\n\tuint32_t m_maxGroups;\n\tstd::atomic<uint32_t> m_nextWorker{0}; // run() wakes m_workers[m_nextWorker++ % count].\n\tstatic thread_local uint32_t m_threadIndex;\n\n'},
+    {"id": 'xatlas-grid-and-scheduler-5', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\t\t\t\tbreak;\n\t\t\t\ttask->func(group->userData, task->userData);\n\t\t\t\tgroup->ref--;\n\t\t\t}\n\t\t}\n',
+     "new": '\t\t\t\t\tbreak;\n\t\t\t\ttask->func(group->userData, task->userData);\n\t\t\t\tif (--group->ref == 0) {\n\t\t\t\t\tstd::lock_guard<std::mutex> doneLock(group->doneMutex);\n\t\t\t\t\tgroup->doneCv.notify_all();\n\t\t\t\t}\n\t\t\t}\n\t\t}\n'},
+    {"id": 'xatlas-grid-and-scheduler-6', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\tm_positions = positions;\n\t\tm_indices = indices;\n\t\tm_cellDataOffsets.clear();\n\t}\n\n\tvoid append(uint32_t edge)\n\t{\n\t\tXA_DEBUG_ASSERT(m_cellDataOffsets.isEmpty());\n\t\tm_edges.push_back(edge);\n\t}\n',
+     "new": '\t\tm_positions = positions;\n\t\tm_indices = indices;\n\t\tm_gridCreated = false;\n\t\tm_edgeBoxesCreated = false;\n\t}\n\n\tvoid append(uint32_t edge)\n\t{\n\t\tXA_DEBUG_ASSERT(!m_gridCreated);\n\t\tm_edges.push_back(edge);\n\t}\n'},
+    {"id": 'xatlas-grid-and-scheduler-7', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\tconst uint32_t edgeCount = m_edges.size();\n\t\tbool bruteForce = edgeCount <= 20;\n\t\tif (!bruteForce && m_cellDataOffsets.isEmpty())\n\t\t\tbruteForce = !createGrid();\n\t\tif (bruteForce) {\n',
+     "new": '\t\tconst uint32_t edgeCount = m_edges.size();\n\t\tbool bruteForce = edgeCount <= 20;\n\t\tif (!bruteForce && !m_gridCreated)\n\t\t\tbruteForce = !createGrid();\n\t\tif (bruteForce) {\n'},
+    {"id": 'xatlas-grid-and-scheduler-8', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t{\n\t\tbool bruteForce = m_edges.size() <= 20;\n\t\tif (!bruteForce && m_cellDataOffsets.isEmpty())\n\t\t\tbruteForce = !createGrid();\n\t\tconst uint32_t *edges1, *edges2 = nullptr;\n',
+     "new": "\t{\n\t\tbool bruteForce = m_edges.size() <= 20;\n\t\t// A few edges checked against the grid's edges (piecewise parameterization, which resets the grid after\n\t\t// every face it adds) do not need the cell lists: see gatherPotentialEdgesWithoutLists.\n\t\tconst bool withoutLists = edges.length > 0 && !m_gridCreated;\n\t\tif (!bruteForce && withoutLists)\n\t\t\tbruteForce = !createEdgeBoxes();\n\t\telse if (!bruteForce && !m_gridCreated)\n\t\t\tbruteForce = !createGrid();\n\t\tconst uint32_t *edges1, *edges2 = nullptr;\n"},
+    {"id": 'xatlas-grid-and-scheduler-9', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\t\t\t}\n\t\t\t} else {\n\t\t\t\tcomputePotentialEdges(edgePosition0(edge1), edgePosition1(edge1));\n\t\t\t\tedges2 = m_potentialEdges.data();\n\t\t\t\tedges2Count = m_potentialEdges.size();\n',
+     "new": "\t\t\t\t}\n\t\t\t} else {\n\t\t\t\tif (edges.length == 0) {\n\t\t\t\t\t// edge1 is the grid's edge i: createGrid kept the cells its traversal visited.\n\t\t\t\t\tconst uint32_t first = m_edgeCellOffsets[i];\n\t\t\t\t\tgatherPotentialEdges(&m_edgeCells[first], m_edgeCellOffsets[i + 1] - first);\n\t\t\t\t} else if (withoutLists)\n\t\t\t\t\tgatherPotentialEdgesWithoutLists(edgePosition0(edge1), edgePosition1(edge1));\n\t\t\t\telse\n\t\t\t\t\tcomputePotentialEdges(edgePosition0(edge1), edgePosition1(edge1));\n\t\t\t\tedges2 = m_potentialEdges.data();\n\t\t\t\tedges2Count = m_potentialEdges.size();\n"},
+    {"id": 'xatlas-grid-and-scheduler-10', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\nprivate:\n\tbool createGrid()\n\t{\n\t\t// Compute edge extents. Min will be the grid origin.\n',
+     "new": "\nprivate:\n\t// The grid's origin, cell size and size in cells. False if the edges do not span a grid.\n\tbool createGridGeometry()\n\t{\n\t\t// Compute edge extents. Min will be the grid origin.\n"},
+    {"id": 'xatlas-grid-and-scheduler-11', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\t\tif (m_gridWidth <= 1 || m_gridHeight <= 1)\n\t\t\treturn false;\n\t\t// Insert edges into cells.\n\t\tm_cellDataOffsets.resize(m_gridWidth * m_gridHeight);\n\t\tfor (uint32_t i = 0; i < m_cellDataOffsets.size(); i++)\n\t\t\tm_cellDataOffsets[i] = UINT32_MAX;\n\t\tm_cellData.clear();\n\t\tm_cellData.reserve(edgeCount * 2);\n\t\tfor (uint32_t i = 0; i < edgeCount; i++) {\n\t\t\tconst uint32_t edge = m_edges[i];\n\t\t\ttraverse(edgePosition0(edge), edgePosition1(edge));\n\t\t\tXA_DEBUG_ASSERT(!m_traversedCellOffsets.isEmpty());\n\t\t\tfor (uint32_t j = 0; j < m_traversedCellOffsets.size(); j++) {\n\t\t\t\tconst uint32_t cell = m_traversedCellOffsets[j];\n\t\t\t\tuint32_t offset = m_cellDataOffsets[cell];\n\t\t\t\tif (offset == UINT32_MAX)\n\t\t\t\t\tm_cellDataOffsets[cell] = m_cellData.size();\n\t\t\t\telse {\n\t\t\t\t\tfor (;;) {\n\t\t\t\t\t\tuint32_t &nextOffset = m_cellData[offset + 1];\n\t\t\t\t\t\tif (nextOffset == UINT32_MAX) {\n\t\t\t\t\t\t\tnextOffset = m_cellData.size();\n\t\t\t\t\t\t\tbreak;\n\t\t\t\t\t\t}\n\t\t\t\t\t\toffset = nextOffset;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tm_cellData.push_back(edge);\n\t\t\t\tm_cellData.push_back(UINT32_MAX);\n\t\t\t}\n\t\t}\n\t\treturn true;\n\t}\n\n\tvoid computePotentialEdges(Vector2 p1, Vector2 p2)\n\t{\n\t\tm_potentialEdges.clear();\n\t\ttraverse(p1, p2);\n\t\tfor (uint32_t j = 0; j < m_traversedCellOffsets.size(); j++) {\n\t\t\tconst uint32_t cell = m_traversedCellOffsets[j];\n\t\t\tuint32_t offset = m_cellDataOffsets[cell];\n\t\t\twhile (offset != UINT32_MAX) {\n',
+     "new": "\t\tif (m_gridWidth <= 1 || m_gridHeight <= 1)\n\t\t\treturn false;\n\t\treturn true;\n\t}\n\n\t// traverse(p1, p2) only visits cells inside the rectangle spanned by the cells of p1 and p2 (it steps from\n\t// the first towards the last and stops past it), so two edges whose rectangles are apart share no cell.\n\tvoid cellRectangle(Vector2 p1, Vector2 p2, uint32_t *rect) const\n\t{\n\t\tconst uint32_t x1 = cellX(p1.x), y1 = cellY(p1.y), x2 = cellX(p2.x), y2 = cellY(p2.y);\n\t\trect[0] = min(x1, x2);\n\t\trect[1] = min(y1, y2);\n\t\trect[2] = max(x1, x2);\n\t\trect[3] = max(y1, y2);\n\t}\n\n\t// The grid geometry and each edge's cell rectangle, without the cell lists.\n\tbool createEdgeBoxes()\n\t{\n\t\tif (m_edgeBoxesCreated)\n\t\t\treturn true;\n\t\tif (!createGridGeometry())\n\t\t\treturn false;\n\t\tconst uint32_t edgeCount = m_edges.size();\n\t\tm_edgeBoxes.resize(edgeCount * 4);\n\t\tfor (uint32_t i = 0; i < edgeCount; i++) {\n\t\t\tconst uint32_t edge = m_edges[i];\n\t\t\tcellRectangle(edgePosition0(edge), edgePosition1(edge), &m_edgeBoxes[i * 4]);\n\t\t}\n\t\tm_edgeBoxesCreated = true;\n\t\treturn true;\n\t}\n\n\t// The same edges computePotentialEdges(p1, p2) would find in the cell lists (each once, sorted): the edges\n\t// whose traversal shares a cell with the traversal of p1 p2. Only the edges whose cell rectangle meets the\n\t// query's are traversed. Building the cell lists costs a traversal of every edge, and piecewise\n\t// parameterization rebuilds them after every face it adds to a chart, for a check of a few edges.\n\tvoid gatherPotentialEdgesWithoutLists(Vector2 p1, Vector2 p2)\n\t{\n\t\tm_potentialEdges.clear();\n\t\ttraverse(p1, p2);\n\t\tm_queryCells.clear();\n\t\tm_queryCells.push_back(m_traversedCellOffsets);\n\t\tuint32_t queryRect[4];\n\t\tcellRectangle(p1, p2, queryRect);\n\t\tconst uint32_t edgeCount = m_edges.size();\n\t\tfor (uint32_t i = 0; i < edgeCount; i++) {\n\t\t\tconst uint32_t *rect = &m_edgeBoxes[i * 4];\n\t\t\tif (rect[2] < queryRect[0] || rect[0] > queryRect[2] || rect[3] < queryRect[1] || rect[1] > queryRect[3])\n\t\t\t\tcontinue;\n\t\t\tconst uint32_t edge = m_edges[i];\n\t\t\ttraverse(edgePosition0(edge), edgePosition1(edge));\n\t\t\tbool shared = false;\n\t\t\tfor (uint32_t j = 0; j < m_traversedCellOffsets.size() && !shared; j++) {\n\t\t\t\tfor (uint32_t k = 0; k < m_queryCells.size(); k++) {\n\t\t\t\t\tif (m_traversedCellOffsets[j] == m_queryCells[k]) {\n\t\t\t\t\t\tshared = true;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tif (shared)\n\t\t\t\tm_potentialEdges.push_back(edge);\n\t\t}\n\t\tif (m_potentialEdges.isEmpty())\n\t\t\treturn;\n\t\tinsertionSort(m_potentialEdges.data(), m_potentialEdges.size());\n\t}\n\n\tbool createGrid()\n\t{\n\t\tif (!createGridGeometry())\n\t\t\treturn false;\n\t\tconst uint32_t edgeCount = m_edges.size();\n\t\t// Insert edges into cells. Every cell outside m_usedCells is kept empty between grids, so only the cells\n\t\t// the previous grid used are cleared here instead of all of them (up to 512 x 512 per grid, and a grid is\n\t\t// built for every face a chart tries to take). Each used cell keeps the offset of its list's last node, so\n\t\t// appending an edge does not walk the list. The lists and their order are the same as before.\n\t\tconst uint32_t cellCount = m_gridWidth * m_gridHeight;\n\t\tfor (uint32_t i = 0; i < m_usedCells.size(); i++)\n\t\t\tm_cellDataOffsets[m_usedCells[i]] = UINT32_MAX;\n\t\tm_usedCells.clear();\n\t\tif (m_cellDataOffsets.size() < cellCount) {\n\t\t\tconst uint32_t oldCellCount = m_cellDataOffsets.size();\n\t\t\tm_cellDataOffsets.resize(cellCount);\n\t\t\tfor (uint32_t i = oldCellCount; i < cellCount; i++)\n\t\t\t\tm_cellDataOffsets[i] = UINT32_MAX;\n\t\t\tm_cellDataTails.resize(cellCount);\n\t\t}\n\t\tm_cellData.clear();\n\t\tm_cellData.reserve(edgeCount * 2);\n\t\t// The cells each edge's traversal visits are kept for intersect() checking the grid against itself, which\n\t\t// would otherwise traverse every edge a second time.\n\t\tm_edgeCells.clear();\n\t\tm_edgeCellOffsets.resize(edgeCount + 1);\n\t\tfor (uint32_t i = 0; i < edgeCount; i++) {\n\t\t\tconst uint32_t edge = m_edges[i];\n\t\t\ttraverse(edgePosition0(edge), edgePosition1(edge));\n\t\t\tXA_DEBUG_ASSERT(!m_traversedCellOffsets.isEmpty());\n\t\t\tm_edgeCellOffsets[i] = m_edgeCells.size();\n\t\t\tm_edgeCells.push_back(m_traversedCellOffsets);\n\t\t\tfor (uint32_t j = 0; j < m_traversedCellOffsets.size(); j++) {\n\t\t\t\tconst uint32_t cell = m_traversedCellOffsets[j];\n\t\t\t\tconst uint32_t offset = m_cellData.size();\n\t\t\t\tif (m_cellDataOffsets[cell] == UINT32_MAX) {\n\t\t\t\t\tm_cellDataOffsets[cell] = offset;\n\t\t\t\t\tm_usedCells.push_back(cell);\n\t\t\t\t} else\n\t\t\t\t\tm_cellData[m_cellDataTails[cell] + 1] = offset;\n\t\t\t\tm_cellDataTails[cell] = offset;\n\t\t\t\tm_cellData.push_back(edge);\n\t\t\t\tm_cellData.push_back(UINT32_MAX);\n\t\t\t}\n\t\t}\n\t\tm_edgeCellOffsets[edgeCount] = m_edgeCells.size();\n\t\tm_gridCreated = true;\n\t\treturn true;\n\t}\n\n\tvoid computePotentialEdges(Vector2 p1, Vector2 p2)\n\t{\n\t\ttraverse(p1, p2);\n\t\tgatherPotentialEdges(m_traversedCellOffsets.data(), m_traversedCellOffsets.size());\n\t}\n\n\t// The edges in the given cells, sorted.\n\tvoid gatherPotentialEdges(const uint32_t *cells, uint32_t cellCount)\n\t{\n\t\tm_potentialEdges.clear();\n\t\tfor (uint32_t j = 0; j < cellCount; j++) {\n\t\t\tconst uint32_t cell = cells[j];\n\t\t\tuint32_t offset = m_cellDataOffsets[cell];\n\t\t\twhile (offset != UINT32_MAX) {\n"},
+    {"id": 'xatlas-grid-and-scheduler-12', "file": 'third_party/xatlas/xatlas.cpp',
+     "commit": XATLAS_COMMIT,
+     "old": '\tVector2 m_gridOrigin;\n\tuint32_t m_gridWidth, m_gridHeight; // in cells\n\tArray<uint32_t> m_cellDataOffsets;\n\tArray<uint32_t> m_cellData;\n\tArray<uint32_t> m_potentialEdges;\n',
+     "new": "\tVector2 m_gridOrigin;\n\tuint32_t m_gridWidth, m_gridHeight; // in cells\n\tbool m_gridCreated = false; // Cell lists are valid for the current edges.\n\tArray<uint32_t> m_cellDataOffsets; // Per cell: offset of its list's first node, UINT32_MAX if empty.\n\tArray<uint32_t> m_cellDataTails; // Per used cell: offset of its list's last node.\n\tArray<uint32_t> m_usedCells; // Cells with a list in the current grid.\n\tArray<uint32_t> m_edgeCells; // The cells each edge of the grid traverses, edge after edge.\n\tArray<uint32_t> m_edgeCellOffsets; // Per edge of the grid: where its cells start in m_edgeCells.\n\tbool m_edgeBoxesCreated = false; // Grid geometry and m_edgeBoxes are valid for the current edges.\n\tArray<uint32_t> m_edgeBoxes; // Per edge: the rectangle of cells its traversal stays in (x0, y0, x1, y1).\n\tArray<uint32_t> m_queryCells;\n\tArray<uint32_t> m_cellData;\n\tArray<uint32_t> m_potentialEdges;\n"},
 ]
 
 

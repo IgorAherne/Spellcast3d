@@ -1,7 +1,9 @@
 // The "Edge fade" slider under an Omni-Texture's painted views: how far the edge of the repaint picked fades into
 // what is around it. Moved, the hub puts that repaint onto the model again - its worker alone, no Qwen-Image - and
-// answers with the prop and the models' new names (adapters/omnitexture.py refade). The hub's worker is readied
-// when a repaint is pointed at or picked, so that the first change is as quick as the ones after it.
+// answers with the prop and the new name of the model it shows (adapters/omnitexture.py refade). The hub's worker
+// is readied ahead of that - where the hub sees fit: not beside a job, nor short of memory - for a click on a
+// picture (ready, the stage's to call) and, when the pointer comes to this slider, for its other values, so that
+// the first change is as quick as the ones after it.
 
 import { api, propApi } from '../api.js';
 import { spinner } from '../controls.js';
@@ -11,7 +13,7 @@ import { toastError } from '../ui.js';
 import { FADE_STEP, MAX_FADE } from './rules.js';
 
 /**
- * The slider of the prop `propId`: {row (its node), show(made, {any, locked}), ready(made), fading()}.
+ * The slider of the prop `propId`: {row (its node), show(made, {any, locked}), ready(every), fading()}.
  * made: the repaint picked (rules.omniRepaints) or null; any: the model holds repaints at all; locked: a
  * Omni-Texture job of the prop waits or runs. Hooks: before() just before the hub is asked (it is asked once a
  * promise before() returns has settled: the hand paint goes into the files first), faded(project, answer)
@@ -30,7 +32,6 @@ export function createFadeSlider(propId, { before, faded, changed }) {
   let fading = false;
   let holding = false;      // the slider is held: the page's updates (any job's progress) leave its value alone
   let shown = null;         // the repaint and fade the slider was last set to
-  let readied = null;       // the repaint the hub's worker was last readied for
 
   const showValue = () => {
     value.textContent = `\u00d7${String(+range.value)}`;
@@ -48,10 +49,11 @@ export function createFadeSlider(propId, { before, faded, changed }) {
     }
     showValue();
     busy.hidden = !fading;
-    row.title = !made ? 'Click a repaint above (framed in magenta) to set how far its edge fades.'
+    row.title = !made ? 'Fades the edge of the repaint you clicked last - until you click one, the newest that shows. '
+      + 'That one is hidden now: click it to show it again.'
       : !made.fadable ? 'This repaint cannot be faded again: the model it was painted onto is no longer kept.'
-        : 'How far the edge of the repaint picked fades into what is around it. It is put onto the model again, '
-          + 'which takes a few seconds.';
+        : 'How far the edge of the repaint framed in bright magenta - the one you clicked last, else the newest '
+          + 'that shows - fades into what is around it.';
   }
 
   async function apply(made, fade) {
@@ -70,14 +72,22 @@ export function createFadeSlider(propId, { before, faded, changed }) {
     }
   }
 
-  /** The hub readies its worker for a repaint (it holds the model before it until a while after the last change). */
-  function ready(made) {
-    if (!made.fadable || readied === made.glb || fading) return;
-    readied = made.glb;
-    api('POST', `${propApi(projectId(), propId)}/omnitexture/fade`, { glb: made.glb, prepare: true })
-      .catch(() => { readied = null; });
-  }
+  /**
+   * The hub is asked to ready its worker for `what` the artist is at (a change that finds it unready is only
+   * slower).
+   */
+  const prepare = (what) => api('POST', `${propApi(projectId(), propId)}/omnitexture/fade`,
+    { ...what, prepare: true }).catch(() => {});
 
+  /**
+   * A model with repaints is on screen: ready for a click on its newest - with `every` (the pointer is at the
+   * pictures), on any of them.
+   */
+  const ready = (every) => prepare(every ? { all: true } : {});
+
+  row.addEventListener('pointerenter', () => {
+    if (picked?.fadable && !fading) prepare({ glb: picked.glb });
+  });
   range.addEventListener('input', showValue);
   range.addEventListener('pointerdown', () => {
     holding = true;

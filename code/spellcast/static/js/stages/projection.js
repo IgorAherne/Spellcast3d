@@ -165,7 +165,7 @@ function buildProp(prop) {
       paint.unbind();
       return;
     }
-    paint.bind({ viewer, project: projectId(), propId: id, glb: shownBake, select: (mode) => pane.maps.select(mode) });
+    paint.bind({ viewer, project: projectId(), propId: id, glb: shownBake, select: (mode) => pane.maps.select(mode, true) });
   }
 
   // ---- right: settings -----------------------------------------------------------------------

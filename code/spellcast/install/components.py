@@ -102,9 +102,10 @@ TORCHSPARSE_WHEEL = paths.WHL / "torchsparse-2.1.0+cu128torch2.8-cp311-cp311-win
 PYFQMR_WHEEL = paths.WHL / "pyfqmr_triflow-0.5.0+triflow-cp311-cp311-win_amd64.whl"
 # xatlas (the UV unwrap of the retopology stage, in Instant Meshes' venv): Spellcast3D's own build of xatlas-python
 # 0.0.11, its vendored xatlas with the chart-merging pass fixed (it scanned every chart for every chart it tested and
-# started over after each merge: 164 s for a 22,800-triangle tree, 1.1 s now, the same atlas bit for bit). Built by
+# started over after each merge: 164 s for a 22,800-triangle tree, 1.1 s now, the same atlas bit for bit) and its
+# chart growing and task scheduler made about twice as fast (again the same atlas). Built by
 # code/release/wheels/xatlas/build_xatlas_win.py from this project's forks; the version tag keeps it apart from PyPI's.
-XATLAS_WHEEL = paths.WHL / "xatlas-0.0.11+spellcast3d.1-cp311-cp311-win_amd64.whl"
+XATLAS_WHEEL = paths.WHL / "xatlas-0.0.11+spellcast3d.2-cp311-cp311-win_amd64.whl"
 # About what share_identical_files leaves out of a new retopology venv when another venv has the same torch
 # (measured: the forge and pixal3d venvs have 7.4 GB of identical big files).
 SHARED_TORCH_GB = 7.0

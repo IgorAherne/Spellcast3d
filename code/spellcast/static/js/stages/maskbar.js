@@ -252,7 +252,8 @@ export function cameraOf(viewer) {
  * The tools of one Omni-Texture view: {el, cover (nodes for the viewport), bind({viewer, project, propId, glb, steps,
  * step?, select(view), begin?}), unbind(), settle(), flush(), destroy()}. step: the prop's step the model stands for
  * when it is not the model itself (TAKEN_OFF: the 3D model, shown for a result taken off). cover: black outside the square "Render Masked" sends,
- * while the mask marker is up; select: picks a map view (the map bar's own); busy(): the stage works on the prop
+ * while the mask marker is up; select: moves the model to a map view on the artist's behalf (the map bar's select,
+ * `byArtist`); busy(): the stage works on the prop
  * (its job starting, a fade, a picture being taken off): nothing paints and Ctrl+Z waits. settle(): see below.
  */
 export function createMaskBar({ busy: stageBusy = () => false, changed: told = () => {} } = {}) {
