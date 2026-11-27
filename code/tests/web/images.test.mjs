@@ -157,14 +157,14 @@ test('Images says what it wants loaded - the picked model, the card taken from a
     IMAGES.mount(host, ctx);
     await new Promise((r) => realTimeout(r, 0));
     assert.deepEqual(sent, [], 'showing asks nothing by itself: the shell does, once per arrival, with this wish');
-    assert.deepEqual(IMAGES.warmWish(), { tool: 'qwen', displace: true, model: 'full' }, 'the model the prop on screen draws with');
+    assert.deepEqual(IMAGES.warmWish(), { tool: 'qwen', displace: true, model: 'full', stage: 'images' }, 'the model the prop on screen draws with, in Images\' arithmetic');
     // The full model is still loading and the artist picks the Turbo: the hub is asked for it at once.
     const [seg] = host.byClass('sv-model')[0].byClass('seg');
     seg.children[0].click();
     await new Promise((r) => realTimeout(r, 0));
-    assert.deepEqual(warms(), [['POST', '/api/tools/qwen/warm', '{"displace":true,"model":"turbo"}']]);
+    assert.deepEqual(warms(), [['POST', '/api/tools/qwen/warm', '{"displace":true,"model":"turbo","stage":"images"}']]);
     assert.equal(store.status.tools.qwen.state, 'stopping', 'the page shows what the hub answered');
-    assert.deepEqual(IMAGES.warmWish(), { tool: 'qwen', displace: true, model: 'turbo' });
+    assert.deepEqual(IMAGES.warmWish(), { tool: 'qwen', displace: true, model: 'turbo', stage: 'images' });
     IMAGES.unmount();
     // Forge Neo has no model of the launcher's to name; without an image generator there is nothing to ask.
     reset(status('forge', { states: { forge: 'stopped' } }));
@@ -1904,9 +1904,16 @@ async function withMarkedPicture(run) {
     for (const [t, fn] of [...listening]) if (t === type) fn(e);
     return e;
   };
+  const toasts = new FakeEl('div');
+  document.getElementById = (elId) => (elId === 'toasts' ? toasts : null);
+  const toasted = () => toasts.children.map((t) => t.textContent);
+  document.body = new FakeEl('body');   // where a ripple goes (anim.js)
+  const ripples = () => document.body.children.filter((c) => c.className === 'ripple').length;
   try {
-    await run({ ctx, hubProp, calls, painted, frames, runFrames, fire, tick, ringCursor, setMotionPref });
+    await run({ ctx, hubProp, calls, painted, frames, runFrames, fire, tick, ringCursor, setMotionPref, toasted, ripples });
   } finally {
+    delete document.body;
+    delete document.getElementById;
     document.addEventListener = added;
     document.removeEventListener = removed;
     delete globalThis.addEventListener;
@@ -2141,13 +2148,27 @@ test('Select Object: the wand, a circle on the picture shown as moving stripes a
   });
 });
 
-test('Smart Mask: the brush beside the wand; strokes add up to a mask the picture shows through on the page, a larger box asks what should be there and keeps its words; the job sends the mask as flat magenta over the picture and alone, the picture it lies on and the words in the mask\'s sentence', async () => {
+test('maskedPrompt: the words go as they are when they speak of the mask, misspelt too, else after "for the masked area do: "', async () => {
+  const { maskedPrompt } = await load('stages/images.js');
+  for (const words of ['make the mask brass', 'Masked part: brass', 'the msak brass', 'MSAKED brass', 'masck brass',
+    'mascked brass', 'the maskid bit', 'amsk brass', 'maks brass', 'masking it brass']) {
+    assert.equal(maskedPrompt(words), words, words);
+  }
+  for (const words of ['make it brass', 'damask cloth', 'makes it brass', 'a mas k']) {
+    assert.equal(maskedPrompt(words), `for the masked area do: ${words}`, words);
+  }
+});
+
+test('Smart Mask: the brush beside the wand; strokes add up to a mask the picture shows through on the page, each one let go rings the words on the right; while it is on, From Scratch waits and Re-Render Viewport (or Enter in the words) sends it as flat magenta over the picture and alone, the picture it lies on and the words for the mask', async () => {
   await withMarkedPicture(async (kit) => {
-    const { ctx, hubProp, calls, painted, tick, ringCursor } = kit;
+    const { ctx, hubProp, calls, painted, tick, ringCursor, ripples } = kit;
     reset(status('qwen'));
-    const { host, canvas, layer, wand, brush, sized, stroke, point, asked, key, typed, on, layerNow, keyOnPage } = mountMarked(kit);
+    const { host, canvas, layer, wand, brush, wipe, sized, stroke, point, asked, key, typed, on, layerNow, keyOnPage } = mountMarked(kit);
     const pressed = () => [wand, brush].map((b) => b.getAttribute('aria-pressed'));
-    const field = () => asked()[0].byClass('mk-ask-input')[0];
+    const [scratch] = host.byClass('sv-render');
+    const [viewport] = host.byClass('sv-rerender');
+    const [words] = host.byClass('sv-prompt');
+    const posts = () => calls.filter((c) => c[0] === 'POST').map((c) => c[1]);
 
     // One tool at a time; the brush's ring is twice the circle's (a 10 px marker: 20 px).
     sized(10);
@@ -2155,41 +2176,41 @@ test('Smart Mask: the brush beside the wand; strokes add up to a mask the pictur
     brush.click();
     assert.deepEqual(pressed(), ['false', 'true']);
     assert.equal(canvas.style.cursor, ringCursor(20));
+    assert.deepEqual([scratch.disabled, wipe.hidden], [false, true]);
 
-    // A stroke: on the selection's layer, which the picture shows through, never on the marks; its box asks, a few
-    // lines high, and renders nothing while it is empty.
+    // A stroke: on the selection's layer, which the picture shows through, never on the marks. No box asks: the
+    // words on the right ring, From Scratch waits, the wipe takes the mask off.
     painted.length = 0;
     stroke([100, 100], [300, 120], [300, 120]);
     assert.deepEqual([layer.hidden, layer.classList.contains('veil'), on(canvas).length], [false, true, 0]);
     assert.deepEqual([...new Set(on(layer, 'stroke').map((r) => r.width))], [20]);
-    assert.equal(asked().length, 1);
-    assert.match(asked()[0].textContent, /What should be here\?/);
-    assert.equal(field().attrs.placeholder, 'a polished brass padlock with fine engravings', 'a thing to place, not a change to what is there');
-    assert.deepEqual([field().tagName, field().attrs.rows, field().value], ['TEXTAREA', '3', '']);
-    const [clear, go] = asked()[0].all((e) => e.tagName === 'BUTTON');
-    assert.deepEqual([clear.textContent, go.textContent, go.disabled], ['Clear mask', 'Render', true]);
-    key(field(), 'Enter');
-    await tick();
-    assert.deepEqual([asked().length, calls.length], [1, 0], 'nothing typed: the question stays');
+    assert.deepEqual([asked().length, ripples(), scratch.disabled, viewport.disabled], [0, 1, true, false]);
+    assert.match(scratch.title, /mask is on the picture/);
+    assert.deepEqual([wipe.hidden, wipe.getAttribute('aria-label')], [false, 'Take the mask off']);
 
-    // Words typed, then a stroke more: the mask grows (the first stroke stays on its layer), and the box is back
-    // beside it with the words - not selected: they were never rendered.
-    typed(field(), 'make it brass');
+    // No words: nothing is sent, the words ring again.
+    typed(words, '  ');
+    calls.length = 0;
+    viewport.click();
+    await tick();
+    assert.deepEqual([posts(), ripples(), layer.hidden], [[], 2, false]);
+    assert.match(kit.toasted().at(-1), /what should be in the masked area/);
+
+    // A stroke more: the mask grows (the first stroke stays on its layer), and the words ring.
+    typed(words, 'make it brass');
     const before = on(layer, 'stroke').length;
     point('pointerdown', 200, 300);
-    assert.deepEqual([asked().length, layer.hidden, layer.width], [0, false, 1024], 'out of the way while the brush is down');
     point('pointermove', 260, 340);
     point('pointerup', 260, 340);
     assert.ok(on(layer, 'stroke').length > before);
-    assert.deepEqual([asked().length, field().value, !!field().selected], [1, 'make it brass', false]);
-    key(field(), 'Enter', { shiftKey: true });
-    assert.equal(asked().length, 1, 'Shift+Enter is a new line');
+    assert.equal(ripples(), 3);
 
-    // Enter: the picture goes up with both strokes over it in flat magenta - nothing of what they cover shows -, and
-    // the job's words are the mask's sentence around the artist's. The brush stays taken up; the mask is gone with
-    // its picture.
+    // Re-Render Viewport: the picture goes up with both strokes over it in flat magenta - nothing of what they cover
+    // shows -, and the job's words are the prop's after "for the masked area do: ". The brush stays taken up; the
+    // mask is gone with its picture.
     painted.length = 0;
-    key(field(), 'Enter');
+    calls.length = 0;
+    viewport.click();
     await tick();
     const out = painted.find((r) => r.k === 'drawImage').on;
     assert.deepEqual(on(out, 'drawImage').map((r) => r.alpha), [1], 'the picture, once');
@@ -2201,61 +2222,53 @@ test('Smart Mask: the brush beside the wand; strokes add up to a mask the pictur
     assert.deepEqual(on(alone, 'fillRect').map((r) => [r.style, ...r.args]), [['#000000', 0, 0, 1024, 768]]);
     assert.deepEqual([on(alone, 'drawImage').length, on(alone, 'arc').length, [...new Set(on(alone, 'stroke').map((r) => `${r.style} ${r.width}`))]],
       [0, 2, ['#ffffff 20']]);
-    assert.deepEqual(calls.map((c) => `${c[0]} ${c[1]}`), ['POST viewport', 'POST jobs']);
-    assert.deepEqual(calls[0][2].parts.map(([field, , name]) => `${field}:${name}`), ['file:viewport.png', 'mask:mask.png']);
-    assert.deepEqual(calls.at(-1)[2].params, {
+    const sent = calls.filter((c) => c[0] === 'POST');
+    assert.deepEqual(posts(), ['viewport', 'jobs']);
+    assert.deepEqual(sent[0][2].parts.map(([field, , name]) => `${field}:${name}`), ['file:viewport.png', 'mask:mask.png']);
+    assert.deepEqual(sent[1][2].params, {
       from_viewport: 'viewport/viewport.png', use_references: false,
-      prompt: 'Place make it brass inside the area masked with magenta color.',
+      prompt: 'for the masked area do: make it brass',
       viewport_mask_of: 'images/0001.png',
     });
     assert.deepEqual([pressed(), asked().length, ...layerNow()], [['false', 'true'], 0, true, 1, 0]);
-    assert.equal(store.project.props[0].images.settings.prompt, 'a hut', 'the prop keeps its own words');
     assert.equal(store.jobs.length, 1);
     IMAGES.update(ctx);                               // its job shows: the markers hide while it runs
     assert.deepEqual(pressed(), ['false', 'true'], 'taken up through its job too');
 
-    // The next mask: the words are there, selected, to type over or to render again. Typed over, they are the new
-    // ones, unselected the next time.
+    // The next mask, words that speak of it, Enter in them: they go as they are, and the picture is re-rendered -
+    // From Scratch waits while a mask is on.
     store.jobs = [];
     IMAGES.update(ctx);
+    assert.equal(scratch.disabled, false, 'no mask: From Scratch again');
     stroke([100, 100], [300, 120], [300, 120]);
-    assert.deepEqual([field().value, field().selected], ['make it brass', true]);
-    typed(field(), 'make it copper');
-    stroke([400, 400], [450, 420], [450, 420]);
-    assert.deepEqual([field().value, !!field().selected], ['make it copper', false]);
+    typed(words, 'paint the masked part copper');
+    calls.length = 0;
+    key(words, 'Enter');
+    await tick();
+    assert.deepEqual(posts(), ['viewport', 'jobs']);
+    assert.equal(calls.filter((c) => c[0] === 'POST')[1][2].params.prompt, 'paint the masked part copper');
+    store.jobs = [];
+    IMAGES.update(ctx);
 
-    // Escape in the box, or "Clear mask", takes the mask off and leaves the brush taken up; Escape then puts it down.
-    key(field(), 'Escape');
-    assert.deepEqual([pressed(), asked().length, ...layerNow()], [['false', 'true'], 0, true, 1, 0]);
+    // Escape takes the mask off and leaves the brush taken up; Escape then puts it down. The wipe takes it off too.
     stroke([100, 100], [300, 120], [300, 120]);
-    asked()[0].all((e) => e.tagName === 'BUTTON')[0].click();
-    assert.deepEqual([pressed(), asked().length, layer.hidden], [['false', 'true'], 0, true]);
+    keyOnPage('Escape');
+    assert.deepEqual([pressed(), ...layerNow(), scratch.disabled, wipe.hidden], [['false', 'true'], true, 1, 0, false, true]);
     keyOnPage('Escape');
     assert.deepEqual(pressed(), ['false', 'false']);
-
-    // Another picture of the prop: the mask on the one before goes, the words stay. Another prop: a box of its own.
     brush.click();
+    stroke([100, 100], [300, 120], [300, 120]);
+    wipe.click();
+    assert.deepEqual([pressed(), layer.hidden, scratch.disabled], [['false', 'true'], true, false]);
+
+    // Another picture of the prop: the mask on the one before goes.
     stroke([100, 100], [300, 120], [300, 120]);
     store.project.props[0].images = { ...store.project.props[0].images, chosen: 'images/0002.png', candidates: ['images/0001.png', 'images/0002.png'] };
     IMAGES.update(ctx);
     const [img] = host.byClass('sv-picture-img');
     Object.assign(img, { complete: true, naturalWidth: 1024, naturalHeight: 768 });
     for (const fn of img.listeners.load || []) fn();
-    assert.deepEqual([pressed(), asked().length, layer.hidden], [['false', 'true'], 0, true]);
-    stroke([100, 100], [300, 120], [300, 120]);
-    assert.equal(field().value, 'make it copper');
-    store.project.props.push({ ...structuredClone(hubProp), id: 'w_2', name: 'Barn' });
-    IMAGES.update({ ...ctx, selectedId: 'w_2' });
-    const next = host.byClass('sv-picture-img')[0];
-    Object.assign(next, { complete: true, naturalWidth: 1024, naturalHeight: 768 });
-    for (const fn of next.listeners.load || []) fn();
-    const other = host.byClass('mk-smart')[0];
-    other.click();
-    for (const [type, x, y] of [['pointerdown', 100, 100], ['pointermove', 300, 120], ['pointerup', 300, 120]]) {
-      for (const fn of host.byClass('mk-canvas')[0].listeners[type]) fn({ pointerId: 1, pointerType: 'mouse', button: 0, clientX: x, clientY: y, preventDefault() {} });
-    }
-    const box = () => host.byClass('mk-ask').filter((b) => !b.removed)[0];
-    assert.equal(box().byClass('mk-ask-input')[0].value, '', 'nothing typed for this prop yet');
+    assert.deepEqual([pressed(), layer.hidden, scratch.disabled], [['false', 'true'], true, false]);
     // On the black canvas of a prop without a picture there is none to keep: the canvas with its mask alone goes up.
     store.project.props.push({ ...structuredClone(hubProp), id: 'w_3', name: 'Shed', images: { ...hubProp.images, chosen: null, candidates: [] } });
     IMAGES.update({ ...ctx, selectedId: 'w_3' });
@@ -2263,13 +2276,50 @@ test('Smart Mask: the brush beside the wand; strokes add up to a mask the pictur
     for (const [type, x, y] of [['pointerdown', 100, 100], ['pointermove', 300, 120], ['pointerup', 300, 120]]) {
       for (const fn of host.byClass('mk-canvas')[0].listeners[type]) fn({ pointerId: 1, pointerType: 'mouse', button: 0, clientX: x, clientY: y, preventDefault() {} });
     }
-    typed(box().byClass('mk-ask-input')[0], 'a shed');
+    typed(host.byClass('sv-prompt')[0], 'a shed');
     calls.length = 0;
-    key(box().byClass('mk-ask-input')[0], 'Enter');
+    host.byClass('sv-rerender')[0].click();
     await tick();
-    assert.deepEqual(calls.map((c) => `${c[0]} ${c[1]}`), ['POST viewport', 'POST jobs']);
-    assert.deepEqual(calls[0][2].parts.map(([field, , name]) => `${field}:${name}`), ['file:viewport.png']);
-    assert.deepEqual(Object.keys(calls.at(-1)[2].params), ['from_viewport', 'use_references', 'prompt']);
+    assert.deepEqual(posts(), ['viewport', 'jobs']);
+    const shed = calls.filter((c) => c[0] === 'POST');
+    assert.deepEqual(shed[0][2].parts.map(([field, , name]) => `${field}:${name}`), ['file:viewport.png']);
+    assert.deepEqual(Object.keys(shed[1][2].params), ['from_viewport', 'use_references', 'prompt']);
+    IMAGES.unmount();
+  });
+});
+
+test('the pointer on a Render button "with examples" rings the example pictures that go along; a marker or a tool taken up ends the slicing', async () => {
+  await withMarkedPicture(async (kit) => {
+    reset(status('qwen'));
+    const { host, wand, brush, rainbow } = mountMarked(kit);
+    const rung = [];
+    const { animate } = FakeEl.prototype;
+    FakeEl.prototype.animate = function (frames, timing) { rung.push(this); return animate.call(this); };
+    const hover = (btn) => {
+      rung.length = 0;
+      for (const fn of btn.listeners.pointerenter || []) fn({});
+      return rung.filter((el) => el.classList.contains('sv-ref')).length;
+    };
+    try {
+      const [scratch] = host.byClass('sv-render');
+      const [viewport, viewportEx] = host.byClass('sv-rerender');
+      assert.deepEqual([scratch, viewport, viewportEx].map(hover), [0, 0, 0], 'no examples: none to ring');
+      store.project.props[0].images = { ...store.project.props[0].images, references: ['refs/a.png', 'refs/b.png'] };
+      IMAGES.update(kit.ctx);
+      assert.deepEqual([scratch, viewport, viewportEx].map(hover), [2, 0, 2], 'the buttons that say "with examples"');
+    } finally {
+      FakeEl.prototype.animate = animate;
+    }
+
+    // Slicing, then a tool, the brush or a marker taken up: slicing ends.
+    const [toggle] = host.byClass('sl-toggle');
+    const slicing = () => toggle.getAttribute('aria-pressed');
+    for (const take of [() => wand.click(), () => brush.click(), () => host.byClass('mk-black')[0].click(), () => rainbow.click()]) {
+      toggle.click();
+      assert.equal(slicing(), 'true');
+      take();
+      assert.equal(slicing(), 'false');
+    }
     IMAGES.unmount();
   });
 });
@@ -2304,8 +2354,8 @@ test('a tileable picture, slid by its offset or not: what is rendered from it sa
     // Smart Mask's picture is that same picture, changed in a part: slid back too.
     brush.click();
     stroke([100, 100], [300, 120], [300, 120]);
-    typed(asked()[0].byClass('mk-ask-input')[0], 'more moss');
-    key(asked()[0].byClass('mk-ask-input')[0], 'Enter');
+    typed(host.byClass('sv-prompt')[0], 'more moss');
+    viewport.click();
     await tick();
     assert.deepEqual([sent().viewport_shift, sent().viewport_mask_of], [0.1, 'images/0001.png']);
     over();
@@ -2444,12 +2494,11 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
       const { MASK_TOO_LARGE } = await load('stages/marks.js');
       reset(status('qwen'));
       hubProp.images.settings = { prompt: 'a hut', width: 1024, height: 768 };   // the shape of the picture shown
-      const { host, layer, brush, sized, stroke, point, asked, key, typed, on, keyOnPage } = mountMarked(kit);
+      const { host, layer, brush, wipe, sized, stroke, point, on, keyOnPage } = mountMarked(kit);
       const [win] = host.byClass('mk-window');
       const [k1, , k2] = host.byClass('seg-btn').filter((b) => /^[\d.]+K$/.test(b.textContent));
-      const field = () => asked()[0].byClass('mk-ask-input')[0];
-      const go = () => asked()[0].all((e) => e.tagName === 'BUTTON')[1];
-      const refused = () => [go().disabled, asked()[0].byClass('mk-ask-why')[0].hidden === false];
+      const [viewport] = host.byClass('sv-rerender');
+      const refused = () => viewport.title === MASK_TOO_LARGE;   // the button says why it sends nothing
       const pct = (v, of) => `${(v / of) * 100}%`;
       const part = (open, [x0, y0, x1, y1], [w, hh]) => [['mk-window-part', ...open].join(' '),
         `left: ${pct(x0, w)}; top: ${pct(y0, hh)}; width: ${pct(x1 - x0, w)}; height: ${pct(y1 - y0, hh)}`];
@@ -2460,9 +2509,8 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
       // At 1K the picture is drawn whole: no window, never refused.
       stroke([100, 100], [300, 120], [300, 120]);
       assert.deepEqual(shows(), [true, false, []]);
-      typed(field(), 'make it brass');
-      assert.deepEqual(refused(), [false, false]);
-      key(field(), 'Escape');
+      assert.equal(refused(), false);
+      keyOnPage('Escape');
 
       // At 2K (2048 x 1536) all of the picture is drawn anew and a patch of that laid onto it. From the press on the
       // patch shows round what is brushed - a stroke 90 .. 310 across and 90 .. 130 down, twice that in the request's
@@ -2479,7 +2527,7 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
       // wider now.
       point('pointerup', 300, 120);
       assert.deepEqual(shows().slice(0, 2), [false, true]);
-      assert.deepEqual(refused(), [false, false]);
+      assert.equal(refused(), false);
       point('pointerdown', 350, 200);
       assert.deepEqual(shows().slice(0, 2), [false, false]);
       point('pointermove', 400, 220);
@@ -2489,24 +2537,20 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
       // A stroke across most of the picture: the patch is most of it, off its sides still, and nothing is refused.
       stroke([50, 50], [1000, 700], [1000, 700]);
       assert.deepEqual(shows(), [false, true, [part([], [21, 24, 2045, 1498], S)]]);
-      assert.deepEqual(refused(), [false, false]);
+      assert.equal(refused(), false);
 
-      // Ctrl+Z in the box, its words as it opened with them, takes the last stroke back: the patch shows a moment, and
-      // the rest is painted again on the selection's layer.
+      // Ctrl+Z takes the last stroke back: the patch shows a moment, and the rest is painted again on the selection's
+      // layer. Once more: one stroke left.
       painted.length = 0;
-      key(field(), 'z', { ctrlKey: true });
+      assert.equal(keyOnPage('z', { ctrlKey: true }).defaultPrevented, true);
       assert.deepEqual(shows(), [false, true, [part([], [59, 54, 1191, 1078], S)]]);
       assert.equal(on(layer, 'arc').length, 2, 'two strokes left, painted again');
-      // Typed in, Ctrl+Z is the field's own; on the page it takes a stroke back too.
-      typed(field(), 'make it copper');
-      key(field(), 'z', { ctrlKey: true });
-      assert.equal(on(layer, 'arc').length, 2, 'the field\'s');
-      assert.equal(keyOnPage('z', { ctrlKey: true }).defaultPrevented, true);
+      keyOnPage('z', { ctrlKey: true });
       assert.deepEqual(shows(), [false, true, [part([], [59, 54, 1083, 1078], S)]]);
 
       // Rendered: the mask goes up with its one stroke left - the frame is nothing of the pictures sent - and goes.
       painted.length = 0;
-      key(field(), 'Enter');
+      viewport.click();
       await tick();
       assert.deepEqual(calls.filter((c) => c[0] === 'POST').map((c) => c[1]), ['viewport', 'jobs'], 'the Resolution saved meanwhile');
       const out = painted.find((r) => r.k === 'drawImage').on;
@@ -2518,31 +2562,30 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
 
       // A TILEABLE picture's change is drawn in a window of it, and a window holds only so much. A stroke across most of
       // a 2K one: too large. The frame, round the least it would take (what was brushed and 96 px each way, as the image
-      // server moves the picture: round its edge here); Render waits and the box says why; Enter sends nothing.
+      // server moves the picture: round its edge here); Re-Render Viewport says why and sends nothing.
       k2.click();                                 // (the stand-in hub answered with the prop as it had it)
       const [tileTick] = host.byClass('sv-tileable')[0].all((e) => e.classList.contains('switch'));
       tileTick.input.checked = true;
       for (const fn of tileTick.input.listeners.change) fn();
-      const sent = calls.length;
       stroke([50, 50], [1000, 700], [1000, 700]);
       assert.deepEqual(shows(), [false, true, [part(['open-b'], [0, 1520, 2048, 1536], S), part(['open-t'], [0, 0, 2048, 1516], S)]]);
-      assert.deepEqual(refused(), [true, true]);
-      assert.match(asked()[0].textContent, new RegExp(MASK_TOO_LARGE.replace(/[.]/g, '\\.')));
-      key(field(), 'Enter');
+      assert.equal(refused(), true);
+      viewport.click();
       await tick();
       assert.equal(calls.filter((c) => c[0] === 'POST' && c[1] === 'jobs').length, 1, 'no job for it');
+      assert.equal(win.hidden, false, 'the mask stays');
+      assert.equal(kit.toasted().at(-1), MASK_TOO_LARGE);
       // At 1K a window holds it: allowed; back at 2K, refused again.
       k1.click();
-      assert.deepEqual(refused(), [false, false]);
+      assert.equal(refused(), false);
       k2.click();
-      assert.deepEqual([win.hidden, ...refused()], [false, true, true]);
-      // "Clear mask" empties a mask too large, and the next one fits.
-      asked()[0].all((e) => e.tagName === 'BUTTON')[0].click();
-      assert.equal(win.hidden, true);
+      assert.deepEqual([win.hidden, refused()], [false, true]);
+      // The wipe empties a mask too large, and the next one fits.
+      wipe.click();
+      assert.deepEqual([win.hidden, refused()], [true, false]);
       stroke([100, 100], [300, 120], [300, 120]);
-      assert.deepEqual(refused(), [false, false]);
-      key(field(), 'Escape');
-      assert.ok(sent <= calls.length);
+      assert.equal(refused(), false);
+      keyOnPage('Escape');
 
       // Tileable at 1K: a stroke at the right edge lies in the middle of the picture as the image server moves it, its
       // window round it there - all of the height, 768 px across - and laid back: it leaves the right edge and comes
@@ -2551,7 +2594,7 @@ test('Smart Mask over a large picture or a tileable one: the part its change tak
       stroke([1000, 300], [1010, 300], [1010, 300]);
       assert.deepEqual(shows(), [false, true, [part(['open-r'], [621, 0, 1024, 768], [1024, 768]),
         part(['open-l'], [0, 0, 365, 768], [1024, 768])]]);
-      assert.deepEqual(refused(), [false, false]);
+      assert.equal(refused(), false);
     } finally {
       await flushSettings();   // the settings set here go to this test's hub, not the next one's
       IMAGES.unmount();

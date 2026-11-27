@@ -20,7 +20,7 @@ import {
 } from './common.js';
 import { bakeFresh, highPoly, omniChosen, omniOwn, omniTextured, omnitextureUsed } from './rules.js';
 import { createPaintBar } from './paintbar.js';
-import { DEFAULT_VIEW, exportButtons, modelPane, rememberWireframe, toastSaved, triflowNote, wireframeOn } from './preview.js';
+import { DEFAULT_VIEW, exportButtons, modelPane, rememberWireframe, toastSaved, wireframeOn } from './preview.js';
 
 // The ray distance slider, in % of the model's size (the hub takes 0.05-20: typed values stay valid).
 const RAY_MIN = 0.1;
@@ -419,14 +419,13 @@ export default {
 
   /**
    * Saves every prop's best result (the bake, else the clean mesh, else the 3D model) into the project's
-   * export folder, each prop in its own folder there; the hub opens the project's folder in File Explorer
-   * and the toast says which were made with TriFlow (non-commercial use only). A failure reaches the
-   * shell, which toasts it.
+   * export folder, each prop in its own folder there; the hub opens the project's folder in File Explorer.
+   * A failure reaches the shell, which toasts it.
    */
   async onCta() {
     await view?.flush?.();   // the painting still on its way into the bake's files gets there first
     const answer = await api('POST', `${projectApi(projectId())}/export-all`, {});
-    toastSaved(plural(answer?.props ?? boxesOf().length, 'prop'), answer, triflowNote(boxesOf(), 'all'));
+    toastSaved(plural(answer?.props ?? boxesOf().length, 'prop'), answer);
   },
 
   /** "Bake 4 props": every clean mesh without a fresh bake, baked right here. */

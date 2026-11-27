@@ -485,8 +485,9 @@ PINS = ("auto", "on", "off")
 # channel): a picture moves about twice as far as under a change of rounding, and small features are redrawn (a
 # lock's shackle, a roof's ridge, an eye). In blind pairs on those three cards three quarters showed no
 # difference; in the rest its picture was judged the worse one 116 times and the better one 65 times, where a
-# change of rounding came out level. Hence no card draws with it unless the artist asks: the Images panel's "Faster
-# image generation" has the hub start this launcher with --matmul int8 (adapters/qwen.py matmul_arg).
+# change of rounding came out level. Hence no card draws with it unless the artist asks: "Faster image generation"
+# (Images' and Omni-Texture's each its own) has the hub start this launcher with --matmul int8 for that stage's
+# pictures (adapters/qwen.py matmul_arg).
 # The engine reads the variable at its first product through its C runtime's getenv, so it goes into the environment
 # BEFORE the DLL is loaded, like --pin; a variable already set is never changed.
 MATMULS = ("mmq", "int8")

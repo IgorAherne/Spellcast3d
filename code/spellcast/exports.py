@@ -24,9 +24,6 @@ them, are converted from the GLB by launchers/export_worker.py in the imesh venv
 numpy); a conversion is kept in the prop's export_cache/<stage>/<format>/ and made again only when the
 GLB or the file name changes.
 
-A saved low poly (the bake's, or the retopo alone) that TriFlow made comes with a warning: TriFlow is free
-for non-commercial use only.
-
 The same worker saves the artist's painting on a bake into the bake's own files (run_repaint_worker).
 """
 
@@ -63,44 +60,12 @@ _VARIANTS = ("", "_high", "_retopo")
 _MTL_MAP_KEYWORDS = frozenset({"map_kd", "map_ka", "map_ks", "map_ns", "map_d", "map_bump", "bump", "norm", "disp",
                                "decal", "refl", "map_pr", "map_pm", "map_ps", "map_ke"})
 NO_EXPLORER_ENV = "SPELLCAST_NO_EXPLORER"
-NONCOMMERCIAL_METHODS = {paths.TRIFLOW: "TriFlow"}      # retopology methods whose results are not for sale
-# The file each retopology method writes (adapters/*.py): tells a bake's low poly by its name when the prop's
-# retopo has been replaced since.
-_METHOD_FILES = {"retopo.obj": paths.IMESH, "lato2.obj": paths.LATO2, "triflow.obj": paths.TRIFLOW}
 
 # convert(src GLB, {format: cache folder}, file name without extension) -> export_worker.py's result.
 Converter = Callable[[Path, dict[str, Path], str], dict[str, Any]]
 # repaint(bake folder, raw RGBA file, width, height, where to keep the bake's own base colour map first or None)
 # -> export_worker.py's result: {"files": [...]}.
 Repainter = Callable[[Path, Path, int, int, Path | None], dict[str, Any]]
-
-
-def low_poly_method(prop: dict[str, Any], low_rel: str | None) -> str | None:
-    """The retopology method that made the prop's low poly `low_rel` (its retopo.obj, or the one a bake was
-    made from), or None when that is not known."""
-    retopo = prop.get("retopo") or {}
-    if low_rel and low_rel == retopo.get("obj"):
-        return retopo.get("method") or paths.IMESH
-    return _METHOD_FILES.get(Path(low_rel).name) if low_rel else None
-
-
-def noncommercial_note(prop: dict[str, Any], low_rel: str | None) -> str | None:
-    """The warning a saved low poly carries when its method is free for non-commercial use only."""
-    tool = NONCOMMERCIAL_METHODS.get(low_poly_method(prop, low_rel) or "")
-    return made_with_note(tool, [prop.get("name") or prop["id"]]) if tool else None
-
-
-def made_with_note(tool: str, names: list[str]) -> str:
-    """One sentence for all the saved props `tool` made (free for non-commercial use only): "Crate: made with
-    TriFlow — ...", "Lamp and Crate were made with TriFlow — ...", "Lamp, Crate and 4 more were made with ..."."""
-    end = f"made with {tool} — non-commercial use only."
-    if len(names) == 1:
-        return f"{names[0]}: {end}"
-    if len(names) <= 3:
-        who = f"{', '.join(names[:-1])} and {names[-1]}"
-    else:
-        who = f"{names[0]}, {names[1]} and {len(names) - 2} more"
-    return f"{who} were {end}"
 
 
 # ---- names ----------------------------------------------------------------------------------------
@@ -252,8 +217,6 @@ class Saved:
     shown: str | None = None            # the file to select in File Explorer
     props: int = 0                      # props that got at least one file (Export all)
     warnings: list[str] = field(default_factory=list)
-    # {non-commercial tool: {prop id: name}} of the saved low polys it made: one warning names them all
-    made_with: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.into = self.folder
@@ -304,7 +267,6 @@ class Exporter:
         else:
             name = stem
             self._save_bake(project, prop, self.store.projection_files(project, prop), stem, (fmt,), saved)
-            self._note_low_poly(prop, _bake_low_poly(prop), saved)
         saved.shown = f"{name}.{fmt}"
         return saved
 
@@ -338,8 +300,7 @@ class Exporter:
         """Every prop's best result, each prop in its own folder: the bake (GLB, FBX, OBJ + MTL + maps), else
         the retopo OBJ, else the 3D model (GLB, FBX, OBJ; its Omni-Texture instead while that is used:
         projects.omnitexture_used). A prop with a picture only has nothing to save. A
-        prop whose FBX or OBJ cannot be made keeps what could be saved, and a warning says why. A saved low
-        poly TriFlow made gets a warning too (non-commercial use only)."""
+        prop whose FBX or OBJ cannot be made keeps what could be saved, and a warning says why."""
         data = self.store.get_project(project)
         stems = file_stems(data["props"])
         folder = self.store.export_dir(data)
@@ -356,10 +317,8 @@ class Exporter:
                     baked = None
                 if baked is not None:
                     self._save_bake(project, prop, baked, stem, EXPORT_FORMATS, saved)
-                    self._note_low_poly(prop, _bake_low_poly(prop), saved)
                 elif (low := self.store.result_file(project, prop, "retopo", "obj")) is not None:
                     self._place(low, saved, f"{stem}_retopo.obj")
-                    self._note_low_poly(prop, prop["retopo"].get("obj"), saved)
                 elif omnitexture_used(prop) and (high := self.store.result_file(
                         project, prop, "omnitexture", "glb")) is not None:
                     self._save_model(project, prop, "omnitexture", high, f"{stem}_high", EXPORT_FORMATS, saved)
@@ -376,22 +335,6 @@ class Exporter:
         return saved
 
     # ---- the parts ----------------------------------------------------------------------------------
-    @staticmethod
-    def _note_low_poly(prop: dict[str, Any], low_rel: str | None, saved: Saved) -> None:
-        """The warning that a saved low poly is for non-commercial use only: one sentence per tool, naming every
-        prop of the save it made (Export all with six TriFlow props says it once)."""
-        tool = NONCOMMERCIAL_METHODS.get(low_poly_method(prop, low_rel) or "")
-        if tool is None:
-            return
-        names = saved.made_with.setdefault(tool, {})
-        before = made_with_note(tool, list(names.values())) if names else None
-        names.setdefault(prop["id"], prop.get("name") or prop["id"])
-        note = made_with_note(tool, list(names.values()))
-        if before in saved.warnings:
-            saved.warnings[saved.warnings.index(before)] = note
-        elif note not in saved.warnings:
-            saved.warnings.append(note)
-
     def _save_model(self, project: str, prop: dict[str, Any], stage: str, glb: Path, name: str,
                     formats: Iterable[str], saved: Saved) -> None:
         """A GLB as <name>.glb (copied) and/or converted to <name>.fbx / <name>.obj + .mtl + maps."""
@@ -492,11 +435,6 @@ class Exporter:
         except OSError as e:            # open in another program, say: it stays
             log.info("Could not remove the older %s (%s)", old, e)
         saved.files.append(str(target.relative_to(saved.folder)))
-
-
-def _bake_low_poly(prop: dict[str, Any]) -> str | None:
-    """The low poly the prop's bake was made from (projection.source_retopo; an older bake: its retopo.obj)."""
-    return (prop.get("projection") or {}).get("source_retopo") or (prop.get("retopo") or {}).get("obj")
 
 
 def _cached(folder: Path, source: dict[str, Any]) -> list[str] | None:

@@ -10,9 +10,10 @@
 // (adapters/omnitexture.py retouch) and the prop gets a new result, one more of its omnitexture.steps. While the mask
 // marker is up, the viewport outside the square that camera sees is covered in black; the view moves as with any
 // tool (Alt + drag, the middle and right buttons, the wheel), and the box goes to its new place once it rests. The
-// box shows only then; with the marker put down, the side panel's "Render Masked" renders. Either sends the view as
-// it is at the press, with the words, and puts the marker down. In the box, left of its button, "No Facets": the
-// depth map Qwen-Image is shown is then blurred until the model's flat faces are gone from it (`smoothing`).
+// box shows only then; the side panel's "Render Masked" renders too, with a words field above it and "No Facets" on
+// its left that are the box's again (`side`). Either sends the view as it is at the press, with the words, and puts
+// the marker down. "No Facets": the depth map Qwen-Image is shown is then blurred until the model's flat faces are
+// gone from it (`smoothing`).
 // Under the mask marker stands "Inverse perspective": a button that bends the viewport's view round the model
 // (viewer3d.js LensCamera: the lines of sight meet behind it), so that what turns away from a camera - a face's
 // cheeks - shows, is masked and is repainted from there; a slider to its left sets how far. "Render Masked" sends
@@ -277,8 +278,10 @@ export function createMaskBar({ busy: stageBusy = () => false, changed: told = (
   const cover = h('div', { class: 'mk-cover', hidden: true }, square);
 
   // ---- the box beside the mask: the artist's own words for the repaint, if any, and "Render Masked" ------------
-  let words = '';           // what the box holds: Qwen-Image hears them after "remove the magenta-masked blob."
-  let wordsSent = false;    // ... rendered as they stand: clicked into, the box selects them, to type over
+  // The side panel asks the same beside its own "Render Masked" (`side`): a words field and "No Facets" in each
+  // place, showing the same words and the same setting.
+  let words = '';           // what the fields hold: Qwen-Image hears them after "remove the magenta-masked blob."
+  let wordsSent = false;    // ... rendered as they stand: clicked into, a field selects them, to type over
   let placing = 0;          // the box's places asked for (placeAsk): an older one's answer is dropped
   let resting = 0;          // the timer that puts the box in its place once the view rests (moved)
   const glyph = h('span', { class: 'mk-glyph' }, icon('sparkles'));
@@ -287,36 +290,52 @@ export function createMaskBar({ busy: stageBusy = () => false, changed: told = (
     title: 'Qwen-Image repaints what you masked, as you see it from here, and it goes onto the model',
     onclick: () => renderMasked(),
   }, glyph, 'Render Masked');
-  const noFacets = h('button', {
-    type: 'button', class: 'pt-flag', title: FACETS, 'aria-pressed': String(smoothing.on),
-    onclick: () => {
-      smoothing.on = !smoothing.on;
-      noFacets.blur();
-      sync();
-    },
-  }, 'No Facets');
-  const field = h('textarea', {
-    class: 'input mk-ask-input', rows: 3, maxlength: WORDS_MOST, placeholder: WORDS_HINT, spellcheck: 'true',
-    'aria-label': 'Anything to add about the masked part (optional)',
-  });
-  field.addEventListener('input', () => {
-    words = field.value;
-    wordsSent = false;
-  });
-  field.addEventListener('focus', () => { if (wordsSent) field.select(); });
-  // Enter renders (Shift+Enter: a new line), Escape gives the keys back to the viewer.
-  field.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      renderMasked();
-    } else if (e.key === 'Escape') {
-      field.blur();
-    }
-  });
-  const ask = h('div', { class: 'mk-ask mk-ask-mask ot-ask', hidden: true },
-    h('span', { class: 'mk-ask-label' }, 'Anything to add? (optional)'), field,
-    h('div', { class: 'mk-ask-row' }, noFacets, render));
+  const fields = [];
+  const facets = [];
+  /** A field for the mask's words: Enter renders (Shift+Enter: a new line), Escape gives the keys back to the viewer. */
+  function wordsField(rows) {
+    const field = h('textarea', {
+      class: 'input mk-ask-input', rows, maxlength: WORDS_MOST, placeholder: WORDS_HINT, spellcheck: 'true',
+      'aria-label': 'Anything to add about the masked part (optional)',
+    });
+    field.addEventListener('input', () => {
+      words = field.value;
+      wordsSent = false;
+      for (const other of fields) if (other !== field) other.value = words;
+    });
+    field.addEventListener('focus', () => { if (wordsSent) field.select(); });
+    field.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        renderMasked();
+      } else if (e.key === 'Escape') {
+        field.blur();
+      }
+    });
+    fields.push(field);
+    return field;
+  }
+  /** "No Facets", lit while it is on (sync). */
+  function facetsButton(cls) {
+    const button = h('button', {
+      type: 'button', class: cls, title: FACETS, 'aria-pressed': String(smoothing.on),
+      onclick: () => {
+        smoothing.on = !smoothing.on;
+        button.blur();
+        sync();
+      },
+    }, 'No Facets');
+    facets.push(button);
+    return button;
+  }
+  const askLabel = () => h('span', { class: 'mk-ask-label' }, 'Anything to add? (optional)');
+  const ask = h('div', { class: 'mk-ask mk-ask-mask ot-ask', hidden: true }, askLabel(), wordsField(3),
+    h('div', { class: 'mk-ask-row' }, facetsButton('pt-flag'), render));
+  const side = {
+    words: h('div', { class: 'ot-mask-words', hidden: true }, askLabel(), wordsField(2)),
+    facets: facetsButton('btn ot-facets'),
+  };
   cover.append(ask);
   const resized = globalThis.ResizeObserver ? new ResizeObserver(() => { if (!ask.hidden) placeAsk(); }) : null;
   resized?.observe(cover);
@@ -386,7 +405,7 @@ export function createMaskBar({ busy: stageBusy = () => false, changed: told = (
     if (!askable()) ask.hidden = true;
     render.disabled = busy;
     marker.disabled = busy;
-    noFacets.setAttribute('aria-pressed', String(smoothing.on));
+    for (const button of facets) button.setAttribute('aria-pressed', String(smoothing.on));
     bend.disabled = amount.disabled = busy;
     bend.title = lens.on ? BEND.on : BEND.off;
     bend.setAttribute('aria-pressed', String(lens.on));
@@ -584,8 +603,10 @@ export function createMaskBar({ busy: stageBusy = () => false, changed: told = (
     bind,
     unbind,
     // For the side panel's button, which stands in for "Render Masked" while the artist is masking (`changed`
-    // tells when any of this may have changed).
+    // tells when any of this may have changed), and what it shows then: `side.words` above it, `side.facets` left
+    // of it - the box's words field and "No Facets" again.
     masking,
+    side,
     working: () => working,
     render: renderMasked,
     /**

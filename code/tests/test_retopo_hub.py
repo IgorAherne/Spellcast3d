@@ -23,7 +23,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from spellcast import exports, paths, projects
+from spellcast import paths, projects
 from spellcast.adapters import Lato2Adapter, TriflowAdapter, build_adapters, lato2, triflow, variants
 from spellcast.adapters.base import StageContext, StageError, ToolNeedsRestart
 from spellcast.exports import Exporter
@@ -885,7 +885,8 @@ def test_api_jobs_with_a_tool_the_pick_and_the_license(api: Any) -> None:
 
 # ---- exports -------------------------------------------------------------------------------------------
 
-def test_saved_triflow_results_carry_a_noncommercial_warning(tmp_path: Path) -> None:
+def test_saved_triflow_results_carry_no_warning(tmp_path: Path) -> None:
+    """TriFlow's terms are said where it is picked: a save of what it made says nothing more about them."""
     store = ProjectStore(tmp_path / "projects")
     ids = props_with_methods(store, {"Lamp": "triflow", "Barrel": "lato2", "Crate": "triflow"})
     for name, method in (("Lamp", TRIFLOW), ("Barrel", LATO2), ("Crate", TRIFLOW)):
@@ -905,23 +906,8 @@ def test_saved_triflow_results_carry_a_noncommercial_warning(tmp_path: Path) -> 
 
     saved = exporter.save_all("Demo")
     assert saved.props == 3 and "Lamp\\Lamp_retopo.obj" in saved.files and "Crate\\Crate.glb" in saved.files
-    # one sentence for all of them (Export all with many TriFlow props says it once)
-    assert saved.warnings == ["Lamp and Crate were made with TriFlow — non-commercial use only."]
-    assert exporter.save_prop("Demo", ids["Crate"], "projection", "glb").warnings == [
-        "Crate: made with TriFlow — non-commercial use only."]
-    assert exporter.save_prop("Demo", ids["Crate"], "mesh", "glb").warnings == []     # the 3D model: Pixal3D's
-    # A new clean mesh from Instant Meshes: the bake still is TriFlow's (its low poly's file says so).
-    store.apply_stage_patch("Demo", ids["Crate"], "retopo", {"obj": "retopo/retopo.obj", "method": IMESH})
-    crate = store.get_prop("Demo", ids["Crate"])
-    assert exports.low_poly_method(crate, "retopo/triflow.obj") == TRIFLOW
-    assert exports.low_poly_method(crate, "retopo/retopo.obj") == IMESH
-    assert exports.noncommercial_note(crate, "retopo/retopo.obj") is None
-    assert exports.made_with_note("TriFlow", ["A", "B", "C"]) == \
-        "A, B and C were made with TriFlow — non-commercial use only."
-    assert exports.made_with_note("TriFlow", list("ABCDEF")) == \
-        "A, B and 4 more were made with TriFlow — non-commercial use only."
-    assert exporter.save_prop("Demo", ids["Crate"], "projection", "glb").warnings == [
-        "Crate: made with TriFlow — non-commercial use only."]
+    assert saved.warnings == []
+    assert exporter.save_prop("Demo", ids["Crate"], "projection", "glb").warnings == []
 
 
 # ---- one prop's unwrap beside the next prop's turn; the next stage's tool started early ------------------------

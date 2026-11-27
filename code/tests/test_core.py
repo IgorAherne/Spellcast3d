@@ -203,7 +203,7 @@ class ModelAdapter(FakeAdapter):
     def aim(self, wish: Any) -> None:
         self.wished = wish.get("model")
 
-    def serves(self, wish: Any) -> bool:
+    def serves(self, wish: Any, settings: Any) -> bool:
         return wish.get("model") in (None, self.holding)
 
     def launch_spec(self, port: int, settings: dict[str, Any]) -> LaunchSpec:
@@ -1493,6 +1493,33 @@ def test_an_early_start_loads_what_the_artist_picked_and_drops_a_start_for_somet
             await pm.stop("forge")
             await pm.ensure_running("forge")                             # a job's start: the tool's default
             assert forge.launched[-1] == "turbo"
+
+    asyncio.run(main())
+
+
+def test_a_job_has_a_tool_that_runs_for_something_else_started_anew_for_its_wish(tmp_path: Path) -> None:
+    """procman.ensure_running with a wish (a job's: the image generator in its stage's arithmetic): a tool that runs
+    for another wish without a job is stopped and started for this one; one that serves it is kept; a start under
+    way for another is waited for, then started anew; nothing is stopped under a job."""
+    async def main() -> None:
+        forge = ModelAdapter("forge", "images", True, tmp_path)
+        async with manager(tmp_path, fake_adapters(tmp_path, forge=forge)) as pm:
+            await pm.ensure_running("forge", {"model": "full"})
+            assert forge.launched == ["full"]
+            kept = pm.get("forge").proc.pid
+            await pm.ensure_running("forge", {"model": "full"})
+            await pm.ensure_running("forge", {})
+            assert forge.launched == ["full"] and pm.get("forge").proc.pid == kept, "served: kept"
+            await pm.ensure_running("forge", {"model": "turbo"})
+            assert forge.launched == ["full", "turbo"] and not pid_alive(kept), "another wish: started anew"
+            pm.set_busy("forge", True)
+            await pm.ensure_running("forge", {"model": "full"})
+            assert forge.launched == ["full", "turbo"], "under a job: never stopped"
+            pm.set_busy("forge", False)
+            await pm.stop("forge")
+            assert pm.warm("forge", {"model": "flux3"}) is True          # a start under way for another wish ...
+            await pm.ensure_running("forge", {"model": "full"})
+            assert forge.launched == ["full", "turbo", "flux3", "full"], "... done, then started anew for this one"
 
     asyncio.run(main())
 

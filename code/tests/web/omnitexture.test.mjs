@@ -934,6 +934,55 @@ test('"No Facets" in the box, left of "Render Masked": on, the repaint asks for 
   OMNI.unmount();
 });
 
+test('the side panel\'s "Render Masked" has the box\'s words above it and "No Facets" on its left - the same words and setting in both places -, and as "Paint it again" neither', async () => {
+  const stage = await mount();
+  stage.release();
+  const [again] = stage.host.byClass('sv-wide');
+  const [row] = stage.host.byClass('ot-again');
+  const [above] = stage.host.byClass('ot-mask-words');
+  const [facets] = stage.host.byClass('ot-facets');
+  const [sideField] = above.byClass('mk-ask-input');
+  const [ask] = stage.host.byClass('ot-ask');
+  const [boxField] = ask.byClass('mk-ask-input');
+  const boxFacets = ask.byClass('mk-ask-row')[0].children[0];
+  assert.deepEqual(row.children, [facets, again], '"No Facets" on the left part, the button on the rest');
+  const { children } = stage.host.byClass('sv-foot')[0];
+  assert.equal(children.indexOf(above), children.indexOf(row) - 1, 'right above the button\'s row');
+  assert.deepEqual([again.textContent, above.hidden, facets.hidden], ['Paint it again', true, true]);
+
+  // Masked: the button is "Render Masked", the words above it and "No Facets" beside it, as in the box.
+  stage.tool('Mask marker').click();
+  strokeAt(viewer, { x: 8, y: 8, w: 6, h: 6 });
+  await settle();
+  assert.deepEqual([again.textContent, above.hidden, facets.hidden], ['Render Masked', false, false]);
+  assert.match(above.textContent, /Anything to add\? \(optional\)/);
+  assert.deepEqual([sideField.getAttribute('rows'), facets.textContent], ['2', 'No Facets']);
+  // Typed in either field, the words are in both; "No Facets" lit in both.
+  sideField.value = 'rusty bolts';
+  sideField.fire('input');
+  assert.equal(boxField.value, 'rusty bolts');
+  boxField.value = 'rusty bolts along the edge';
+  boxField.fire('input');
+  assert.equal(sideField.value, 'rusty bolts along the edge');
+  facets.click();
+  assert.deepEqual([facets, boxFacets].map((b) => b.getAttribute('aria-pressed')), ['true', 'true']);
+
+  // Still masked with the marker put down: the side panel's alone renders - Enter in its field, as the box's does.
+  stage.tool('Orbit').click();
+  assert.deepEqual([ask.hidden, above.hidden, facets.hidden], [true, false, false]);
+  sideField.fire('keydown', { key: 'Enter', shiftKey: false, isComposing: false });
+  await settle();
+  assert.deepEqual([hub.job.params.retouch.words, hub.job.params.retouch.smooth], ['rusty bolts along the edge', true]);
+  // Its job under way: the button is gone, and the words with it.
+  store.jobs = [hubJob({ id: 'j_3', stage: 'omnitexture', status: 'running', prop_ids: ['p_1'], progress: { fraction: 0.2, message: '' }, errors: {} })];
+  stage.update();
+  assert.deepEqual([row.hidden, above.hidden], [true, true]);
+  store.jobs = [];
+  stage.update();
+  facets.click();                                    // (off again for the tests that follow)
+  OMNI.unmount();
+});
+
 test('"Inverse perspective" under the mask marker bends the view, its slider says how far, "Render Masked" sends that lens, and it goes with the view', async () => {
   const stage = await mount();
   stage.release();

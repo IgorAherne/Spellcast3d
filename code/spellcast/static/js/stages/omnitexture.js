@@ -611,6 +611,8 @@ function buildProp(prop) {
       sync(cur());
     },
   }, icon('sparkles'), againWords);
+  // As "Render Masked", the mask's words above it and "No Facets" on its left: the box beside the mask's, again.
+  const againRow = h('div', { class: 'ot-again' }, mask.side.facets, againBtn);
   function syncAgain() {
     const masking = mask.masking();
     const says = masking ? MASKED : AGAIN;
@@ -621,11 +623,15 @@ function buildProp(prop) {
       againBtn.classList.toggle('ghost', !masking);
     }
     againBtn.disabled = starting || (masking && mask.working());
+    mask.side.facets.hidden = !masking;
+    mask.side.facets.disabled = againBtn.disabled;
+    mask.side.words.hidden = !masking || againBtn.hidden;
   }
   maskChanged = syncAgain;
-  const foot = h('div', { class: 'sv-foot' }, error, gate, againBtn);
-  // The hub's "Faster image generation" (faster.js): the repaints are Qwen-Image's pictures too. Apart from the rest.
-  const faster = fasterSwitch('images');
+  const foot = h('div', { class: 'sv-foot' }, error, gate, mask.side.words, againRow);
+  // Omni-Texture's own "Faster image generation" (faster.js): the repaints are Qwen-Image's pictures too. Apart from
+  // the rest.
+  const faster = fasterSwitch('omnitexture');
   const fasterBox = h('div', { class: 'ot-faster' }, faster);
   const sidePanel = h('div', { class: 'sv-side' },
     h('div', { class: 'sv-side-scroll' }, heading, stats, picturesBox, fasterBox), foot);
@@ -722,7 +728,7 @@ function buildProp(prop) {
     heading.set(p, !canRun() ? '' : chosen ? 'Chosen for Omni-Texture' : 'Not chosen: keeps its own texture',
       thumbUrl(p, 'omnitexture') || thumbUrl(p, 'mesh')
       || (p.images?.chosen ? thumbUrl(p, 'images') || boxFile(p, p.images.chosen, 'images') : null));
-    againBtn.hidden = !chosen || !omniTextured(p) || !!j || !canRun();
+    againBtn.hidden = againRow.hidden = !chosen || !omniTextured(p) || !!j || !canRun();
     syncAgain();
     gate.sync();
     error.sync(p);
@@ -830,7 +836,7 @@ export default {
   },
 
   /** Qwen-Image 2.1 starts early only while a chosen prop waits for its Omni-Texture (most props never come here). */
-  warmWish: () => (canRun() && omniBatch(boxesOf(), liveDeps()).length ? { tool: 'qwen' } : null),
+  warmWish: () => (canRun() && omniBatch(boxesOf(), liveDeps()).length ? { tool: 'qwen', stage: 'omnitexture' } : null),
 
   /** The prop the workbench shows. */
   shownId: () => shownId,

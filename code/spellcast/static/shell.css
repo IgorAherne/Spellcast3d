@@ -621,6 +621,8 @@ pre.log {
   position: absolute; inset: 0; border-radius: 14px; pointer-events: none; opacity: 0;
   box-shadow: 0 0 0 2px #f0c88f, 0 0 18px rgba(240, 200, 143, 0.55);
 }
+/* anim.js ripple: the ring over the page, where the element it swells from lies. */
+.ripple { position: fixed; z-index: 900; pointer-events: none; }
 
 .status-line {
   display: flex; align-items: flex-start; gap: 8px; min-width: 0; max-width: 100%;

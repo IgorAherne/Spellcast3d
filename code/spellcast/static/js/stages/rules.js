@@ -33,15 +33,16 @@ export const toolOf = (stage, box) => (stage === 'retopo' ? retopoMethod(box) : 
 
 /**
  * What the page asks of the hub as the artist arrives at a stage, or picks something else there (POST .../warm).
- * `wish`: the stage's, {tool, model?, displace?} or null; `tools`: the hub's status of each. -> {tool, wish} to
- * send, or null: a tool that cannot run here is not asked, and one that runs already only when the wish names a
- * model (it may hold another: the hub then starts it anew for that one).
+ * `wish`: the stage's, {tool, model?, stage?, displace?} or null; `tools`: the hub's status of each. -> {tool, wish}
+ * to send, or null: a tool that cannot run here is not asked, and one that runs already only when the wish names a
+ * model or a stage (it may hold another model, or the image generator another stage's arithmetic: the hub then
+ * starts it anew for the wish).
  */
 export function warmAsk(tools, wish) {
   const { tool, ...rest } = wish || {};
   const st = tool ? tools?.[tool] : null;
   if (!st?.installed || !st.supported) return null;
-  return st.state === 'stopped' || rest.model ? { tool, wish: rest } : null;
+  return st.state === 'stopped' || rest.model || rest.stage ? { tool, wish: rest } : null;
 }
 
 /**

@@ -7,7 +7,7 @@
 // Also the [.glb] [.fbx] [.obj] buttons that save a prop's model into the project's export folder.
 
 import { api, propApi } from '../api.js';
-import { h, plural } from '../dom.js';
+import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { progressBar, spinner } from '../controls.js';
 import { mapBar } from '../mapbar.js';
@@ -29,8 +29,9 @@ export const DEFAULT_VIEW = 'all';
 const SWAP_WAIT = 400;    // ms another model of the object on screen may take before "Loading…" covers that one
 
 // The Wireframe toggle's choice, per stage, kept until the page closes: Retopo starts with the edges on (both its
-// High and Low sides: the topology is what the artist judges there), Projection and 3D with them off; a stage keeps
-// what the artist last chose in it, on every model - never switched off behind the artist's back.
+// High and Low sides: the topology is what the artist judges there; on again for each prop picked once its Low side
+// shows), Projection and 3D with them off; a stage keeps what the artist last chose in it, on every model - never
+// switched off behind the artist's back.
 const wireChoice = {};
 export const wireframeOn = (stage, stageDefault) => (wireChoice[stage] ?? stageDefault);
 export const rememberWireframe = (stage, on) => { wireChoice[stage] = !!on; };
@@ -39,11 +40,12 @@ export const rememberWireframe = (stage, on) => { wireChoice[stage] = !!on; };
  * tools: nodes placed over the model's top right corner, next to "reset the view" (e.g. the High | Low
  * switch). onView(mode): the artist picked a map view. maps: false leaves the map buttons out (the model
  * is shown in the view show() asks for); the Wireframe toggle (maps.offerWireframe) still shows under it,
- * alone, for every model, so the view keeps its size whatever the model has.
+ * alone, for every model, so the view keeps its size whatever the model has. wideLights: the lights of "All" reach
+ * further (Retopo's bare clay: viewer3d.js ORBIT_REACH_WIDE).
  * Returns {el, stage (the dark area, for layers of the view on top), maps, show(), message(), badges(),
  * destroy()}.
  */
-export function modelPane({ tools = [], onView, maps: withMaps = true, discord = false } = {}) {
+export function modelPane({ tools = [], onView, maps: withMaps = true, discord = false, wideLights = false } = {}) {
   const host = h('div', { class: 'sv-viewer-host' });
   const bar = progressBar(null);
   const loading = h('div', { class: 'sv-viewer-loading', hidden: true }, spinner(), h('span', null, 'Loading the 3D model…'), bar);
@@ -108,9 +110,11 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
       loading.hidden = keepView;
       const slow = keepView && setTimeout(() => { if (mine === token) loading.hidden = false; }, SWAP_WAIT);
       try {
-        viewer ||= (await import('../viewer3d.js')).viewer;
+        const three = await import('../viewer3d.js');
+        viewer ||= three.viewer;
         if (destroyed || mine !== token) return false;
         viewer.attach(host, stage);
+        viewer.setLightReach(wideLights ? three.ORBIT_REACH_WIDE : undefined);
         const ok = await viewer.show(url, kind, { onProgress: (f) => bar.set(f), extraMaps, keepView });
         if (!ok || destroyed || mine !== token) return false;
         showStill(null);
@@ -169,40 +173,14 @@ const FORMATS = [
 ];
 
 /**
- * The saved model of this prop is TriFlow's clean mesh, or was baked onto it. what: 'projection' (its
- * bake), 'all' (its best result: the bake, else the clean mesh, else the 3D model) or 'mesh' (the 3D
- * model: never).
- */
-export function madeWithTriflow(prop, what) {
-  if (!prop || what === 'mesh') return false;
-  const retopo = prop.retopo || {};
-  const bake = prop.projection || {};
-  if (bake.glb) return bake.source_retopo ? /(^|\/)triflow\.obj$/.test(bake.source_retopo) : retopo.method === 'triflow';
-  return what === 'all' && !!retopo.obj && retopo.method === 'triflow';
-}
-
-/**
- * The note TriFlow's terms add to a save ('' for none): "Barrel was made with TriFlow — non-commercial
- * use only." props: the props saved; what: as madeWithTriflow.
- */
-export function triflowNote(props, what) {
-  const made = (props || []).filter((p) => madeWithTriflow(p, what));
-  if (!made.length) return '';
-  const who = made.length === 1 ? made[0].name || 'This prop' : plural(made.length, 'prop');
-  return `${who} ${made.length === 1 ? 'was' : 'were'} made with TriFlow — non-commercial use only.`;
-}
-
-/**
  * The toast after a save into the export folder: "Saved <what> to exports\Tavern props" when File
  * Explorer opened there, else with the folder's whole path (folder_path) so the artist can find it,
- * and what the hub warned about (e.g. a map it could not convert). note: the page's own note (TriFlow's
- * terms: triflowNote), unless the hub's warnings say it already.
+ * and what the hub warned about (e.g. a map it could not convert).
  */
-export function toastSaved(what, answer, note = '') {
+export function toastSaved(what, answer) {
   const { folder = '', folder_path: path = '', opened = false, warnings = [] } = answer || {};
   const where = String((!opened && path) || folder).replace(/\//g, '\\');
   const notes = (Array.isArray(warnings) ? warnings : []).filter((w) => typeof w === 'string' && w);
-  if (note && !notes.some((w) => /triflow/i.test(w))) notes.push(note);
   const saved = `Saved ${what} to ${where}`;
   if (notes.length) toast(`${saved}. ${notes.join(' ')}`, 'warn', 12000);
   else toast(saved, 'success');
@@ -247,7 +225,7 @@ export function exportButtons(stage, { before = null } = {}) {
     try {
       await before?.();
       const answer = await api('POST', `${propApi(pid, id)}/export`, { stage, format });
-      toastSaved(answer?.shown || answer?.files?.[0] || `${name}.${format}`, answer, triflowNote([prop], stage));
+      toastSaved(answer?.shown || answer?.files?.[0] || `${name}.${format}`, answer);
     } catch (e) {
       toast(e.message || String(e), 'error');
     } finally {

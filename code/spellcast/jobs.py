@@ -321,7 +321,7 @@ class JobQueue:
             return
         tool_id = tools[0]
         try:
-            started = self.procman.start_early(tool_id, displace=True)
+            started = self.procman.start_early(tool_id, wish={"stage": stage}, displace=True)
         except ToolError as e:
             log.info("%s was not started early for the %s stage: %s", self._name(tool_id), stage, e)
             return
@@ -334,7 +334,7 @@ class JobQueue:
         if warm is None:
             return
         try:
-            tp = await self.procman.ensure_running(tool_id)
+            tp = await self.procman.ensure_running(tool_id, {"stage": stage})
         except ToolError:
             return
         if not any(j.status in ACTIVE for j in self._jobs.values()):
@@ -778,7 +778,7 @@ class JobQueue:
         """ensure_running, then claim_gpu (the job is about to use the graphics card: the GPU tool that holds it
         makes way), but give up waiting (None) as soon as the job is cancelled. The tool itself keeps starting;
         the next job will find it ready. Raises ToolError when the tool cannot start or stopped meanwhile."""
-        waiter = asyncio.create_task(self._ready_on_card(tool_id))
+        waiter = asyncio.create_task(self._ready_on_card(tool_id, job.stage))
         try:
             while not waiter.done():
                 await asyncio.wait({waiter}, timeout=0.5)
@@ -790,9 +790,10 @@ class JobQueue:
                 waiter.cancel()
                 await asyncio.gather(waiter, return_exceptions=True)
 
-    async def _ready_on_card(self, tool_id: str) -> ToolProcess:
-        """The job's tool, started and ready, holding the graphics card when it uses one. Raises ToolError."""
-        await self.procman.ensure_running(tool_id)
+    async def _ready_on_card(self, tool_id: str, stage: str) -> ToolProcess:
+        """The job's tool, started and ready for `stage` (the image generator in that stage's arithmetic), holding
+        the graphics card when it uses one. Raises ToolError."""
+        await self.procman.ensure_running(tool_id, {"stage": stage})
         return await self.procman.claim_gpu(tool_id)
 
     async def _run_prop(self, job: Job, adapter: ToolAdapter, tp: ToolProcess, prop_id: str,

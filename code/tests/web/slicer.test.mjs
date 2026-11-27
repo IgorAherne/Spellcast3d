@@ -328,6 +328,11 @@ test('the slicer\'s buttons are one row in the header it is given, while a pictu
   assert.equal(bin.hidden, true, 'the bin shows when the picture has slices');
   toggle.click();
   assert.equal(views.hidden, false, '"Slice into views" was pressed');
+  slicer.stop();
+  assert.deepEqual([views.hidden, toggle.classList.contains('on')], [true, false], 'stopped from outside (a tool taken up)');
+  slicer.stop();
+  assert.equal(views.hidden, true, 'and stays stopped');
+  toggle.click();
   // Only the slices and what the views lack lie over the picture.
   assert.equal(slicer.el.hidden, false);
   assert.deepEqual(slicer.el.byClass('sl-bar'), []);

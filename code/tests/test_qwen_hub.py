@@ -24,7 +24,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from spellcast import config, exports, gpu, paths
+from spellcast import config, gpu, paths
 from spellcast.adapters import IMAGE_ADAPTERS, ForgeAdapter, QwenAdapter, build_adapters, qwen
 from spellcast.adapters.base import LaunchSpec, StageContext, StageError, ToolNeedsRestart
 from spellcast.adapters.images_common import reference_files
@@ -187,7 +187,6 @@ def test_status_has_the_licence_the_tools_and_says_when_the_config_changed(api: 
     assert status["tools"][QWEN]["display_name"] == "Qwen-Image 2.1" and status["tools"][QWEN]["stage"] == "images"
     assert status["stage_tools"]["images"] == [QWEN] and status["stage_tools"]["mesh"] == ["pixal3d"]
     assert status["config"] == {"image_backend": QWEN, "quality": "Q4_K_M", "problems": [], "changed": None}
-    assert QWEN not in exports.NONCOMMERCIAL_METHODS        # no non-commercial note on what it made
 
     say(QWEN, "Q4_K_M")                                     # saved again, the same choice: nothing to say
     assert client.get("/api/status").json()["settings_warnings"] == []
@@ -396,44 +395,61 @@ def test_an_early_start_loads_the_model_the_artist_picked(tmp_path: Path, monkey
         argv = adapter.launch_spec(7776, {}).argv
         return dict(zip(argv[2::2], argv[3::2]))["--first-model"]
 
-    assert all(adapter.serves(wish) for wish in ({}, {"model": "turbo"}, {"displace": True}, {"model": "sdxl"}))
-    assert adapter.serves({"model": "full"}), "not downloaded: no wish"
+    assert all(adapter.serves(wish, {}) for wish in ({}, {"model": "turbo"}, {"displace": True}, {"model": "sdxl"}))
+    assert adapter.serves({"model": "full"}, {}), "not downloaded: no wish"
     adapter.aim({"model": "full"})
     assert first() == "turbo"
     there["full"] = True
-    assert not adapter.serves({"model": "full"})
+    assert not adapter.serves({"model": "full"}, {})
     adapter.aim({"model": "full"})
     assert first() == "full" and qwen._holding == "full"
-    assert adapter.serves({"model": "full"}) and not adapter.serves({"model": "turbo"})
+    assert adapter.serves({"model": "full"}, {}) and not adapter.serves({"model": "turbo"}, {})
     assert first() == "turbo", "that start alone: a job's or a hand-off's loads the Turbo"
     adapter.aim({"model": "full"})
     adapter.aim({})
     assert first() == "turbo", "a start without a wish drops the one before"
     there["flux3"] = True
-    assert adapter.serves({"model": "flux3"}), "its files alone do not make it drawable"
+    assert adapter.serves({"model": "flux3"}, {}), "its files alone do not make it drawable"
     there["engine"] = True
-    assert not adapter.serves({"model": "flux3"})
+    assert not adapter.serves({"model": "flux3"}, {})
     adapter.aim({"model": "flux3"})
-    assert first() == "flux3" and adapter.serves({"model": "flux3"}) and not adapter.serves({"model": "full"})
+    assert first() == "flux3" and adapter.serves({"model": "flux3"}, {}) and not adapter.serves({"model": "full"}, {})
 
 
 def test_faster_image_generation_starts_the_launcher_on_the_int8_matmuls(tmp_path: Path,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    """Settings' "Faster image generation" (qwen.int8_matmul, off by default) reaches the launcher as --matmul int8;
-    anything else, a missing or broken entry included, keeps the model file's own pictures (--matmul mmq)."""
+    """Each stage's "Faster image generation" (Images: qwen.int8_matmul, Omni-Texture: qwen.int8_matmul_omnitexture,
+    both off by default) reaches the launcher as --matmul int8 when it is started for that stage (aim's "stage"; none:
+    Images); anything else, a missing or broken entry included, keeps the model file's own pictures (--matmul mmq).
+    A launcher started in one stage's arithmetic does not serve a wish of the other stage that wants the other one."""
+    from spellcast.adapters import qwen
+
     sdcpp = tmp_path / "sdcpp"
     sdcpp.mkdir()
     monkeypatch.setattr(paths, "QWEN_SDCPP", sdcpp)
+    monkeypatch.setattr(qwen, "_matmul", "mmq")
     defaults = json.loads((paths.PACKAGE / "defaults.json").read_text(encoding="utf-8"))
-    assert defaults["qwen"] == {"int8_matmul": False}
+    assert defaults["qwen"] == {"int8_matmul": False, "int8_matmul_omnitexture": False}
+    adapter = QwenAdapter()
 
-    def matmul(settings: dict[str, Any]) -> str:
-        argv = QwenAdapter().launch_spec(7776, settings).argv
+    def matmul(settings: dict[str, Any], stage: str | None = None) -> str:
+        if stage is not None:
+            adapter.aim({"stage": stage})
+        argv = adapter.launch_spec(7776, settings).argv
         return argv[argv.index("--matmul") + 1]
 
     assert matmul(defaults) == matmul({}) == matmul({"qwen": None}) == "mmq"
     assert matmul({"qwen": {"int8_matmul": "yes"}}) == "mmq"
-    assert matmul({**defaults, "qwen": {"int8_matmul": True}}) == "int8"
+    images_on = {**defaults, "qwen": {"int8_matmul": True, "int8_matmul_omnitexture": False}}
+    assert matmul(images_on) == matmul(images_on, "images") == "int8"
+    assert matmul(images_on, "omnitexture") == "mmq", "Omni-Texture's own switch is off"
+    assert adapter.serves({"stage": "omnitexture"}, images_on) and not adapter.serves({"stage": "images"}, images_on)
+    assert adapter.serves({}, images_on) and adapter.serves({"stage": "mesh"}, images_on), "no image stage: any"
+    assert matmul(images_on) == "int8", "a start without a stage: Images' (the one before is not kept)"
+    omni_on = {**defaults, "qwen": {"int8_matmul": False, "int8_matmul_omnitexture": True}}
+    assert matmul(omni_on, "omnitexture") == "int8" and matmul(omni_on, "images") == "mmq"
+    both = {**defaults, "qwen": {"int8_matmul": True, "int8_matmul_omnitexture": True}}
+    assert matmul(both, "images") == "int8" and adapter.serves({"stage": "omnitexture"}, both), "the same arithmetic"
     launcher = (paths.LAUNCHERS / "qwen_server.py").read_text(encoding="utf-8")
     choices = re.search(r"^MATMULS = (\(.*\))$", launcher, re.MULTILINE)
     assert choices and set(ast.literal_eval(choices.group(1))) == {"mmq", "int8"}       # what the launcher takes

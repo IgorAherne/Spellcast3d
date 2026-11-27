@@ -111,6 +111,26 @@ export function ring(el, times = 1) {
   ], { duration: 700, easing: 'ease-out', iterations: times });
 }
 
+/**
+ * "Look here", for what is far from where the artist looks: a ring swells `spread` px out of `el`, `times` over, on a
+ * layer of the page's own, so that no scrolling list round `el` cuts it off. No movement, as ring.
+ */
+export function ripple(el, { spread = 40, times = 2 } = {}) {
+  const r = el?.getBoundingClientRect?.();
+  if (!r?.width || !document.body) return;
+  const wave = document.createElement('div');
+  wave.className = 'ripple';
+  wave.style.cssText = `left: ${r.left}px; top: ${r.top}px; width: ${r.width}px; height: ${r.height}px;`
+    + ` border-radius: ${globalThis.getComputedStyle?.(el).borderRadius || '0'}`;
+  document.body.append(wave);
+  const run = wave.animate?.([
+    { boxShadow: '0 0 0 0 rgba(139, 125, 255, 0.9)' },
+    { boxShadow: `0 0 0 ${spread}px rgba(139, 125, 255, 0)` },
+  ], { duration: 900, easing: 'ease-out', iterations: times });
+  if (run) run.onfinish = run.oncancel = () => wave.remove();
+  else wave.remove();
+}
+
 /** "Look here", for what is far from the pointer: the ring, and `el` swells and settles in a third of a second. */
 export function beckon(el) {
   ring(el);

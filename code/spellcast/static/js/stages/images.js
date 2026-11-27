@@ -24,7 +24,7 @@ import { field, progressBar, rowField, segmented, seedInput, sliderField, spinne
 import { ShellRefusal, attempt, dialogOpen, modal, toast } from '../ui.js';
 import { isNewest, isUndoKey, undoList, undoStamp } from '../undo.js';
 import { licenseChip, licenseLine } from '../licenses.js';
-import { fullMotion, ring, settle } from '../shell/anim.js';
+import { fullMotion, ring, ripple, settle } from '../shell/anim.js';
 import {
   INPUTS_KEY, boxFile, busyLayer, carryDown, discordCorner, donateCorner, emptyState, errorLine, fadeIn, findBox, gateLine,
   gateOpen, jobState, lessonsCorner,
@@ -33,7 +33,7 @@ import {
 import { fasterSwitch } from './faster.js';
 import { showGiven } from './given.js';
 import { createImportPanel, readClipboardItems } from './importpanel.js';
-import { createMarks } from './marks.js';
+import { MASK_TOO_LARGE, createMarks } from './marks.js';
 import { sameShape } from './mask_window.js';
 import { createPictureView } from './picview.js';
 import { toastSaved } from './preview.js';
@@ -49,9 +49,11 @@ const NO_IMAGE = 'No image yet: import or generate one first.';
 const circled = (object) => `I circled the ${object} with the magenta marker - put it in the center, large and `
   + 'prominently visible, close zoom, keeping its style and its orientation. Remove everything else around it and apply '
   + 'a gray background.';
-// Smart Mask (the brush beside the wand, marks.js): what the image generator is told beside the picture with the mask
-// on it (flat magenta: marks.js paintMask), around the artist's own words, for that one job.
-const masked = (thing) => `Place ${thing} inside the area masked with magenta color.`;
+// Smart Mask (the brush beside the wand, marks.js): the prop's words go with the masked picture as they are when they
+// speak of the mask (misspelt too), else after MASK_LEAD.
+const MASK_WORD = /\b(?:mask|msak|masck|amsk|maks)/i;
+const MASK_LEAD = 'for the masked area do: ';
+export const maskedPrompt = (words) => (MASK_WORD.test(words) ? words : `${MASK_LEAD}${words}`);
 const ON_ITS_WAY = 'The first pictures are still being made: press again once they are here.';
 const SIDE_FADE = 28;   // the side list fades out over its last pixels (stages.css .sv-side-scroll), and some air
 
@@ -379,12 +381,12 @@ function entryId(c) {
 
 /**
  * What Images asks the hub to have ready (the view's warmWish: shell.js asks as Images shows): the image generator
- * spellcast3d-config.ini picks, loading the model the prop on screen draws with, and taking the card from a tool
- * that idles on it - the artist came for pictures. The hub never does so beside a job.
+ * spellcast3d-config.ini picks, loading the model the prop on screen draws with, in Images' arithmetic (faster.js),
+ * and taking the card from a tool that idles on it - the artist came for pictures. The hub never does so beside a job.
  */
 function warmWish(model = qwenModelOf(boundProp()?.images?.settings)) {
   const tool = imageTool();
-  return tool ? { tool, displace: true, ...(tool === 'qwen' ? { model } : {}) } : null;
+  return tool ? { tool, displace: true, ...(tool === 'qwen' ? { model, stage: 'images' } : {}) } : null;
 }
 
 /** The artist picked another model: the hub loads it now, in place of one that is still loading. */
@@ -753,10 +755,13 @@ function buildBench(prop) {
       circling = object;
       generate('viewport', { prompt: circled(object), picture });
     },
-    onMask: (change, picture, mask) => {
-      circling = null;   // its pictures are this prop's, changed: not a circled object's
-      generate('viewport', { prompt: masked(change), picture, mask });
+    // A mask on the picture: Re-Render Viewport changes what it covers (From Scratch waits); each stroke let go
+    // points at the words that say what becomes of it - far from the mask, so a ripple that reaches far.
+    onMask: (brushed) => {
+      syncFoot();
+      if (brushed) ripple(promptBox);
     },
+    onTool: () => slicer.stop(),   // a marker or a tool taken up: the presses on the picture are its, not slices
     maskRequest: () => maskRequest(),
   });
   /**
@@ -1022,6 +1027,7 @@ function buildBench(prop) {
   };
   const chooseExamples = async () => addExamples(await pickFiles(IMAGE_TYPES));
   let shownExample = null;
+  let exampleTiles = [];   // the example pictures as they show: a Render button "with examples" rings them
   function renderExample(p) {
     const refs = refsOf(p.images);
     const several = controlsOf(backend).has('examples');
@@ -1044,6 +1050,7 @@ function buildBench(prop) {
       : h('button', { type: 'button', class: 'sv-slot', onclick: chooseExample },
         icon('image'), h('span', null, h('b', null, 'Add an example image'), h('small', null, 'Drop it here or click · PNG, JPG or WebP')));
     dropTarget(slot, replaceExample, () => toast(NOT_AN_IMAGE, 'warn'));
+    exampleTiles = ref ? [slot] : [];
     return slot;
   }
 
@@ -1072,6 +1079,7 @@ function buildBench(prop) {
       if (popping.has(ref)) popIn(thumb);
       return thumb;
     });
+    exampleTiles = thumbs;
     const room = refs.length < MAX_REFS;
     const add = !room ? null : refs.length ? h('button', {
       type: 'button', class: 'sv-ref sv-ref-add', title: `Add examples (up to ${MAX_REFS} pictures)`, 'aria-label': 'Add examples',
@@ -1174,7 +1182,7 @@ function buildBench(prop) {
   prompt.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      generate();
+      generate(marks.masked() ? 'viewport' : 'words');
     }
   });
   // Forge Neo's negative prompt. Hidden for Qwen-Image 2.1 (CONTROLS), where it is only kept: nothing is
@@ -1523,8 +1531,9 @@ function buildBench(prop) {
   const resolutionRow = rowField('Resolution', resolution);
   // The words, with "+prompt" and the shown prompts of the library at their bottom.
   const promptChips = promptBar(prompt, () => library.open());
+  const promptBox = h('div', { class: 'sv-prompt-box' }, prompt, promptChips);
   const genPanel = h('div', { class: 'sv-group' },
-    h('div', { class: 'sv-prompt-box' }, prompt, promptChips),
+    promptBox,
     avoid,
     modelRow,
     modelNote,
@@ -1581,9 +1590,14 @@ function buildBench(prop) {
     return { kind, name, label, btn };
   });
   const [genBtn, viewportBtn, viewportExBtn] = makes.map((m) => m.btn);
-  // The pointer on a Render button rings the Resolution once: what the pictures are about to be rendered at.
-  for (const { btn } of makes) btn.addEventListener('pointerenter', () => { if (!resolutionRow.hidden) ring(resolution); });
-  viewportBtn.title = 'New pictures from what the viewport shows, with the marks you painted on it, and your words';
+  // The pointer on a Render button rings the Resolution once: what the pictures are about to be rendered at; on one
+  // "with examples", the example pictures too: which ones go along.
+  for (const { kind, btn } of makes) {
+    btn.addEventListener('pointerenter', () => {
+      if (!resolutionRow.hidden) ring(resolution);
+      if (kind === 'viewport+examples' || (kind === 'words' && refsOf(cur().images).length)) exampleTiles.forEach((t) => ring(t));
+    });
+  }
   const makeRow = h('div', { class: 'sv-makes' }, genBtn, viewportBtn, viewportExBtn);
   let started = null;   // which of them started the prop's job ('words', 'viewport', 'viewport+examples')
   const gate = gateLine('images', {
@@ -1649,14 +1663,20 @@ function buildBench(prop) {
     genSub.textContent = refs ? 'with examples' : 'no examples';
     genBtn.hidden = !gen;
     const shut = !!j || !gateOpen(toolGate('images'));   // while it installs, the job waits for it
-    genBtn.disabled = shut;
+    // A mask on the picture: From Scratch waits; a mask too large is not sent, and the viewport's buttons say why.
+    const mask = marks.masked();
+    genBtn.disabled = shut || !!mask;
+    genBtn.title = mask ? 'A mask is on the picture: Re-Render Viewport changes what it covers (Esc takes it off)' : '';
+    const tooLarge = mask?.tooLarge ? MASK_TOO_LARGE : '';
     viewportBtn.hidden = viewportExBtn.hidden = mode !== 'example';
     viewportBtn.disabled = shut || !viewport;
+    viewportBtn.title = tooLarge || (mask ? 'New pictures with what you masked changed as your words say'
+      : 'New pictures from what the viewport shows, with the marks you painted on it, and your words');
     const forge = backend === 'forge';   // Forge Neo starts from one picture: the viewport's
     viewportExBtn.disabled = shut || !viewport || !refs || forge;
     viewportExBtn.title = forge ? 'Forge Neo starts from one picture: use Re-Render Viewport'
       : !refs ? 'Add examples first'
-        : 'New pictures from what the viewport shows (with its marks), your words and the example pictures';
+        : tooLarge || 'New pictures from what the viewport shows (with its marks), your words and the example pictures';
     gate.sync();
     gate.hidden ||= !gen || !!j;   // with a job of its own, the layer over the picture says it
     error.sync(cur());
@@ -1666,33 +1686,43 @@ function buildBench(prop) {
   /**
    * A job for this prop from its saved settings, with what the button (`kind`: 'words', 'viewport',
    * 'viewport+examples') adds for this one job (`params`: whether the example pictures go along, and the picture in
-   * the viewport before them). `select` (Select Object, Smart Mask): {prompt, picture()} in place of the words and
-   * the marks; Smart Mask's has mask() too, where it was brushed.
+   * the viewport before them). `select` (Select Object): {prompt, picture()} in place of the words and the marks.
+   * With Smart Mask's mask on the picture, the viewport's buttons send the picture under the mask, the mask alone and
+   * the words as maskedPrompt has them.
    */
   async function generate(kind = 'words', select = null) {
     if (mode === 'import') return;
     const p = cur();
     const viewport = mode === 'example' && kind !== 'words';
-    if (jobFor('images', id) || !gateOpen(toolGate('images'))) return;
+    const masking = select ? null : marks.masked();
+    if (jobFor('images', id) || !gateOpen(toolGate('images')) || (masking && !viewport)) return;
     if (viewport && ((!p.images?.chosen && !blank) || (kind === 'viewport+examples' && !refsOf(p.images).length))) return;
-    if (!select && !settings().prompt?.trim()) {
-      toast(viewport ? 'Say in a few words what to change, or what you painted, first.'
-        : 'Describe the object first: a few words are enough.', 'warn');
+    const words = settings().prompt?.trim();
+    if (!select && !words) {
+      toast(masking ? 'Say in a few words what should be in the masked area first.'
+        : viewport ? 'Say in a few words what to change, or what you painted, first.'
+          : 'Describe the object first: a few words are enough.', 'warn');
       prompt.focus();
+      (masking ? ripple : ring)(promptBox);
+      return;
+    }
+    if (masking?.tooLarge) {
+      toast(MASK_TOO_LARGE, 'warn');
       return;
     }
     genBtn.disabled = viewportBtn.disabled = viewportExBtn.disabled = true;
     if (!select) circling = null;   // its pictures are not of a circled object
+    if (masking) select = { prompt: maskedPrompt(words), picture: masking.picture, mask: masking.mask };
     const params = {};
     if (viewport) {
       // The picture with its marks is uploaded first (the black canvas always; a picture without marks the hub reads
       // itself).
       // Smart Mask over one of the prop's pictures: its mask goes up too, and the job names that picture - what
       // is made is brought back to its tone, and a tileable one is kept, to the pixel, outside the change.
-      const masking = !!select?.mask && !!p.images?.chosen;
+      const maskOf = !!select?.mask && !!p.images?.chosen;
       const from = await attempt(async () => {
         const png = await (select ? select.picture() : marks.composite());
-        return png ? saveViewport(id, png, masking ? await select.mask() : null) : p.images?.chosen;
+        return png ? saveViewport(id, png, maskOf ? await select.mask() : null) : p.images?.chosen;
       });
       if (!from) {
         syncFoot();
@@ -1705,12 +1735,14 @@ function buildBench(prop) {
       // lies - the hub slides it back as far, and onto it to the pixel (the model lays a tileable picture some pixels
       // off) -, so the slider shows both alike. Not a circled object's picture: it is the object alone, placed anew.
       if (tilingOn() && p.images?.chosen && !circling) params.viewport_shift = shift;
-      if (masking) params.viewport_mask_of = p.images.chosen;
+      if (maskOf) params.viewport_mask_of = p.images.chosen;
     } else if (refsOf(p.images).length && settings().use_references === false) {
       params.use_references = true;   // a prop saved by an older version with its example pictures left out
     }
     started = viewport ? kind : 'words';
-    await attempt(() => startJob('images', [id], { params: Object.keys(params).length ? params : null }));
+    const going = await attempt(() => startJob('images', [id], { params: Object.keys(params).length ? params : null })
+      .then(() => true));
+    if (going && masking) marks.unmask();   // sent: the mask goes with its picture
     syncFoot();
   }
 

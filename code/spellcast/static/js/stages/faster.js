@@ -1,13 +1,15 @@
 // The "faster" switches, each in its stage's panel: a shortcut that saves time but no longer draws what the exact
-// path draws. Not a prop's setting but the hub's (GET / PATCH /api/settings): it holds for every prop and project,
-// so a switch asks before it changes. A tool picks its arithmetic when it starts: a running one is restarted, and
-// while it works the switch waits. What the window says comes in short paragraphs (on / off: their words - what it
-// changes on a line of its own, then what that does; the restart is a paragraph of its own).
-//   images  "Faster image generation": Qwen-Image's int8 matmuls (qwen.int8_matmul; adapters/qwen.py matmul_arg),
-//           for every picture of the Images stage and every Omni-Texture repaint
-//   mesh    "Faster 3D generation": Pixal3D's conditioning and coarse stages on their fast paths too
-//           (pixal3d.coarse_exact false; the fork's modules/exact.py), which changes something only on RTX 30xx
-//           and newer: older cards cannot compute the original's numbers either way
+// path draws. Not a prop's setting but the hub's (GET / PATCH /api/settings): it holds for every prop and project of
+// its stage, so a switch asks before it changes. A tool picks its arithmetic when it starts: a running one is
+// restarted for the switch's stage (`stage`: the hub starts it anew whenever a job of the other stage wants other
+// arithmetic), and while it works the switch waits. What the window says comes in short paragraphs (on / off: their
+// words - what it changes on a line of its own, then what that does; the restart is a paragraph of its own).
+//   images       "Faster image generation" in Images: Qwen-Image's int8 matmuls for its pictures (qwen.int8_matmul;
+//                adapters/qwen.py matmul_arg)
+//   omnitexture  the same for Omni-Texture's repaints (qwen.int8_matmul_omnitexture)
+//   mesh         "Faster 3D generation": Pixal3D's conditioning and coarse stages on their fast paths too
+//                (pixal3d.coarse_exact false; the fork's modules/exact.py), which changes something only on RTX 30xx
+//                and newer: older cards cannot compute the original's numbers either way
 
 import { api } from '../api.js';
 import { restartTool } from '../actions.js';
@@ -16,32 +18,55 @@ import { toggle } from '../controls.js';
 import { TOOL_ETA, imageTool, store, toolStatus } from '../store.js';
 import { attempt, confirmDialog, toast, toastError } from '../ui.js';
 
-const IMAGES = 'all image generation: every picture in Images and every repaint in Omni-Texture, for every prop and project';
 const MODELS = 'all 3D generation: every 3D model made in the 3D stage, for every prop and project';
 
 /** A paragraph of two lines: what the switch changes, then what turning it off does. */
 const twoLines = (changes, then) => h('span', null, `This changes ${changes}.`, h('br'), then);
 
-export const FASTER = {
-  images: {
+/**
+ * Qwen-Image's int8 matmuls for one stage's pictures: `what` they are there, `section` the stage as the window's
+ * title names it, `key` its hub setting under qwen.
+ */
+function imageSwitch(stage, { what, section, changes, hint, key }) {
+  return {
+    kind: stage,
+    stage,
     tool: 'qwen',
     title: 'Faster image generation',
-    name: 'faster image generation',
-    hint: 'For all pictures and Omni-Texture repaints, not only this prop. Small details can come out differently.',
+    name: `faster image generation ${section}`,
+    hint,
     on: () => [
-      `This changes ${IMAGES}, until you turn it off.`,
-      h('span', null, 'Pictures take about 20 to 40 % less time, with a shortcut in the image generator’s arithmetic: '
+      `This changes ${changes}, until you turn it off.`,
+      h('span', null, `${what} take about 20 to 40 % less time, with a shortcut in the image generator’s arithmetic: `
         + 'small details (an eye, a buckle, a roof’s edge) can come out differently. ',
       h('b', null, 'Some instructions may be ignored, for example a character sheet of four views.')),
     ],
-    off: () => [twoLines(IMAGES, 'The pictures come out exactly as the model draws them again, and take longer.')],
+    off: () => [twoLines(changes, `${what} come out exactly as the model draws them again, and take longer.`)],
     restarts: 'The image generator restarts now',
     busy: 'The image generator is drawing right now. Change this when it is done.',
     applies: () => imageTool() === 'qwen',
-    isOn: (settings) => settings?.qwen?.int8_matmul === true,
-    patch: (on) => ({ qwen: { int8_matmul: on } }),
-  },
+    isOn: (settings) => settings?.qwen?.[key] === true,
+    patch: (on) => ({ qwen: { [key]: on } }),
+  };
+}
+
+export const FASTER = {
+  images: imageSwitch('images', {
+    what: 'Pictures',
+    section: 'in Images',
+    changes: 'every picture made in Images, for every prop and project (Omni-Texture has a switch of its own)',
+    hint: 'For all pictures in Images, not only this prop. Small details can come out differently.',
+    key: 'int8_matmul',
+  }),
+  omnitexture: imageSwitch('omnitexture', {
+    what: 'Repaints',
+    section: 'for Omni-Texture',
+    changes: 'every Omni-Texture repaint, for every prop and project (Images has a switch of its own)',
+    hint: 'For all Omni-Texture repaints, not only this prop. Small details can come out differently.',
+    key: 'int8_matmul_omnitexture',
+  }),
   mesh: {
+    kind: 'mesh',
     tool: 'pixal3d',
     title: 'Faster 3D generation',
     name: 'faster 3D generation',
@@ -121,5 +146,5 @@ async function change(sw, input, wanted) {
     return;
   }
   input.checked = wanted;
-  if (running) await attempt(() => restartTool(sw.tool));
+  if (running) await attempt(() => restartTool(sw.tool, sw.stage ? { stage: sw.stage } : null));
 }

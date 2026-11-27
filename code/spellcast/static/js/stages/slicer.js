@@ -318,7 +318,7 @@ export function viewChip(views, src) {
 /**
  * The slicer of the prop `propId`, a layer over its picture (a sibling of .sv-picture in the stage box,
  * so re-renders of the picture keep it). picture(img, src) whenever the workbench shows another <img>
- * (null: no picture), update({busy}) on every render, destroy() when the workbench goes.
+ * (null: no picture), update({busy}) on every render, stop() to end slicing, destroy() when the workbench goes.
  * `toolbar`: an empty element above the picture (the workbench's header), the slicer's own: it holds the row
  * of buttons while a picture shows and none is being made, nothing otherwise. Without one the row lies over
  * the picture's top. `onSave` (-> true once saved): a "Save" button before "Copy".
@@ -739,6 +739,11 @@ export function createSlicer(propId, { toolbar = null, onSave = null } = {}) {
      */
     remember(before, chosen) {
       past.record({ views: before, chosen });
+    },
+
+    /** Slicing ends (a tool over the picture was taken up: the presses are its now). */
+    stop() {
+      if (on) setOn(false);
     },
 
     /** On every render: `busy` while a generation of the prop's pictures is queued or runs. */

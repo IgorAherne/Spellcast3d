@@ -114,6 +114,15 @@
 .mk-lens .range::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -4px; }
 /* The panel's "Faster image generation": apart from what is above it, by the panel's own gap once more. */
 .ot-faster { margin-top: 16px; }
+/* The panel's foot as "Render Masked": the mask's words above it, "No Facets" on its left (maskbar.js side). */
+.ot-mask-words { display: flex; flex-direction: column; gap: 6px; }
+.ot-mask-words[hidden] { display: none; }
+.ot-mask-words > .mk-ask-input { width: 100%; height: auto; resize: none; }
+.ot-again { display: flex; gap: 8px; }
+.ot-again[hidden] { display: none; }
+.ot-again > .sv-wide { flex: 1; width: auto; min-width: 0; }
+.ot-facets { flex-shrink: 0; color: var(--text-2); }
+.ot-facets[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: rgba(139, 125, 255, 0.55); }
 .mk-render { white-space: nowrap; }
 .mk-render .mk-glyph { display: inline-flex; }
 .pt-tool:disabled { opacity: 0.5; cursor: progress; transform: none; }

@@ -5,6 +5,7 @@
 import { StandInRenderer, standInCamera, standInModel } from './standin_card.mjs';
 
 export const TEX = 64;
+export const ORBIT_REACH_WIDE = 1.95;
 const models = new Map();       // url -> standInModel
 
 export const viewer = {
@@ -16,6 +17,8 @@ export const viewer = {
   paintHook: null,
   holdLight: false,
   setPerspective(amount) { this.camera.perspective = amount; },
+  lightReach: undefined,        // as the last stage asked (setLightReach: none given, the usual)
+  setLightReach(reach) { this.lightReach = reach; },
   shown: [],                    // the URLs shown, in order
   attach() {},
   detach() {},

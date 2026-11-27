@@ -94,8 +94,10 @@ _CHECKS: list[tuple[tuple[str, ...], Callable[[Any], bool], str]] = [
     (("imesh", "threads"), _is_int, "a whole number (-1 = all CPU cores)"),
     # "auto": LATO.2 moves each stage's models to the GPU only while it runs on cards below 10 GB (adapters/lato2.py)
     (("lato2", "low_vram"), lambda v: v in ("auto", "on", "off"), '"auto", "on" or "off"'),
-    # The Images panel's "Faster image generation": Qwen-Image's int8 matmuls (adapters/qwen.py matmul_arg)
+    # "Faster image generation", Images' and Omni-Texture's own: Qwen-Image's int8 matmuls (adapters/qwen.py
+    # matmul_arg)
     (("qwen", "int8_matmul"), _is_bool, "true or false"),
+    (("qwen", "int8_matmul_omnitexture"), _is_bool, "true or false"),
 ]
 
 

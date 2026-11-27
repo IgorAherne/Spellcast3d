@@ -582,8 +582,6 @@ div.sv-slot.filled:hover { border-color: var(--line-2); background: var(--field)
 .mk-ask-mask { white-space: normal; padding: 8px 10px 10px; }
 .mk-ask-mask > .mk-ask-input { width: 320px; height: auto; resize: none; }
 .mk-ask-mask > .mk-ask-row { justify-content: space-between; }
-/* Why Render waits: the mask is too large for its window. */
-.mk-ask-why { max-width: 320px; padding-left: 2px; font-size: 12.5px; line-height: 1.35; color: var(--bad); }
 /* A picture lifted out of the row under the picture (tilerow.js carry): it follows the pointer, and where the props
    column takes it (it shows where) the picture says so. */
 .tr-ghost {

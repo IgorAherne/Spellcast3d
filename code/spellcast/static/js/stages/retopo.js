@@ -336,7 +336,7 @@ function buildProp(prop) {
   // No map buttons: this stage is about the edges, and buttons only the 3D model has would resize the view at
   // each High / Low (the camera stays put for the comparison). The Wireframe toggle is there for both sides, far
   // from them, under the viewport: the pointer over High or Low rings it, as Images' buttons ring the Resolution.
-  const pane = modelPane({ tools: [sides], maps: false });
+  const pane = modelPane({ tools: [sides], maps: false, wideLights: true });
   for (const button of sides.buttons) button.addEventListener('pointerenter', () => pane.maps.ringWireframe());
   const busy = busyLayer('retopo');
   const variants = variantSwitch(id, (size) => {
@@ -355,6 +355,7 @@ function buildProp(prop) {
 
   let shown = null;
   let framed = false;   // after the first model, High / Low and the sizes keep the camera: the artist compares up close
+  let wireAgain = true; // the prop just picked: its Low side shows its edges again, whatever was chosen before
   let result = null;    // the clean meshes on file: a new one is shown first (the artist judges its edges)
   async function renderMedia(p) {
     const made = p.retopo?.obj ? (p.retopo.variants || []).map((v) => boxFile(p, v.obj, 'retopo')).join() : null;
@@ -394,6 +395,10 @@ function buildProp(prop) {
     }
     // One Wireframe choice for both sides; both shown lit ("all"): the clean mesh is clay, and the 3D model in its
     // lit render reads the same way beside it (an unlit map view looked darker than the clay next to it).
+    if (low && wireAgain) {
+      rememberWireframe('retopo', true);
+      wireAgain = false;
+    }
     pane.maps.offerWireframe(wireframeOn('retopo', true), (on) => rememberWireframe('retopo', on));
     // While the page moves, the snapshot of what is shown stands in: the retopo one is of the clean mesh the prop uses.
     const snapshot = !low ? thumbUrl(p, 'mesh') : mesh.obj === p.retopo?.obj ? thumbUrl(p, 'retopo') : null;

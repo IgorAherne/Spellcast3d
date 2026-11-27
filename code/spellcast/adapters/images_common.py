@@ -67,7 +67,8 @@ def masked_change(ctx: StageContext, images: dict[str, Any], params: dict[str, A
     picture = _prop_file(ctx, rel) if rel in (images.get("candidates") or []) else None
     mask = _prop_file(ctx, VIEWPORT_MASK)
     if picture is None or mask is None or params.get("from_viewport") != VIEWPORT_FILE:
-        raise StageError("The mask, or the picture under it, is gone. Brush over the picture again and press Render.")
+        raise StageError("The mask, or the picture under it, is gone. Brush over the picture again and press Re-Render "
+                         "Viewport.")
     return picture, mask
 
 

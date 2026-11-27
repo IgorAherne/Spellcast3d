@@ -87,6 +87,8 @@ PROFILED_ENTRY = paths.PACKAGE / "profiling" / "qwen_profiled.py"     # qwen_ser
 # artist's pick when an early start named one, else the Turbo), then the one its last answered picture request drew
 # with. QwenAdapter.prop_order puts that model's props first.
 _holding: str = "turbo"
+# The --matmul the launcher was started with (launch_spec): it keeps it until it stops.
+_matmul: str = "mmq"
 
 # Keep in sync with projects.py (MAX_REFERENCES, IMAGES_NUMBERS, STAGE_DEFAULTS' qwen_steps): tests/test_qwen_hub.py
 # compares them, and the launcher's own limits and request defaults too.
@@ -148,11 +150,16 @@ FLUX3_NEEDS_ENGINE = ("FLUX.3 Image Klein needs the next update of Spellcast3D's
                       "which this version does not have yet. Pick Turbo or Full meanwhile.")
 
 
-def matmul_arg(settings: Mapping[str, Any]) -> str:
-    """The launcher's --matmul from the hub settings: "int8" where the artist turned on the Images panel's "Faster
-    image generation" (qwen.int8_matmul: faster, small details drawn differently; launchers/qwen_server.py
-    MATMULS), else "mmq", the model file's own pictures. The launcher reads it when it starts."""
-    return "int8" if (settings.get("qwen") or {}).get("int8_matmul") is True else "mmq"
+# The hub setting of each stage's "Faster image generation" (its panel's switch, static/js/stages/faster.js).
+MATMUL_SETTINGS = {"images": "int8_matmul", "omnitexture": "int8_matmul_omnitexture"}
+
+
+def matmul_arg(settings: Mapping[str, Any], stage: str = "images") -> str:
+    """The launcher's --matmul for `stage`'s pictures from the hub settings: "int8" where the artist turned on that
+    stage's "Faster image generation" (MATMUL_SETTINGS: faster, small details drawn differently;
+    launchers/qwen_server.py MATMULS), else "mmq", the model file's own pictures. The launcher reads it when it starts,
+    so a job of the other stage that wants the other one has it started anew (QwenAdapter.serves)."""
+    return "int8" if (settings.get("qwen") or {}).get(MATMUL_SETTINGS[stage]) is True else "mmq"
 
 
 def qwen_settings(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -301,6 +308,7 @@ class QwenAdapter(ToolAdapter):
         self.models_dir = models_dir or paths.MODELS_QWEN     # where the launcher reads them (--models)
         self.flux3_dir = flux3_dir or paths.MODELS_FLUX3      # FLUX.3 Image Klein's (--flux3-models)
         self.first_model: str | None = None                   # the next start's (aim); None: the Turbo
+        self.first_stage: str = "images"                      # ... whose arithmetic it takes (matmul_arg)
 
     def full_model_on_disk(self) -> bool:
         """Whether the full model's denoiser of the hub's size is in the models folder, whole (a few stat calls)."""
@@ -324,11 +332,21 @@ class QwenAdapter(ToolAdapter):
         model = wish.get("model")
         return model if model in QWEN_MODELS and self.can_draw(model) else None
 
+    @staticmethod
+    def _stage(wish: Mapping[str, Any]) -> str | None:
+        """The stage whose pictures a wish is for ({"stage"}: a job's, a stage's arrival), when it names one."""
+        stage = wish.get("stage")
+        return stage if stage in MATMUL_SETTINGS else None
+
     def aim(self, wish: Mapping[str, Any]) -> None:
         self.first_model = self._wished(wish)
+        self.first_stage = self._stage(wish) or "images"
 
-    def serves(self, wish: Mapping[str, Any]) -> bool:
-        return self._wished(wish) in (None, _holding)
+    def serves(self, wish: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+        """The model the wish names (a model it holds or loads), and the arithmetic of the stage it names: the
+        launcher's --matmul holds until it stops."""
+        stage = self._stage(wish)
+        return self._wished(wish) in (None, _holding) and (stage is None or matmul_arg(settings, stage) == _matmul)
 
     def check_model(self, settings: Mapping[str, Any]) -> None:
         """StageError for a prop set to a model that cannot draw now: the full model or FLUX.3 while its files are
@@ -351,9 +369,11 @@ class QwenAdapter(ToolAdapter):
 
     # ---- process lifecycle ----------------------------------------------
     def launch_spec(self, port: int, settings: dict[str, Any]) -> LaunchSpec:
-        global _holding
-        # this start alone loads the model an early start asked for: a later one (a job's, a hand-off's) the Turbo
+        global _holding, _matmul
+        # this start alone loads the model an early start asked for: a later one (a job's, a hand-off's) the Turbo;
+        # and it takes the arithmetic of the stage it was asked for (Images' when none was)
         _holding, self.first_model = self.first_model or DEFAULT_MODEL, None
+        _matmul, self.first_stage = matmul_arg(settings, self.first_stage), "images"
         sdcpp = paths.QWEN_SDCPP
         if not sdcpp.is_dir():
             raise StageError("Qwen-Image 2.1's image engine (stable-diffusion.cpp) is missing. Close Spellcast3D and "
@@ -376,7 +396,7 @@ class QwenAdapter(ToolAdapter):
                   "--quality", self.quality,
                   "--text-encoder", self.text_encoder,
                   "--first-model", _holding,
-                  "--matmul", matmul_arg(settings)],
+                  "--matmul", _matmul],
             cwd=sdcpp,
             env=env,
             ready_timeout=READY_TIMEOUT,

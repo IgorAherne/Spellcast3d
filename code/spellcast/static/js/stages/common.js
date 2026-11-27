@@ -342,11 +342,12 @@ export function gateLine(stage, after = {}) {
  * progress and Stop. sync(box) shows / hides it. A prop at work shows its own words and how far it is; one that
  * waits (for its next step, or its turn) names the prop at work and follows its words and bar (onCard), so it is
  * never unclear whose progress shows. It says when the job is being stopped, and what the tool loads meanwhile
- * ("Loading the shape model…"). While the image generator draws with its shortcut (faster.js), a line over the
- * words says so, in every picture's progress: the artist chose it for all of them, once, somewhere else.
+ * ("Loading the shape model…"). While the image generator draws with the stage's shortcut (faster.js), a line over
+ * the words says so, in every picture's progress: the artist chose it for all of them, once, in the stage's panel.
  */
 export function busyLayer(stage) {
-  const shortcut = h('div', { class: 'sv-busy-faster', hidden: true }, `${FASTER.images.title} is on`);
+  const faster = FASTER[stage === 'omnitexture' ? 'omnitexture' : 'images'];
+  const shortcut = h('div', { class: 'sv-busy-faster', hidden: true }, `${faster.title} is on`);
   const text = h('div', { class: 'sv-busy-text' });
   const bar = progressBar(null);
   let job = null;
@@ -362,7 +363,7 @@ export function busyLayer(stage) {
     if (!j) return;
     const s = jobState(stage, box);
     const tool = j.job.tool || STAGE_TOOL[stage];
-    shortcut.hidden = tool !== FASTER.images.tool || !fasterOn('images');
+    shortcut.hidden = tool !== faster.tool || !fasterOn(faster.kind);
     const begun = j.phase === 'running' || j.phase === 'resting';
     // What the hub says of the job itself comes before the prop's own words: its tool starts, it is being
     // stopped (said by every prop it has begun), its tool reads a model while this prop waits.

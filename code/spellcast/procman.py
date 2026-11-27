@@ -544,8 +544,32 @@ class ProcessManager:
         tp.start_task = asyncio.create_task(self._start(tp), name=f"start-{tool_id}")
         return tp
 
-    async def ensure_running(self, tool_id: str) -> ToolProcess:
-        """Start the tool if needed and wait until it is ready. Safe to call concurrently."""
+    async def ensure_running(self, tool_id: str, wish: Mapping[str, Any] | None = None) -> ToolProcess:
+        """Start the tool if needed and wait until it is ready. Safe to call concurrently. With a `wish` (a job's:
+        {"stage"}), a tool that runs, or loads, for something else (ToolAdapter.serves: the image generator in
+        another stage's arithmetic) and has no job on it is stopped first, and the start is for the wish - once
+        more when a start already under way turns out to have been for something else."""
+        tp = await self._ready(tool_id, wish)
+        if wish is not None and not tp.busy_count and not tp.adapter.serves(wish, self.settings.get()):
+            tp = await self._ready(tool_id, wish)
+        return tp
+
+    async def _serve(self, tool_id: str, wish: Mapping[str, Any]) -> None:
+        """ensure_running's wish: a start anew already under way (warm) is waited for; a process that does not serve
+        the wish is stopped; the next launch is for it."""
+        tp = self.get(tool_id)
+        if tp.anew_task is not None and not tp.anew_task.done():
+            await asyncio.shield(tp.anew_task)
+        if tp.alive() and not tp.busy_count and not tp.adapter.serves(wish, self.settings.get()):
+            log.info("Starting %s anew: it was started for something else than %s", tp.name, dict(wish))
+            await self.stop(tool_id)
+        if not tp.alive() and not (tp.start_task and not tp.start_task.done()):
+            tp.adapter.aim(wish)
+
+    async def _ready(self, tool_id: str, wish: Mapping[str, Any] | None) -> ToolProcess:
+        """The tool started (for `wish`, see _serve) and ready. Raises ToolError."""
+        if wish is not None:
+            await self._serve(tool_id, wish)
         tp = self.start(tool_id)
         task = tp.start_task
         if task is not None and not task.done():
@@ -564,7 +588,8 @@ class ProcessManager:
         """Have a tool ready before a job asks for it (the page asks as the artist arrives at the tool's stage, and
         again when they pick something else there): a stopped one starts early (start_early: when that displaces
         nothing, unless `displace`). `wish` is what the artist is about to ask of it (ToolAdapter.aim: the image
-        generator's model): a tool that runs without a job but was started for something else (ToolAdapter.serves)
+        generator's model, and the stage whose arithmetic it takes): a tool that runs without a job but was started
+        for something else (ToolAdapter.serves)
         is stopped and started anew for the wish, also in the middle of loading, so that nothing is loaded the
         artist no longer wants; a wish that comes before the process is launched replaces the one before. ->
         whether a start began (or is under way for the wish).
@@ -578,7 +603,7 @@ class ProcessManager:
             tp.adapter.aim(wish)        # the launch to come takes the newest wish
             return True
         if tp.state in (STARTING, READY) and tp.alive():
-            if tp.busy_count or tp.adapter.serves(wish):
+            if tp.busy_count or tp.adapter.serves(wish, self.settings.get()):
                 return False
             tp.adapter.aim(wish)
             log.info("Starting %s anew: it was started for something else than %s", tp.name, dict(wish))

@@ -197,13 +197,15 @@ class ToolAdapter(abc.ABC):
     async def on_stop(self, client: httpx.AsyncClient, base_url: str) -> None:
         """Called before the process is terminated (best effort, may be skipped)."""
 
-    # An early start may say what the artist is about to ask of the tool (ProcessManager.start_early's `wish`; the
-    # page's: {"model": ...} for the image generator), so that the start loads that and nothing else first.
+    # A start may say what is about to be asked of the tool (ProcessManager.start_early's and ensure_running's `wish`:
+    # the page's {"model", "stage"} for the image generator, a job's {"stage"}), so that the start loads that and
+    # nothing else first.
     def aim(self, wish: Mapping[str, Any]) -> None:
         """Note `wish` for the next launch_spec alone ({}: none). Default: a tool has no choice to make at its start."""
 
-    def serves(self, wish: Mapping[str, Any]) -> bool:
-        """Whether the process as it runs, or loads, serves `wish` without loading something else first."""
+    def serves(self, wish: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+        """Whether the process as it runs, or loads, serves `wish` (under the hub's `settings`) without loading
+        something else first, or being started anew."""
         return True
 
     # ---- work -------------------------------------------------------------

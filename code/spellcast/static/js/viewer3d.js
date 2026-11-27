@@ -76,9 +76,10 @@ const MAP_MODES = Object.keys(MAP_VIEWS);
 const grey = (v) => new THREE.Color(v, v, v);
 
 // A mid-grey, matte clay: a light one under the scene's lights and environment reads as a flat white
-// silhouette, so the shape was hard to judge. "None" uses it too (with the model's own normals), so the
-// bare shape looks the same in every stage.
+// silhouette, so the shape was hard to judge. "None" uses it a quarter lighter (with the model's own normals):
+// under the studio's two lights alone the mid-grey read too dark there. The same in every stage.
 const CLAY = { color: 0x7e8591, roughness: 0.92, metalness: 0, envMapIntensity: 0.4 };
+const NONE_CLAY = { ...CLAY, color: 0x9ea6b5 };
 
 // The triangle edges over a model (setWireframe): the dark lines of the retopo's wire, fainter, since a
 // 3D model's triangles are small and many (and each edge is drawn by both triangles that share it).
@@ -317,7 +318,7 @@ class ModelViews {
     let m = made.get(own);
     if (!m) {
       m = mode === 'none'
-        ? new THREE.MeshStandardMaterial({ ...CLAY, side: own.side, flatShading: own.flatShading })
+        ? new THREE.MeshStandardMaterial({ ...NONE_CLAY, side: own.side, flatShading: own.flatShading })
         : mapMaterial(MAP_VIEWS[mode], own, this.texture(mode, own));
       made.set(own, m);
       this.setBack(m);
@@ -539,6 +540,14 @@ class Viewer {
     rim.intensity = on ? 0 : RIM_LIGHT.intensity;
     ambient.intensity = on ? AMBIENT * ORBIT_AMBIENCE : AMBIENT;
     this.scene.environmentIntensity = on ? ORBIT_AMBIENCE : 1;
+    this.dirty = true;
+  }
+
+  /** How far the lights of "all" reach, in model radii (ORBIT_REACH_WIDE for Retopo; none given: the usual). */
+  setLightReach(reach = ORBIT_REACH) {
+    if (this.orbit.reach === reach) return;
+    this.orbit.reach = reach;
+    this.orbit.power();
     this.dirty = true;
   }
 
@@ -851,7 +860,7 @@ const jobWorks = () => (store.jobs || []).some((j) => j.status === 'running' || 
 // time.
 const ORBIT_FRAME = [[1, 0, 0], [0, Math.SQRT1_2, Math.SQRT1_2], [0, -Math.SQRT1_2, Math.SQRT1_2]];
 const ORBIT_SEED = 1;
-const ORBIT_MS = 10000;      // one turn of a light round the model
+const ORBIT_MS = 8700;       // one turn of a light round the model
 const ORBIT_FPS = 30;        // the frames a second their turning asks for (the artist's own moves get every frame)
 const ORBIT_STEP_MS = 100;   // the most one frame moves them: after a hidden tab they go on from where they were
 const ORBIT_RADIUS = 1.25;   // their distance from the model's centre, in model radii (half its box's diagonal)
@@ -862,7 +871,9 @@ const ORBIT_RADIUS = 1.25;   // their distance from the model's centre, in model
 // lit side and a shaded one, which go round with them. ORBIT_INTENSITY is a light's strength at one model radius,
 // the pair's mean - told in model radii, so every prop is lit alike whatever its size: about as bright where it is
 // lit as under far lights of 1.4 + 1.4 + 0.9 (a key, a second key and the rim), half as bright in its shade.
-const ORBIT_REACH = 1.5;
+// A stage may have them reach further (Viewer.setLightReach): Retopo's bare clay, ORBIT_REACH_WIDE.
+const ORBIT_REACH = 1.725;
+export const ORBIT_REACH_WIDE = 1.95;
 const ORBIT_DECAY = 2;
 const ORBIT_INTENSITY = 2.0;
 const ORBIT_PAIR = [4 / 3, 2 / 3];
@@ -933,6 +944,7 @@ export class OrbitLights {
     this.angle = 0;                     // how far they have gone round (radians)
     this.centre = new THREE.Vector3();  // the model's, and its radius
     this.radius = 1;
+    this.reach = ORBIT_REACH;           // in model radii
     this.lit = false;                   // they shine (light)
     const glow = new THREE.SpriteMaterial({
       map: glowTexture(), color: KEY_LIGHT.color, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
@@ -969,7 +981,7 @@ export class OrbitLights {
   /** Each light's reach and strength for the model fitted: as strong at one of its radii whatever its size. */
   power() {
     this.lights.forEach((light, i) => {
-      light.distance = this.radius * ORBIT_REACH;
+      light.distance = this.radius * this.reach;
       light.intensity = this.lit ? ORBIT_INTENSITY * ORBIT_PAIR[i % 2] * this.radius ** ORBIT_DECAY : 0;
     });
   }

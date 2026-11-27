@@ -13,16 +13,13 @@
 // picture with that circle alone in magenta (picture() -> a PNG), as wide as the marker but never thinner than
 // CIRCLE_MIN of the picture. The circle goes when the question is answered - the wand is put down with it - or
 // dismissed: then the next stroke circles anew.
-// Smart Mask (the brush, onMask): strokes cover a part of the picture, one after the other; after each, a larger box
-// asks what should be there, and onMask(words, picture, mask) gets the words, the picture with the mask over it -
-// flat magenta, nothing of that part shows - and the mask alone (both () -> a PNG). The words stay in the box from
-// mask to mask and from picture to picture;
-// rendered, they show selected, to type over. Ctrl+Z takes the mask's last stroke back (in its box: while the words
-// are as the box opened with them).
+// Smart Mask (the brush, onMask): strokes cover a part of the picture, one after the other, and the workbench's own
+// words and Re-Render Viewport say what becomes of it (masked(): the picture with the mask over it - flat magenta,
+// nothing of that part shows - and the mask alone). onMask(brushed) after each change of the mask (brushed: a stroke
+// was just let go). Ctrl+Z takes its last stroke back; Escape or the wipe takes it off.
 // Where the change takes a part of the picture only (maskRequest says what is asked for: mask_window.js - the patch
 // of a large picture's redraw, a tileable picture's window), a dashed frame shows that part round the mask and the
-// stroke under way, and fades out when the stroke is let go; a mask too large for a window is not sent, and its box
-// says why.
+// stroke under way, and fades out when the stroke is let go; a mask too large for a window is not sent.
 
 import { h, isTextField } from '../dom.js';
 import { icon } from '../icons.js';
@@ -43,7 +40,6 @@ const SWEEP_PX = 250;                        // Shift + this far sideways goes t
 const TIP_MS = 2000;
 const MAX_CURSOR = 120;                      // browsers draw a cursor up to 128 px
 export const OBJECT_HINT = 'wooden crate';      // the Select Object box's grey example, until something is typed
-export const MASK_HINT = 'a polished brass padlock with fine engravings';   // Smart Mask's
 export const CIRCLE_COLOUR = '#ff00ff';      // the circle as the image generator gets it: "the magenta marker"
 export const CIRCLE_MIN = 0.008;             // ... at least this much of the picture's longer side wide: it outlives
                                              // the image generator shrinking the picture
@@ -172,12 +168,14 @@ function createCircleLayer() {
 
 /**
  * The marks layer: {el (over the picture), bar (the markers, and the tools, in the viewport's corner), hint,
- * picture(img, path), show(on), selectable(on), refit(), path, undo(), composite(), destroy()}. onStroke(path) after
- * each change of a picture's marks (a stroke, a wipe, a redo); onSelect(object, picture) after Select Object and
- * onMask(words, picture, mask) after Smart Mask (null: without that tool). maskRequest(): the picture Smart Mask's
- * change of the shown one is asked for as, {width, height, tileable}, or null where all of it is drawn anew.
+ * picture(img, path), show(on), selectable(on), refit(), path, undo(), composite(), masked(), unmask(), destroy()}.
+ * onStroke(path) after each change of a picture's marks (a stroke, a wipe, a redo); onSelect(object, picture) after
+ * Select Object and onMask(brushed) after each change of Smart Mask's mask (null: without that tool); onTool() as a
+ * marker or a tool is taken up. maskRequest():
+ * the picture Smart Mask's change of the shown one is asked for as, {width, height, tileable}, or null where all of
+ * it is drawn anew.
  */
-export function createMarks({ onStroke = null, onSelect = null, onMask = null, maskRequest = null } = {}) {
+export function createMarks({ onStroke = null, onSelect = null, onMask = null, onTool = null, maskRequest = null } = {}) {
   const canvas = h('canvas', { class: 'mk-canvas', width: 1, height: 1 });
   canvas.setAttribute('aria-label', 'The picture: press and drag to mark it');
   const ctx = canvas.getContext?.('2d') || null;
@@ -202,9 +200,7 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   let asking = null;            // {box, close()} while a tool's box asks about what it drew
   let canSelect = true;         // the image generator takes "I circled ..." (selectable)
   let mask = [];                // Smart Mask's strokes on the shown picture
-  let maskWords = '';           // what its box holds
-  let maskWordsSent = false;    // ... rendered as they stand: the box shows them selected
-  let tooLarge = false;         // the mask does not fit in the window its change would be drawn in: it is not sent
+  let tooLarge = false;        // the mask does not fit in the window its change would be drawn in: it is not sent
 
   const book = (p = path) => {
     if (!books.has(p)) books.set(p, createHistory());
@@ -224,9 +220,11 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   }
 
   // ---- the markers, the size, the wipe ----------------------------------------------------------------------
+  // The wipe takes Smart Mask's mask off first, while there is one.
+  const WIPE_MARKS = 'Wipe the marks off this picture';
+  const WIPE_MASK = 'Take the mask off';
   const wipe = h('button', {
-    type: 'button', class: 'mk-wipe', title: 'Wipe the marks off this picture (Ctrl+Z brings them back)',
-    'aria-label': 'Wipe the marks off this picture', onclick: () => clear(),
+    type: 'button', class: 'mk-wipe', onclick: () => (mask.length ? dropSelection() : clear()),
   }, icon('trash'));
   const size = h('input', {
     type: 'range', class: 'range mk-size', min: MIN_SIZE, max: MAX_SIZE, value: pen.size,
@@ -270,7 +268,8 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   const wand = onSelect && toolButton('select', 'mk-select', 'Select object', 'Select object: circle it and say what it '
     + 'is. It comes out alone and large, in its style and facing the same way, on a gray background');
   const brush = onMask && toolButton('mask', 'mk-smart', 'Smart mask', 'Smart mask: brush over a part of the picture, '
-    + 'then say what should be there. The picture is drawn again with it', icon('maskbrush'));
+    + 'say in the words on the right what should be there, then Re-Render Viewport. The picture is drawn again with it',
+  icon('maskbrush'));
   const markers = h('div', { class: 'mk-bar', hidden: true }, wipe, size, pens, rainbow);
   // The tools on a glass of their own, left of the markers': tools of their own, not settings of the marker.
   const wandGlass = (wand || brush) && h('div', { class: 'mk-wand', hidden: true }, wand, brush);
@@ -290,6 +289,7 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   function mark(marker) {
     take(null);
     pick(marker);
+    onTool?.();
   }
 
   /** A tool taken up ('select', 'mask': its button lit) or put down (null: the markers paint), with what it drew. */
@@ -304,13 +304,16 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
     }
     markers.classList.toggle('idle', !!tool);    // one thing lit: the marker's ring waits while a tool is up
     setCursor();
+    if (tool) onTool?.();
   }
 
   function sync() {
     el.hidden = !shown || !natural;
     markers.hidden = !shown || !natural;
     if (wandGlass) wandGlass.hidden = markers.hidden || !canSelect;
-    wipe.hidden = !hasMarks();
+    wipe.hidden = !hasMarks() && !mask.length;
+    wipe.title = mask.length ? `${WIPE_MASK} (Esc)` : `${WIPE_MARKS} (Ctrl+Z brings them back)`;
+    wipe.setAttribute('aria-label', mask.length ? WIPE_MASK : WIPE_MARKS);
     if (markers.hidden) hint.hidden = true;
   }
 
@@ -350,7 +353,7 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
     if (isTextField()) document.activeElement.blur();   // Ctrl+Z is the workbench's now, not the words field's
     try { canvas.setPointerCapture(e.pointerId); } catch { /* the pointer is gone already */ }
     // A tool's stroke goes on the selection's layer, never on the marks: a circle in place of the one asked about,
-    // the mask one stroke larger (its box is out of the way meanwhile).
+    // the mask one stroke larger.
     if (tool === 'select') dropSelection();
     else asking?.close();
     const step = { kind: 'stroke', colour: tool ? CIRCLE_COLOUR : colourOf(pen.marker), points: [] };
@@ -391,7 +394,7 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
       mask.push(step);
       measure(mask);
       fadeWindow();
-      askChange();
+      maskChanged(true);
     } else {
       book().add(step);
       changed();
@@ -404,6 +407,11 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   function changed() {
     sync();
     onStroke?.(path);
+  }
+
+  function maskChanged(brushed = false) {
+    sync();
+    onMask?.(brushed);
   }
 
   // ---- Smart Mask's window: where the image server draws the change, when it draws a window only ------------
@@ -509,59 +517,6 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   }
 
   /**
-   * The box at the mask, with the words it held before (selected once they were rendered): Enter, or Render, sends
-   * them with the mask - not while it is too large (the box says so) -; Escape, or "Clear mask", takes the mask off.
-   * Shift+Enter is a new line.
-   */
-  function askChange() {
-    const input = h('textarea', {
-      class: 'input mk-ask-input', rows: 3, placeholder: MASK_HINT, spellcheck: 'true', 'aria-label': 'What should be under the mask',
-    });
-    input.value = maskWords;
-    const opened = input.value;
-    const go = h('button', { type: 'button', class: 'btn primary small', onclick: () => render() }, 'Render');
-    const clear = h('button', { type: 'button', class: 'btn ghost small', title: 'Take the mask off (Esc)', onclick: () => dropSelection() },
-      'Clear mask');
-    const why = h('span', { class: 'mk-ask-why' }, MASK_TOO_LARGE);
-    /** Render goes once there are words, and while the mask fits its window. */
-    const allow = () => {
-      go.disabled = !maskWords.trim() || tooLarge;
-      why.hidden = !tooLarge;
-    };
-    allow();
-    input.addEventListener('input', () => {
-      maskWords = input.value;
-      maskWordsSent = false;
-      allow();
-    });
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        render();
-      } else if (e.key === 'Escape') {
-        dropSelection();
-      } else if (undoKey(e) === 'undo' && input.value === opened) {   // nothing of the field's own to take back
-        e.preventDefault();
-        unbrush();
-      }
-    });
-    putBox(h('div', { class: 'mk-ask mk-ask-mask' }, h('span', { class: 'mk-ask-label' }, 'What should be here?'), input,
-      why, h('div', { class: 'mk-ask-row' }, clear, go)), input, mask);
-    asking.allow = allow;
-    if (maskWordsSent) input.select();
-
-    function render() {
-      const words = maskWords.trim();
-      if (!words || tooLarge) return;              // nothing typed yet, or too large: the question stays
-      const strokes = mask;
-      dropSelection();
-      maskWordsSent = true;
-      onMask(words, () => pictureWith((g) => paintMask(g, strokes)), () => png((g) => paintMaskAlone(g, strokes)));
-    }
-  }
-
-  /**
    * The mask as the image generator gets it: its strokes in flat magenta over the picture. Nothing shows through:
    * what lies under it is not the model's to copy.
    */
@@ -580,26 +535,27 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
   function dropSelection() {
     if (drawing?.tool) drawing = null;
     asking?.close();
+    const had = mask.length > 0;
     mask = [];
     circle.clear();
     measure(mask);
+    if (had) maskChanged();
   }
 
-  /** Smart Mask's last stroke taken back: the rest is painted again, its window shows a moment, it is asked about. */
+  /** Smart Mask's last stroke taken back: the rest is painted again, its window shows a moment. */
   function unbrush() {
-    mask.pop();
-    if (!mask.length) {
+    if (mask.length < 2) {
       dropSelection();
       return;
     }
-    asking?.close();
+    mask.pop();
     circle.clear();
     circle.start(natural, scale(), true);
     for (const stroke of mask) for (const part of strokeParts(stroke.points)) circle.paint(part);
     windowEl.classList.remove('fade');
     measure(mask);
     fadeWindow();
-    askChange();
+    maskChanged();
   }
 
   function clear() {
@@ -637,10 +593,11 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
       unbrush();
       return;
     }
-    // Escape puts the tool down, and is spent on that (the page would let go of the prop next); with a box asking,
-    // the box takes it first, and lets go of what was drawn.
-    if (e.type === 'keydown' && e.key === 'Escape' && tool && !drawing && !asking) {
-      take(null);
+    // Escape takes the mask off, else puts the tool down, and is spent on that (the page would let go of the prop
+    // next); with a box asking, the box takes it first, and lets go of what was drawn. Not while words are typed.
+    if (e.type === 'keydown' && e.key === 'Escape' && tool && !drawing && !asking && !isTextField()) {
+      if (mask.length) dropSelection();
+      else take(null);
       e.preventDefault();
       return;
     }
@@ -728,18 +685,34 @@ export function createMarks({ onStroke = null, onSelect = null, onMask = null, m
     },
 
     /**
-     * What maskRequest() gives may have changed (the Shape, the Resolution, Tileable): the mask's box says again
-     * whether it fits. Its window stays out of sight until the next stroke.
+     * What maskRequest() gives may have changed (the Shape, the Resolution, Tileable): whether the mask fits is
+     * measured again. Its window stays out of sight until the next stroke.
      */
     refit() {
       if (!mask.length || drawing) return;
       measure(mask);
       windowEl.classList.add('fade');
-      asking?.allow?.();
+      maskChanged();
     },
 
     get path() { return path; },
     undo,
+
+    /**
+     * Smart Mask's mask on the shown picture: {tooLarge (it is not to be sent), picture() - the picture under the
+     * mask in flat magenta -, mask() - the mask alone -} (both PNGs of its strokes as they are now), or null.
+     */
+    masked() {
+      if (!mask.length || !natural) return null;
+      const strokes = mask;
+      return {
+        tooLarge,
+        picture: () => pictureWith((g) => paintMask(g, strokes)),
+        mask: () => png((g) => paintMaskAlone(g, strokes)),
+      };
+    },
+    /** The mask goes (its change is on its way). */
+    unmask: () => dropSelection(),
 
     /** The shown picture with its marks, as a PNG (a Blob), or null when it has none (a canvas of the page's: always). */
     composite() {

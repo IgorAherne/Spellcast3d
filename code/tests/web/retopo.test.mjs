@@ -156,7 +156,7 @@ const {
 } = await load('stages/rules.js');
 const { licenseOf, nonCommercial } = await load('licenses.js');
 const { default: RETOPO, settingsChanged, waitingHint } = await load('stages/retopo.js');
-const { madeWithTriflow, triflowNote } = await load('stages/preview.js');
+const { toastSaved } = await load('stages/preview.js');
 const { TOOLS: DIAGNOSTICS } = await load('shell/settings.js');
 const { NAMES: INSTALL_NAMES, ORDER: INSTALL_ORDER } = await load('shell/install.js');
 const { boxNumber, boxNumbers, boxText } = await load('shell/proplist.js');
@@ -472,6 +472,29 @@ test('the pointer over High or Low rings the Wireframe toggle under the viewport
   assert.deepEqual(rung, [...once, ...once], 'for each: the ring Images gives the Resolution, and the toggle swells for a moment');
 });
 
+test('a prop picked shows its Low side with the edges on again, whatever was chosen on the prop before; the lights of "All" reach further here', async () => {
+  const { viewer } = await import(VIEWER);
+  const a = made(prop('a', 'triflow'), 'triflow', { 2: 2000 }, { picked: 2 });
+  const b = made(prop('b', 'triflow'), 'triflow', { 2: 2000 }, { picked: 2 });
+  const { host } = await mount([a, b]);
+  const wire = () => host.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Wireframe')[0];
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const pick = async (id) => {
+    RETOPO.update({ selectedId: id, stageId: 'retopo', project: store.project, select() {}, goto() {}, moving: false });
+    await settle();
+  };
+  await settle();
+  assert.equal(viewer.lightReach, 1.95, 'Retopo\'s clay lit by the same lights from further');
+  assert.equal(wire().getAttribute('aria-pressed'), 'true');
+  wire().click();
+  assert.equal(wire().getAttribute('aria-pressed'), 'false', 'the artist turned it off');
+  await pick('b');
+  assert.equal(wire().getAttribute('aria-pressed'), 'true', 'another prop: on again');
+  wire().click();
+  await pick('a');
+  assert.equal(wire().getAttribute('aria-pressed'), 'true', 'and back: on again');
+});
+
 test('the call to action goes on to Projection only once every prop has a picked, up-to-date clean mesh', async () => {
   const ready = made(prop('a', 'lato2'), 'lato2', { 2: 2000 }, { picked: 2 });
   const pick = made(prop('b', 'lato2', {}, [2, 4]), 'lato2', { 2: 2000, 4: 4000 });
@@ -602,24 +625,18 @@ test('TriFlow is free for non-commercial use only: its terms, with or without th
   assert.equal(licenseOf('lato2'), null, 'nothing to flag');
 });
 
-test('a save of a prop made with TriFlow says it is for non-commercial use only', () => {
-  const saved = (name, method, bakedFrom) => ({
-    name, retopo: { obj: `retopo/2k/${method}.obj`, method },
-    projection: bakedFrom ? { glb: 'projection/bake_001/projection.glb', source_retopo: bakedFrom } : { glb: null },
-  });
-  const barrel = saved('Barrel', 'triflow');
-  const crate = saved('Crate', 'lato2', 'retopo/2k/lato2.obj');
-  const baked = saved('Lamp', 'triflow', 'retopo/4k/triflow.obj');
-  const bakedBefore = saved('Chest', 'triflow', 'retopo/retopo.obj');   // baked on Instant Meshes' mesh, then TriFlow picked
-  assert.equal(madeWithTriflow(barrel, 'all'), true, 'its best result is TriFlow\'s clean mesh');
-  assert.equal(madeWithTriflow(barrel, 'mesh'), false, 'the 3D model is not TriFlow\'s');
-  assert.equal(madeWithTriflow(baked, 'projection'), true);
-  assert.equal(madeWithTriflow(saved('Old', 'triflow', 'retopo/triflow.obj'), 'projection'), true, 'a bake from before sizes');
-  assert.equal(madeWithTriflow(bakedBefore, 'projection'), false);
-  assert.equal(madeWithTriflow(crate, 'all'), false);
-  assert.equal(triflowNote([barrel], 'all'), 'Barrel was made with TriFlow — non-commercial use only.');
-  assert.equal(triflowNote([barrel, crate, baked], 'all'), '2 props were made with TriFlow — non-commercial use only.');
-  assert.equal(triflowNote([crate], 'all'), '');
+test('a save says where it went, and what the hub warned of - nothing more of TriFlow\'s terms (said where it is picked)', () => {
+  const toasts = new FakeEl('div');
+  const { getElementById } = document;
+  document.getElementById = (id) => (id === 'toasts' ? toasts : null);
+  try {
+    toastSaved('Barrel.glb', { folder: 'exports/Demo/Barrel', opened: true });
+    toastSaved('2 props', { folder: 'exports/Demo', opened: true, warnings: ['Crate: its FBX could not be made.'] });
+    assert.deepEqual(toasts.children.map((t) => t.textContent), [
+      'Saved Barrel.glb to exports\\Demo\\Barrel', 'Saved 2 props to exports\\Demo. Crate: its FBX could not be made.']);
+  } finally {
+    document.getElementById = getElementById;
+  }
 });
 
 test('Diagnostics, the install card and the status line know every tool', () => {

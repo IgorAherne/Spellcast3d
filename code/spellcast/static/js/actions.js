@@ -626,10 +626,20 @@ async function stopTool(tool) {
   pollStatusSoon(700);
 }
 
-/** Stop and start again (e.g. so new settings apply). The hub starts it once the stop has finished. */
-export async function restartTool(tool) {
+/**
+ * Stop and start again (e.g. so new settings apply). The hub starts it once the stop has finished; with a `wish`
+ * (rules.js warmAsk: e.g. the image generator's {stage}) it starts it for that, as an arrival at the stage would.
+ */
+export async function restartTool(tool, wish = null) {
   await stopTool(tool);
-  await startTool(tool);
+  if (!wish) {
+    await startTool(tool);
+    return;
+  }
+  const status = await api('POST', `/api/tools/${tool}/warm`, { ...wish, displace: true });
+  delete status.warmed;
+  patchTool(tool, status);
+  pollStatusSoon(700);
 }
 
 /** Asks before stopping a tool, or before a start that stops another GPU tool. Returns true if acted. */

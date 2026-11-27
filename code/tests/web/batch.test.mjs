@@ -903,36 +903,39 @@ test('jobs gone with a restarted hub: the props they were not through with say s
 
 // ---- the "faster" switches (stages/faster.js) -------------------------------------------------------------
 
-test('while faster image generation is on, the progress of a picture says so first, in Images and in Omni-Texture; never with it off or for another tool', () => {
-  const said = (stage, tool, on) => {
-    store.settings = { qwen: { int8_matmul: on } };
+test('while a stage\'s faster image generation is on, the progress of its pictures says so first - Images\' and Omni-Texture\'s each by its own switch; never with it off or for another tool', () => {
+  const said = (stage, tool, qwen) => {
+    store.settings = { qwen };
     reset({ jobs: [batchJob('j1', { p_1: ['working', 0.4, 'Drawing · step 3 of 8'] }, { stage, tool })] });
     const layer = busyLayer(stage);
     layer.sync(store.project.props[0]);
     return layer.children.filter((line) => /^sv-busy-/.test(line.className) && !line.hidden).map((line) => line.textContent);
   };
+  const images = { int8_matmul: true, int8_matmul_omnitexture: false };
+  const omni = { int8_matmul: false, int8_matmul_omnitexture: true };
   try {
-    assert.deepEqual(said('images', 'qwen', true), ['Faster image generation is on', 'Drawing · step 3 of 8']);
-    assert.deepEqual(said('omnitexture', 'qwen', true), ['Faster image generation is on', 'Drawing · step 3 of 8']);
-    assert.deepEqual(said('images', 'qwen', false), ['Drawing · step 3 of 8']);
-    assert.equal(said('mesh', 'pixal3d', true).length, 1, 'the 3D generator has a switch of its own');
+    assert.deepEqual(said('images', 'qwen', images), ['Faster image generation is on', 'Drawing · step 3 of 8']);
+    assert.deepEqual(said('omnitexture', 'qwen', images), ['Drawing · step 3 of 8'], 'Images\' switch is not Omni-Texture\'s');
+    assert.deepEqual(said('omnitexture', 'qwen', omni), ['Faster image generation is on', 'Drawing · step 3 of 8']);
+    assert.deepEqual(said('images', 'qwen', omni), ['Drawing · step 3 of 8']);
+    assert.equal(said('mesh', 'pixal3d', { ...images, ...omni, int8_matmul: true }).length, 1, 'the 3D generator has a switch of its own');
   } finally {
     store.settings = undefined;
   }
 });
 
-test('Faster image generation changes only after a window that says it holds for all pictures and Omni-Texture, then restarts a running Qwen-Image', async () => {
+test('Faster image generation (Images\') changes only after a window that says it holds for all of Images\' pictures - not Omni-Texture\'s -, then restarts a running Qwen-Image for Images; Omni-Texture\'s switch is its own', async () => {
   const sent = [];
-  let saved = false;
+  let saved = { int8_matmul: false, int8_matmul_omnitexture: false };
   globalThis.fetch = async (path, init = {}) => {
-    if (init.method === 'PATCH') saved = JSON.parse(init.body).qwen.int8_matmul;
+    if (init.method === 'PATCH') saved = { ...saved, ...JSON.parse(init.body).qwen };
     if (init.method !== 'GET') sent.push(init.body ? [path, JSON.parse(init.body)] : [path]);
-    return { status: 200, text: async () => JSON.stringify(path === '/api/settings' ? { qwen: { int8_matmul: saved } } : { state: 'stopped' }) };
+    return { status: 200, text: async () => JSON.stringify(path === '/api/settings' ? { qwen: saved } : { state: 'stopped' }) };
   };
   const timers = holdSlowTimers();
   const quick = globalThis.setTimeout;        // a restart asks for the status in 700 ms: that poll never starts here
   globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 500 ? 0 : quick(fn, ms, ...rest));
-  const asking = () => document.body.children.find((d) => d.open && /faster image generation\?/.test(d.textContent));
+  const asking = () => document.body.children.find((d) => d.open && /faster image generation (in Images|for Omni-Texture)\?/.test(d.textContent));
   const press = (label) => asking().querySelectorAll('.modal-actions .btn').find((b) => b.textContent === label).click();
   const flip = async (sw, to) => {
     sw.input.checked = to;
@@ -950,7 +953,9 @@ test('Faster image generation changes only after a window that says it holds for
     // Nothing changes before the artist agrees; Cancel leaves it as it was.
     await flip(sw, true);
     assert.equal(sw.input.checked, false);
-    assert.match(asking().textContent, /all image generation: every picture in Images and every repaint in Omni-Texture/);
+    assert.match(asking().textContent, /^Turn on faster image generation in Images\?/);
+    assert.match(asking().textContent, /This changes every picture made in Images, for every prop and project \(Omni-Texture has a switch of its own\), until you turn it off\./);
+    assert.doesNotMatch(asking().textContent, /repaint/, 'nothing of Omni-Texture\'s changes');
     assert.match(asking().textContent, /The image generator restarts now \(about a minute\)\./, 'it picks its kernels when it starts');
     // Three short paragraphs, not one block: what it changes, what it costs, the restart. What it costs says in bold
     // that a prompt's instructions may go unheeded (a sheet of four views came out as two with it on).
@@ -963,13 +968,14 @@ test('Faster image generation changes only after a window that says it holds for
     assert.deepEqual(sent, []);
     assert.equal(sw.input.checked, false);
 
-    // Agreed: saved as the hub's qwen.int8_matmul, and the running image generator started again.
+    // Agreed: saved as the hub's qwen.int8_matmul, and the running image generator started again for Images.
     await flip(sw, true);
     press('Turn on');
     await timers.tick();
-    assert.deepEqual(sent, [['/api/settings', { qwen: { int8_matmul: true } }], ['/api/tools/qwen/stop'], ['/api/tools/qwen/start']]);
+    assert.deepEqual(sent, [['/api/settings', { qwen: { int8_matmul: true } }], ['/api/tools/qwen/stop'],
+      ['/api/tools/qwen/warm', { stage: 'images', displace: true }]]);
     assert.equal(sw.input.checked, true);
-    assert.equal(store.settings.qwen.int8_matmul, true);
+    assert.deepEqual(store.settings.qwen, { int8_matmul: true, int8_matmul_omnitexture: false });
 
     // Off again with the image generator stopped: the same question, no restart.
     sent.length = 0;
@@ -979,7 +985,7 @@ test('Faster image generation changes only after a window that says it holds for
     // One paragraph of two lines: what it changes, then - after a line break - what that does.
     const [off, ...rest] = asking().all((e) => e.className === 'modal-text');
     assert.deepEqual([rest.length, off.all((e) => e.tagName === 'BR').length], [0, 1]);
-    assert.match(off.textContent, /for every prop and project\.The pictures come out/);
+    assert.match(off.textContent, /a switch of its own\)\.Pictures come out/);
     assert.doesNotMatch(asking().textContent, /restarts now/, 'it is not running: no restart to announce');
     press('Turn off');
     await timers.tick();
@@ -994,6 +1000,26 @@ test('Faster image generation changes only after a window that says it holds for
     assert.equal(sw.input.checked, false);
     assert.deepEqual(sent, []);
     assert.deepEqual(said(), ['The image generator is drawing right now. Change this when it is done.']);
+
+    // Omni-Texture's own switch: its window names its repaints alone, it saves its own setting and restarts the
+    // image generator for Omni-Texture; Images' stays as it is.
+    sent.length = 0;
+    reset({ states: { qwen: 'ready' } });
+    const omni = fasterSwitch('omnitexture');
+    await timers.tick();
+    assert.equal(!!omni.input.checked, false);
+    assert.match(omni.textContent, /For all Omni-Texture repaints, not only this prop\./);
+    await flip(omni, true);
+    assert.match(asking().textContent, /^Turn on faster image generation for Omni-Texture\?/);
+    assert.match(asking().textContent, /This changes every Omni-Texture repaint, for every prop and project \(Images has a switch of its own\)/);
+    assert.match(asking().textContent, /Repaints take about 20 to 40 % less time/);
+    assert.doesNotMatch(asking().textContent, /picture/i, 'nothing of Images\' changes');
+    press('Turn on');
+    await timers.tick();
+    assert.deepEqual(sent, [['/api/settings', { qwen: { int8_matmul_omnitexture: true } }], ['/api/tools/qwen/stop'],
+      ['/api/tools/qwen/warm', { stage: 'omnitexture', displace: true }]]);
+    assert.deepEqual([omni.input.checked, !!sw.input.checked], [true, false]);
+    assert.deepEqual(store.settings.qwen, { int8_matmul: false, int8_matmul_omnitexture: true });
   } finally {
     timers.release();
     store.settings = undefined;
