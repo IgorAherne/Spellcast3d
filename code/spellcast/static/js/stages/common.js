@@ -8,7 +8,7 @@ import { api, fileUrl } from '../api.js';
 import { formatBytes, h, plural } from '../dom.js';
 import { icon } from '../icons.js';
 import {
-  FIRST_START, PROP_ENDED, STAGE_TOOL, boxesOf, bustFor, capital, configChanged, configProblems, imageTool, jobFor,
+  ACTIVE_JOB, FIRST_START, PROP_ENDED, STAGE_TOOL, boxesOf, bustFor, capital, configChanged, configProblems, imageTool, jobFor,
   jobLoading, jobStopping, projectId, stageNoun, store, thumbOf, toolName, toolStatus,
 } from '../store.js';
 import { croppedPicture, propPicture } from '../cropped.js';
@@ -118,6 +118,9 @@ export function jobState(stage, box) {
  * The prop a running job works on now: {id, name, words, fraction} - its own words ("Refining fine details · step
  * 24 of 25") and how far it is, as its tile says; null while none works (a network loads, say).
  */
+/** The job of `stage` that waits or runs (one at a time per stage), else null. */
+export const stageJob = (stage) => (store.jobs || []).find((j) => j.stage === stage && ACTIVE_JOB.has(j.status)) || null;
+
 export function onCard(job) {
   const id = job?.status === 'running' ? job.current_prop : null;
   const prop = id ? job.props?.[id] : null;
@@ -344,6 +347,8 @@ export function gateLine(stage, after = {}) {
  * never unclear whose progress shows. It says when the job is being stopped, and what the tool loads meanwhile
  * ("Loading the shape model…"). While the image generator draws with the stage's shortcut (faster.js), a line over
  * the words says so, in every picture's progress: the artist chose it for all of them, once, in the stage's panel.
+ * sync(box, held): a prop without a job of its own while a job of the stage goes on (stageJob) is covered too when
+ * `held` gives the words for it ("Its 3D model shows once all are made"), following the prop at work (restingMessage).
  */
 export function busyLayer(stage) {
   const faster = FASTER[stage === 'omnitexture' ? 'omnitexture' : 'images'];
@@ -356,10 +361,18 @@ export function busyLayer(stage) {
     onclick: () => job && attempt(() => cancelJob(job)),
   }, icon('stop'), 'Stop');
   const el = h('div', { class: 'sv-busy', hidden: true }, spinner(), shortcut, text, bar, stop);
-  el.sync = (box) => {
+  el.sync = (box, held = '') => {
     const j = box ? jobFor(stage, box.id) : null;
-    el.hidden = !j;
-    job = j?.job || null;
+    const going = !j && box && held ? stageJob(stage) : null;
+    el.hidden = !j && !going;
+    job = j?.job || going;
+    if (going) {
+      shortcut.hidden = true;
+      text.textContent = restingMessage(going, held);
+      bar.set(onCard(going)?.fraction ?? null);
+      stop.title = 'Stop making this';
+      return;
+    }
     if (!j) return;
     const s = jobState(stage, box);
     const tool = j.job.tool || STAGE_TOOL[stage];

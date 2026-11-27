@@ -533,6 +533,28 @@ test('a tile\'s box chooses the prop for Omni-Texture; a click on the tile no lo
   OMNI.unmount();
 });
 
+test('while a whole Omni-Texture is painted no prop\'s model shows - the progress in its place, whichever prop is clicked -; beside a masked repaint the models show', async () => {
+  const stage = await mount();
+  const busy = () => stage.host.byClass('sv-busy')[0];
+  const job = (retouch) => hubJob({ id: 'j_5', stage: 'omnitexture', status: 'running', prop_ids: ['p_2'], retouch,
+    progress: { fraction: 0.2, message: 'Painting the views' }, errors: {} });
+  const shown = viewer.shown.length;
+  assert.equal(busy().hidden, true);
+  store.jobs = [job(false)];
+  stage.update();
+  assert.equal(busy().hidden, false);
+  assert.match(busy().byClass('sv-busy-text')[0].textContent, /^The models show once the Omni-Texture is done/);
+  assert.equal(stage.host.byClass('mk-cover')[0].hidden, true, 'nothing to paint on meanwhile');
+  // A masked repaint of another prop: this one's model shows beside it.
+  store.jobs = [job(true)];
+  stage.update();
+  await settle();
+  assert.deepEqual([busy().hidden, viewer.shown.length], [true, shown + 1]);
+  store.jobs = [];
+  stage.update();
+  OMNI.unmount();
+});
+
 test('a result with repaints on screen has the hub ready its worker at once, and the newest repaint is the edge fade\'s until another is clicked', async () => {
   const stage = await mount();
   const readied = () => hub.calls.filter((c) => c.startsWith('POST'));

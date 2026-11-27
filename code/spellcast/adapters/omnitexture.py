@@ -194,10 +194,9 @@ CAMERA = ("eye", "forward", "up", "tan", "wide")
 # Where the camera of each of the Images stage's views looks, in the 3D model's own space: the model faces +z, and
 # "left" is the prop's own left side, seen from +x (the worker's cameras: front right, at +60 degrees, is on +x).
 SIDE_FORWARD = {"front": (0.0, 0.0, -1.0), "back": (0.0, 0.0, 1.0), "left": (-1.0, 0.0, 0.0), "right": (1.0, 0.0, 0.0)}
-# Such a patch is made again with the next seed, up to RETOUCH_TRIES pictures in all: the worker's "left" says how
-# much of the mask's shape a picture still has (levels: restored pictures read up to 10, patches from 25), and the
-# picture with the least goes onto the model.
-RETOUCH_TRIES = 3
+# The worker's "left" says how much of the mask's shape a repaint's picture still has (such a patch of one colour
+# where the magenta was: restored pictures read up to 10, patches from 25). The picture goes onto the model as it
+# came, never drawn again; past MASK_LEFT the artist is told.
 MASK_LEFT = 12.0
 MASK_LEFT_WARNING = ("Qwen-Image kept the shape of your mask in its picture, so that part may look like a patch. "
                      "Press Ctrl+Z and render it again, or mask a little more around it.")
@@ -1737,33 +1736,20 @@ def _repaint_load(src: Path, work: Path) -> dict[str, Any]:
     return {"cmd": "load", "glb": str(src), "work": str(work), "size": SIZE, "views": 1, "plan": False}
 
 
-async def _restored(ctx: StageContext, worker: Worker, body: dict[str, Any], seed: int,
-                    inputs: Path) -> list[dict[str, Any]]:
-    """Qwen-Image's pictures of what the artist masked, a new seed each, until one no longer shows the mask's
-    shape (the worker's "left" within MASK_LEFT) or RETOUCH_TRIES are made: kept as rejected-<n>.png in
-    `inputs` -> per picture its seed and what it has left of the mask."""
+async def _restored(ctx: StageContext, worker: Worker, body: dict[str, Any], answer: Path) -> float:
+    """Qwen-Image's picture of what the artist masked, as it comes (never drawn again), into `answer` -> how much
+    of the mask's shape it still has (the worker's "left": over MASK_LEFT, the artist is told)."""
     from .qwen import generate
 
-    tries: list[dict[str, Any]] = []
-    for attempt in range(RETOUCH_TRIES):
-        if ctx.cancelled():
-            raise StageError("Cancelled.")
-        body["seed"] = seed + attempt
-        words = (f"Painting what you masked, try {attempt + 1} of {RETOUCH_TRIES}\n(the picture before kept the "
-                 "mask's shape)") if attempt else "Painting what you masked"
-        sub = dataclasses.replace(ctx, report=lambda f, m, words=words: ctx.report(
-            0.9 * max(0.0, min(1.0, f)), f"{words}\n{m}"))
-        result = await generate(sub, body)
-        drawn = [Path(p) for p in result.get("images") or [] if Path(p).is_file()]
-        if not drawn:
-            raise StageError("Qwen-Image made no picture of what you masked. Try again.")
-        kept = inputs / f"rejected-{attempt + 1}.png"
-        os.replace(drawn[0], kept)
-        judged = await asyncio.to_thread(worker.call, {"cmd": "left", "picture": str(kept)})
-        tries.append({"seed": body["seed"], "left": judged["left"]})
-        if judged["left"] <= MASK_LEFT:
-            break
-    return tries
+    sub = dataclasses.replace(ctx, report=lambda f, m: ctx.report(
+        0.9 * max(0.0, min(1.0, f)), f"Painting what you masked\n{m}"))
+    result = await generate(sub, body)
+    drawn = [Path(p) for p in result.get("images") or [] if Path(p).is_file()]
+    if not drawn:
+        raise StageError("Qwen-Image made no picture of what you masked. Try again.")
+    os.replace(drawn[0], answer)
+    judged = await asyncio.to_thread(worker.call, {"cmd": "left", "picture": str(answer)})
+    return judged["left"]
 
 
 def _example_kept(prop_dir: Path, picture: Path) -> Path:
@@ -1860,21 +1846,20 @@ async def retouch(ctx: StageContext, prop: Mapping[str, Any], params: Mapping[st
                      [*given.values(), *([str(shown.resolve())] if shown else [])],
                      given["viewport"], SIZE, out_dir, model, seed,
                      ctx.preview is not None, RETOUCH_STRENGTH, redrawn=str((inputs / REDRAWN).resolve()))
-        tries = await _restored(ctx, worker, body, seed, inputs)
-        best = min(range(len(tries)), key=lambda i: tries[i]["left"])
-        body["seed"] = seed = tries[best]["seed"]
         answer = inputs / "answer.png"
-        os.replace(inputs / f"rejected-{best + 1}.png", answer)
+        left = await _restored(ctx, worker, body, answer)
         shutil.rmtree(out_dir, ignore_errors=True)
+        # ("tries": the pictures made, as older repaints made several; the page reads it)
         record = {**_record(body, inputs, ctx.prop_dir),
                   "retouch": {**camera, "masked": look["masked"], "seen": look["seen"], "from": glb_rel,
-                              "example": example[0], "mirrored": mirrored, "delit": delit, "tries": tries,
+                              "example": example[0], "mirrored": mirrored, "delit": delit,
+                              "tries": [{"seed": seed, "left": left}],
                               **({"smooth": True} if "smooth" in ask else {})}}
         (inputs / "request.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
         project = {"cmd": "repaint", "picture": str(answer), "keep": str(inputs / projects.REPAINT_PICTURE),
                    "layer": str(inputs / projects.REPAINT_LAYER)}
         warnings = [words for told, words in ((look["seen"] < OUT_OF_SIGHT * look["masked"], OUT_OF_SIGHT_WARNING),
-                                              (tries[best]["left"] > MASK_LEFT, MASK_LEFT_WARNING)) if told]
+                                              (left > MASK_LEFT, MASK_LEFT_WARNING)) if told]
         for words in warnings:
             if ctx.warn is not None:
                 ctx.warn(words)
@@ -1898,7 +1883,7 @@ async def retouch(ctx: StageContext, prop: Mapping[str, Any], params: Mapping[st
     new_glb = ctx.rel(folder / "omnitexture.glb")
     stats = dict(block.get("stats") or {})
     stats["retouch"] = {"folder": ctx.rel(folder / projects.RETOUCH_FOLDER), "painted": painted.get("painted"),
-                        "masked": look["masked"], "seen": look["seen"], "seed": seed, "tries": len(tries),
+                        "masked": look["masked"], "seen": look["seen"], "seed": seed,
                         "seconds": round(time.monotonic() - started, 1),
                         "warning": warning}
     steps = steps_after(block, new_glb)

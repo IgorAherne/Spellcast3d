@@ -202,6 +202,8 @@ class Job:
             # What the tool is reading from disk between two props, in the artist's words (else ""), and whether
             # a cancel is on its way (progress.message says what it waits for). The page shows both.
             "loading": self.loading or "", "stopping": self.cancel_requested and self.status in ACTIVE,
+            # An Omni-Texture repaint of what was masked, not a whole Omni-Texture (the page shows models beside it)
+            "retouch": bool((self.params or {}).get("retouch")),
             "errors": dict(self.errors), "warnings": dict(self.warnings), "created": self.created,
             "finished": self.finished,
         }

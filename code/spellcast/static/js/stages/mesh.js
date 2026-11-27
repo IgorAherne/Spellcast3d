@@ -19,7 +19,7 @@ import { progressBar, rowField, segmented, seedInput, sliderField, spinner } fro
 import { ShellRefusal, attempt, confirmDialog, modal, toast } from '../ui.js';
 import {
   afterMove, boxFile, boxHeading, busyLayer, donateCorner, emptyState, errorLine, fadeIn, focusBox,
-  gateLine, gateOpen, jobState, liveDeps, rowAction, thumbUrl, toolGate,
+  gateLine, gateOpen, jobState, liveDeps, rowAction, stageJob, thumbUrl, toolGate,
 } from './common.js';
 import { asideHint, effectiveViews, frontOnly, madeWith, meshFresh, meshGeometry, smallViewsHint, tileable } from './rules.js';
 import { fasterSwitch } from './faster.js';
@@ -34,6 +34,8 @@ const NO_FRONT = 'Mark one of the slices as Front in Images: the 3D model is bui
 // The hub's note on a model made from the front view alone (adapters/pixal3d.py FRONT_ONLY): out of date
 // once the multi-view models are there.
 const FRONT_ONLY = 'Used the front view only: the multi-view models aren’t downloaded yet.';
+// Over a prop that has its 3D model while others are still being made: the model shows once all are made.
+const HELD = 'Its 3D model shows once all are made';
 const DEFAULT_QUALITY = 1536;     // High: the voxel grid a new prop is made at (projects.STAGE_DEFAULTS)
 
 /** The number of views the prop's 3D model is made from now (rules.effectiveViews). */
@@ -222,11 +224,17 @@ function buildProp(prop) {
         : stale ? h('span', { class: 'chip warn', title: 'The picture or its views changed after this model was made. Make it again to update it.' },
           icon('alert'), 'Made from an older picture') : null);
     // While its 3D model is being made, the picture stays out of the view: a batch takes every prop through each
-    // step in turn, so the busy words are about other props too, and the faint picture of this one misled.
+    // step in turn, so the busy words are about other props too, and the faint picture of this one misled. No 3D
+    // model shows while any is being made: the progress stays in its place (HELD), the card is the job's.
     const working = !!jobFor('mesh', p.id);
-    const key = glb ? `glb|${boxFile(p, glb, 'mesh')}` : `none|${chosen}|${unsupported()}|${working}|${tileable(p)}`;
+    const held = !!glb && !!stageJob('mesh');
+    const key = held ? 'held' : glb ? `glb|${boxFile(p, glb, 'mesh')}` : `none|${chosen}|${unsupported()}|${working}|${tileable(p)}`;
     if (key === shownModel) return;
     shownModel = key;
+    if (held) {
+      pane.message(h('div'));
+      return;
+    }
     if (glb) {
       pane.show(boxFile(p, glb, 'mesh'), 'glb', afterMove(ctx, thumbUrl(p, 'mesh')));
       return;
@@ -453,7 +461,7 @@ function buildProp(prop) {
     gate.sync();
     gate.hidden ||= !p.images?.chosen;   // an imported prop needs no 3D generator
     error.sync(p);
-    busy.sync(p);
+    busy.sync(p, p.mesh?.glb ? HELD : '');
     syncShape(p);
     syncQuality();
     more.hidden = !faster.applies();

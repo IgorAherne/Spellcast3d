@@ -1413,8 +1413,7 @@ def test_a_repaint_shows_qwen_image_the_pages_view_and_makes_a_new_step(tmp_path
     assert "views" not in patch and patch["bases"] == [] and patch["stale"] is False
     assert patch["stats"]["seed"] == 7 and patch["stats"]["retouch"]["painted"] == 850 \
         and patch["stats"]["retouch"]["folder"] == "omnitexture/ot_002/retouch"
-    assert patch["stats"]["retouch"]["seed"] == body["seed"] and patch["stats"]["retouch"]["tries"] == 1 \
-        and patch["stats"]["retouch"]["warning"] is None
+    assert patch["stats"]["retouch"]["seed"] == body["seed"] and patch["stats"]["retouch"]["warning"] is None
     assert not (prop_dir / "omnitexture" / "mask.png").exists(), "the mask went with its repaint"
 
 
@@ -1481,36 +1480,27 @@ def test_a_repaints_example_has_its_lighting_taken_off_once_per_picture(tmp_path
     assert shown(front) == (front, False) and len(add_on.calls) == calls and len(told) == 1
 
 
-def test_a_picture_that_kept_the_masks_shape_is_made_again_with_the_next_seed(tmp_path: Path,
-                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_picture_that_kept_the_masks_shape_goes_on_as_it_came_and_the_artist_is_told(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Qwen-Image now and then lays a patch of one colour where the magenta was, instead of the surface restored:
-    the worker's "left" tells, and the picture is made again with the next seed, three in all at the most; the one
-    with the least of the mask left goes onto the model, the others stay beside it for the record. When every one
-    kept the mask, or most of the mask was out of the camera's sight, the artist is told."""
-    patch, worker, asked, prop_dir = _retouch(tmp_path / "second", monkeypatch, FakeAlbedo(), params={"seed": 40},
-                                              lefts=(80.0, 3.0))
-    assert [body["seed"] for body in asked] == [40, 41]
-    retouch = prop_dir / "omnitexture" / "ot_002" / "retouch"
-    assert (retouch / "answer.png").is_file() and (retouch / "rejected-1.png").is_file() \
-        and not (retouch / "rejected-2.png").exists()
-    record = json.loads((retouch / "request.json").read_text(encoding="utf-8"))
-    assert record["seed"] == 41 and record["retouch"]["tries"] == [{"seed": 40, "left": 80.0}, {"seed": 41, "left": 3.0}]
-    assert patch["stats"]["retouch"]["tries"] == 2 and patch["stats"]["retouch"]["warning"] is None
+    the worker's "left" tells. The picture is never drawn again: it goes onto the model as it came, and the artist is
+    told (Ctrl+Z, then render it again) - as when most of the mask was out of the camera's sight."""
     told: list[str] = []
-    patch, _worker, asked, prop_dir = _retouch(tmp_path / "none", monkeypatch, FakeAlbedo(), params={"seed": 40},
-                                              lefts=(80.0, 30.0, 50.0), seen=300, warnings=told)
-    assert [body["seed"] for body in asked] == [40, 41, 42]
+    patch, _worker, asked, prop_dir = _retouch(tmp_path / "kept", monkeypatch, FakeAlbedo(), params={"seed": 40},
+                                              lefts=(80.0, 3.0), seen=300, warnings=told)
+    assert [body["seed"] for body in asked] == [40], "one picture"
     retouch = prop_dir / "omnitexture" / "ot_002" / "retouch"
-    assert sorted(p.name for p in retouch.glob("rejected-*")) == ["rejected-1.png", "rejected-3.png"]
-    assert json.loads((retouch / "request.json").read_text(encoding="utf-8"))["seed"] == 41, "the least of the mask"
+    assert (retouch / "answer.png").is_file() and not list(retouch.glob("rejected-*"))
+    record = json.loads((retouch / "request.json").read_text(encoding="utf-8"))
+    assert record["seed"] == 40 and record["retouch"]["tries"] == [{"seed": 40, "left": 80.0}]
     assert told == [omnitexture.OUT_OF_SIGHT_WARNING, omnitexture.MASK_LEFT_WARNING]
-    assert patch["stats"]["retouch"]["warning"] == " ".join(told) and patch["stats"]["retouch"]["tries"] == 3
+    assert patch["stats"]["retouch"]["warning"] == " ".join(told)
 
 
 def test_a_repaints_progress_says_what_it_is_at_and_under_it_what_qwen_image_says(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The busy layer shows each line as one: what the repaint is at - a second try says why - and, on a line of
-    their own, Qwen-Image's words."""
+    """The busy layer shows each line as one: what the repaint is at and, on a line of their own, Qwen-Image's
+    words - once, however much of the mask the picture kept."""
     from spellcast.adapters import qwen
 
     async def generate(ctx: StageContext, body: dict[str, Any]) -> dict[str, Any]:
@@ -1521,13 +1511,11 @@ def test_a_repaints_progress_says_what_it_is_at_and_under_it_what_qwen_image_say
 
     monkeypatch.setattr(qwen, "generate", generate)
     worker = FakeLook()
-    worker.lefts = (80.0, 3.0)                      # the first picture kept the mask's shape
+    worker.lefts = (80.0, 3.0)                      # the picture kept the mask's shape
     said: list[str] = []
     ctx = dataclasses.replace(_st_ctx(tmp_path), report=lambda fraction, words: said.append(words))
-    asyncio.run(omnitexture._restored(ctx, worker, {"seed": 1}, 1, tmp_path))
-    assert said == ["Painting what you masked\nDrawing",
-                    f"Painting what you masked, try 2 of {omnitexture.RETOUCH_TRIES}\n(the picture before kept the "
-                    "mask's shape)\nDrawing"]
+    assert asyncio.run(omnitexture._restored(ctx, worker, {"seed": 1}, tmp_path / "answer.png")) == 80.0
+    assert said == ["Painting what you masked\nDrawing"]
 
 
 def test_a_repaint_after_ctrl_z_drops_what_was_taken_back_and_keeps_the_newest_steps(

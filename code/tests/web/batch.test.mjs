@@ -517,18 +517,25 @@ test('the 3D workbench: "Making 3D…" for every prop the job has begun, and the
   const made2 = [prop(1), prop(2, true), prop(3), prop(4), prop(5)];
   assert.deepEqual(at({ p_1: 'resting', p_2: 'done', p_3: ['working', 0.8] }, { part: 'finish', position: 2 }, made2),
     ['p_1', 'Making 3D…', 'Waiting for the next step · Chest:\nbuilding the 3D mesh (3/12)', false]);
-  // The prop on the workbench is finished: it stays, and now its model loads there.
+  // The prop on the workbench is finished: it stays, but its model is not read while the others are being made
+  // (the card is the job's) - the progress stays in its place, following the prop at work.
   const made12 = [prop(1, true), prop(2, true), prop(3), prop(4), prop(5)];
+  const held = 'Its 3D model shows once all are made · Chest:\nbuilding the 3D mesh (3/12)';
   assert.deepEqual(at({ p_1: 'done', p_2: 'done', p_3: ['working', 0.9] }, { part: 'finish', position: 3 }, made12),
-    ['p_1', 'Make 3D again', null, true]);
+    ['p_1', 'Make 3D again', held, false]);
   assert.equal(note(), 'Made in 3 min 10 s · Seed 7');
-  // The artist opens another prop: a finished one shows its model, one in work its progress.
+  // The artist opens another prop: a finished one is held too, one in work shows its progress.
   selected = 'p_2';
   assert.deepEqual(at({ p_1: 'done', p_2: 'done', p_3: ['working', 0.9] }, { part: 'finish', position: 3 }, made12),
-    ['p_2', 'Make 3D again', null, true]);
+    ['p_2', 'Make 3D again', held, false]);
   selected = 'p_3';
   assert.deepEqual(at({ p_1: 'done', p_2: 'done', p_3: ['working', 0.9, 'Saving the GLB file'] }, { part: 'finish', position: 3 }, made12),
     ['p_3', 'Making 3D…', 'Saving the GLB file', false]);
+  // Every prop made, the job over: the model loads.
+  selected = 'p_2';
+  store.jobs = [];
+  MESH.update(ctx(selected));
+  assert.deepEqual([MESH.shownId(), busyText(), loadsModel()], ['p_2', null, true]);
   MESH.unmount();
 });
 

@@ -31,7 +31,7 @@ import { field, segmented, spinner } from '../controls.js';
 import { attempt, confirmDialog, modal, toast, toastError } from '../ui.js';
 import {
   INPUTS_KEY, afterMove, boxFile, boxHeading, busyLayer, canCarry, carryDown, donateCorner, emptyState, errorLine, fadeIn,
-  figure, focusBox, gateLine, gateOpen, jobState, liveDeps, showConfigFile, statsBlock, thumbUrl, toolGate,
+  figure, focusBox, gateLine, gateOpen, jobState, liveDeps, showConfigFile, stageJob, statsBlock, thumbUrl, toolGate,
 } from './common.js';
 import {
   TAKEN_OFF, omniBatch, omniChosen, omniOwn, omniRepaints, omniStatus, omniTakeOff, omniTakenOff, omniTextured,
@@ -64,6 +64,13 @@ const MASKED = {
 const WHAT = 'Qwen-Image 2.1 paints the 3D model from a few sides and the pictures are projected back onto it: a new, sharper '
   + 'colour texture. The shape stays the same, and Project bakes these colours.';
 const LIVE_LINGER_MS = 600;   // the last rough picture stays this long after its prop: the model arrives meanwhile
+// While a whole Omni-Texture is being painted no prop's model shows (the card is the job's), its progress in its place.
+const HELD = 'The models show once the Omni-Texture is done';
+/** The whole Omni-Texture job that waits or runs (not a masked repaint: models show beside that), else null. */
+const wholeJob = () => {
+  const j = stageJob('omnitexture');
+  return j && !j.retouch ? j : null;
+};
 
 let host = null;
 let ctx = null;
@@ -411,10 +418,16 @@ function buildProp(prop) {
         class: 'chip warn', title: 'The 3D model was made again after this Omni-Texture. Paint it again to use the new one.',
       }, icon('alert'), '3D model changed: Omni-Texture again') : null);
     const t = target(p);
-    const key = t.url ? t.url : `empty|${!p.mesh?.glb}`;
+    const held = !!t.url && !!wholeJob();
+    const key = held ? 'held' : t.url ? t.url : `empty|${!p.mesh?.glb}`;
     if (key === shown) return;
     shown = key;
     onScreen = null;
+    if (held) {
+      mask.unbind();
+      pane.message(h('div'));
+      return;
+    }
     if (!t.url) {
       pane.message(t.empty);
       return;
@@ -732,7 +745,7 @@ function buildProp(prop) {
     syncAgain();
     gate.sync();
     error.sync(p);
-    busy.sync(p);
+    busy.sync(p, wholeJob() ? HELD : '');
     go.sync();
     syncMask(p);
     fasterBox.hidden = !faster.applies();

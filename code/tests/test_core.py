@@ -1279,7 +1279,7 @@ def test_api_tools_jobs_and_forge(api: Any) -> None:
     pid = client.post("/api/projects/Demo/props", json={"name": "Chest"}).json()["id"]
     job = client.post("/api/jobs", json={"stage": "images", "project": "Demo", "prop_ids": [pid]}).json()
     assert set(job) == {"id", "stage", "tool", "project", "prop_ids", "status", "current_prop", "progress", "props",
-                        "part", "loading", "stopping", "errors", "warnings", "created", "finished"}
+                        "part", "loading", "stopping", "retouch", "errors", "warnings", "created", "finished"}
     assert job["tool"] == "forge" and job["part"] is None
     assert job["props"] == {pid: {"state": "waiting", "fraction": 0.0, "message": ""}}
     final = _poll(client, f"/api/jobs/{job['id']}", lambda j: j["status"], {"done", "error"})

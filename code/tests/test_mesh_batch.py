@@ -418,7 +418,7 @@ def test_stopping_pixal3d_in_settings_ends_the_job_cancelled_and_it_stays_stoppe
     store, ids = project(tmp_path, b"", b"", b"")
     job = client.post("/api/jobs", json={"stage": "mesh", "project": "P", "prop_ids": ids}).json()
     assert set(job) == {"id", "stage", "tool", "project", "prop_ids", "status", "current_prop", "progress", "props",
-                        "part", "loading", "stopping", "errors", "warnings", "created", "finished"}
+                        "part", "loading", "stopping", "retouch", "errors", "warnings", "created", "finished"}
     assert job["props"] == {prop_id: {"state": "waiting", "fraction": 0.0, "message": ""} for prop_id in ids}
     deadline = time.monotonic() + 30
     while "working" not in states(job := client.get(f"/api/jobs/{job['id']}").json()):
