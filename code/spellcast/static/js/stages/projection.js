@@ -45,14 +45,20 @@ const friendly = (v) => {
 const percent = (v, digits = 1) => `${(v * 100).toFixed(digits)} %`;
 
 /**
- * What the panel says of a prop's bake: {model, projection: [label, value] rows, warnings}. The model first - the
- * vertices the saved files hold (split at the UV seams and hard edges) and its texture -, then how the projection went.
+ * What the panel says of a prop's bake: {model, projection: [label, value] rows, warnings}. The model first - its
+ * vertices as Retopo counts them, how many the saved files hold when that is more (a point on a UV seam or a hard edge
+ * is one vertex per side there, in every file format) and its texture -, then how the projection went. A bake made
+ * before the clean mesh's own count was kept says the files' alone.
  */
 export function bakeFacts(p) {
   const st = p.projection?.glb ? p.projection.stats || {} : {};
+  const count = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : null);
+  const own = count(st.vertices);
+  const split = count(st.render_vertices);
   return {
     model: [
-      ['Vertices', typeof st.render_vertices === 'number' ? st.render_vertices.toLocaleString('en-US') : null],
+      ['Vertices', own ?? split],
+      ['Split at UV seams', own && split && own !== split ? `${split} in the saved files` : null],
       ['Texture', st.resolution ? `${st.resolution} × ${st.resolution} px` : null],
     ],
     projection: [

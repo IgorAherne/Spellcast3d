@@ -85,6 +85,9 @@ LAUNCHERS: Path = PACKAGE / "launchers"
 INSTALL_STATE: Path = VENVS / "install-state.json"
 # What a running installer is doing (install.py --progress-file; schema in install/progress.py).
 INSTALL_PROGRESS: Path = VENVS / "install-progress.json"
+# The hub's word to its installer before Pixal3D's calibration: {"free": bool, "waiting_for": tool names}, true once
+# none of the hub's own tools holds video memory (procman.free_card_for_calibration writes it, components.py waits).
+CALIBRATION_CARD: Path = VENVS / "calibration-card.json"
 # Big archives the installer downloads (stable-diffusion.cpp's release zip, ...), kept so that a reinstall or a
 # repair never downloads them again; inside code/venvs, so gitignored and on the install drive.
 DOWNLOADS: Path = VENVS / "downloads"

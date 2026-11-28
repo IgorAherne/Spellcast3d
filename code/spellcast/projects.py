@@ -32,6 +32,7 @@ import datetime
 import itertools
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -214,8 +215,9 @@ HAND_PAINT = "hand-paint.png"                   # RGBA of the texture's size, al
 # The retopology methods (paths.STAGE_TOOLS): a prop's retopo.settings.method picks the tool that makes its clean
 # meshes, and retopo.method says which one made the clean meshes it has.
 RETOPO_METHODS: tuple[str, ...] = paths.STAGE_TOOLS["retopo"]
-# The method every new prop starts with (_new_prop: it is not inherited from the prop before), and the one of a prop
-# that names none (rules.js retopoMethod says the same). A prop that picked keeps its own.
+# The method every new prop starts with until the artist picks another on the Retopo page (then that one, in every
+# project: ProjectStore.retopo_default; never inherited from the prop before), and the one of a prop that names none
+# (rules.js retopoMethod says the same). A prop that picked keeps its own.
 DEFAULT_RETOPO_METHOD = paths.TRIFLOW
 # The method that made a clean mesh which does not say (made before there were other methods).
 FIRST_RETOPO_METHOD = paths.IMESH
@@ -363,6 +365,38 @@ def retopo_size_of(vertices: Any) -> int | float:
     size = _retopo_size(min(max(thousands, RETOPO_MIN_SIZE), RETOPO_MAX_SIZE))
     assert size is not None       # within the sizes
     return size
+
+
+# A prop's placement (prop["placement"], set with the Move / Rotate gizmo of the Retopo and Export pages): where its
+# model stands in the files of the export folder - {"move": [x, y, z], "turn": [x, y, z, w]}, a point p of the model
+# going to R p + t in the model's own axes (Y up, the front along +Z) and units, `turn` the unit quaternion of R.
+# None: the model as it was made (centred on its middle). Nothing but the saved files (exports.py) uses it: the bake,
+# the paintings and every stage's own view are of the model as made.
+PLACEMENT_REACH = 1000.0        # how far a model (about 1 across) may be moved, in its units
+
+
+def check_placement(value: Any) -> dict[str, list[float]] | None:
+    """A placement a page sends (PATCH), checked -> as the hub stores it (the quaternion made unit length, w not
+    negative), or None when it moves nothing. ProjectError (400) in the artist's words."""
+    if value is None:
+        return None
+    problem = ProjectError("The model's placement did not arrive whole. Reload the page (F5) and place it again.")
+    if not isinstance(value, dict) or set(value) != {"move", "turn"}:
+        raise problem
+    move, turn = value["move"], value["turn"]
+    numbers = [*move, *turn] if isinstance(move, list) and isinstance(turn, list) else []
+    if (len(numbers), len(move) if isinstance(move, list) else 0) != (7, 3) or not all(
+            isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) for n in numbers):
+        raise problem
+    length = math.sqrt(sum(float(n) ** 2 for n in turn))
+    if length < 1e-6 or any(abs(n) > PLACEMENT_REACH for n in move):
+        raise problem
+    sign = -1.0 if turn[3] < 0 else 1.0
+    move = [round(float(n), 6) for n in move]
+    turn = [round(sign * float(n) / length, 9) + 0.0 for n in turn]     # (+ 0.0: no "-0.0" in the file)
+    if not any(move) and turn[:3] == [0.0, 0.0, 0.0]:
+        return None
+    return {"move": move, "turn": turn}
 
 
 def check_retopo_settings(changes: dict[str, Any]) -> dict[str, Any]:
@@ -1049,12 +1083,13 @@ def _auto_views(sources: list[str], sides: list[str | None] | None = None) -> li
     return sorted(views, key=lambda v: VIEW_ORDER.index(v["view"]))
 
 
-def _new_prop(prop_id: str, name: str, previous: dict[str, Any] | None, geometry: str = DEFAULT_GEOMETRY
-              ) -> dict[str, Any]:
+def _new_prop(prop_id: str, name: str, previous: dict[str, Any] | None, geometry: str = DEFAULT_GEOMETRY,
+              retopo: str = DEFAULT_RETOPO_METHOD) -> dict[str, Any]:
     """A fresh prop. It inherits the previous prop's stage settings (model, CFG, sizes...), not its prompt, not its
-    retopology method or clean-mesh sizes and not its geometry: every prop starts with DEFAULT_RETOPO_METHOD, the
-    default size and `geometry` (the project's Shape: ProjectStore._geometry), whatever the one before it has. Nor
-    its Tileable tick: a prop after a texture is an object again (a tileable one gets no 3D model: tileable_prop)."""
+    retopology method or clean-mesh sizes and not its geometry: every prop starts with `retopo` (the method the
+    artist picked last, in any project: ProjectStore.retopo_default), the default size and `geometry` (the project's
+    Shape: ProjectStore._geometry), whatever the one before it has. Nor its Tileable tick: a prop after a texture is
+    an object again (a tileable one gets no 3D model: tileable_prop)."""
     prop: dict[str, Any] = {"id": prop_id, "name": name, "created": now_iso(), "draft": False, "thumbs": {}}
     for stage in EDITABLE_STAGES:
         settings = copy.deepcopy(DEFAULT_STAGE_SETTINGS[stage])
@@ -1064,7 +1099,7 @@ def _new_prop(prop_id: str, name: str, previous: dict[str, Any] | None, geometry
     prop["images"]["settings"]["prompt"] = ""
     prop["images"]["settings"]["tileable"] = False
     prop["omnitexture"]["settings"]["chosen"] = False
-    prop["retopo"]["settings"]["method"] = DEFAULT_RETOPO_METHOD
+    prop["retopo"]["settings"]["method"] = retopo
     prop["retopo"]["settings"]["sizes"] = list(DEFAULT_STAGE_SETTINGS["retopo"]["sizes"])
     prop["mesh"]["settings"]["geometry"] = geometry
     for stage, _tool in paths.STAGES:
@@ -1234,6 +1269,9 @@ class ProjectStore:
         self.root = root
         self.exports = exports if exports is not None else root.parent / paths.EXPORTS.name
         self._lock = threading.RLock()
+        # () -> the retopology method a new prop starts with. The hub answers with the one the artist picked last
+        # (its settings' retopo.default_method), so the pick holds for every later prop and project.
+        self.retopo_default: Callable[[], Any] = lambda: DEFAULT_RETOPO_METHOD
 
     # ---- projects -----------------------------------------------------------------------
     def list_projects(self) -> list[dict[str, Any]]:
@@ -1381,7 +1419,8 @@ class ProjectStore:
             props = [p for p in data["props"] if not p["draft"]]
             name = name.strip()[:MAX_PROP_NAME] if isinstance(name, str) else ""
             prop_id = self._new_prop_id(project, data["props"])
-            prop = _new_prop(prop_id, name or f"Prop {len(props) + 1}", props[-1] if props else None, self._geometry(data))
+            prop = _new_prop(prop_id, name or f"Prop {len(props) + 1}", props[-1] if props else None,
+                             self._geometry(data), self._retopo())
             self.prop_dir(project, prop_id).mkdir(parents=True, exist_ok=True)
             data["props"].append(prop)
             return copy.deepcopy(prop)
@@ -1397,16 +1436,20 @@ class ProjectStore:
             data = self._read(project)
             draft = next((p for p in data["props"] if p["draft"]), None)
             if draft is not None and draft["id"] not in busy:
-                geometry = self._geometry(data)     # never picked for the draft itself (the 3D stage shows no draft)
-                if draft["mesh"]["settings"].get("geometry") != geometry:
+                # never picked for the draft itself (the 3D and Retopo stages show no draft)
+                geometry, retopo = self._geometry(data), self._retopo()
+                if (draft["mesh"]["settings"].get("geometry"), draft["retopo"]["settings"].get("method")) != (geometry,
+                                                                                                             retopo):
                     draft["mesh"]["settings"]["geometry"] = geometry
+                    draft["retopo"]["settings"]["method"] = retopo
                     self._write(project, data)
                 return copy.deepcopy(draft)
             if draft is not None:
                 _pack(data, draft)
             props = [p for p in data["props"] if not p["draft"]]
             prop_id = self._new_prop_id(project, data["props"])
-            draft = {**_new_prop(prop_id, "", props[-1] if props else None, self._geometry(data)), "draft": True}
+            draft = {**_new_prop(prop_id, "", props[-1] if props else None, self._geometry(data), self._retopo()),
+                     "draft": True}
             self.prop_dir(project, prop_id).mkdir(parents=True, exist_ok=True)
             data["props"].append(draft)
             self._write(project, data)
@@ -1433,14 +1476,18 @@ class ProjectStore:
             shutil.rmtree(self.prop_dir(project, prop_id), ignore_errors=True)
 
     def patch_prop(self, project: str, prop_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        """{"name"?, "<stage>"?: {"settings": {...}}}; settings are shallow-merged. Only the draft may
+        """{"name"?, "placement"?, "<stage>"?: {"settings": {...}}}; settings are shallow-merged. Only the draft may
         have an empty name (it is named after its prompt when it becomes a prop). The retopo method, sizes and
         LATO.2's and TriFlow's numbers are checked (check_retopo_settings), and so are Qwen-Image's settings
-        (check_images_settings) and the 3D geometry (check_mesh_settings)."""
+        (check_images_settings) and the 3D geometry (check_mesh_settings). placement: where the prop's model stands
+        in its saved files (check_placement; null: as it was made)."""
         if not isinstance(changes, dict):
             raise ProjectError("Prop changes must be sent as a JSON object.")
         settings: dict[str, dict[str, Any]] = {}
+        placement = check_placement(changes.get("placement"))
         for key, value in changes.items():
+            if key == "placement":
+                continue
             if key == "name":
                 if not isinstance(value, str):
                     raise ProjectError("Please give the prop a name.")
@@ -1462,7 +1509,9 @@ class ProjectStore:
         with self._editing(project) as data:
             prop = _find_prop(data, prop_id, copy_=False)
             for key, value in changes.items():
-                if key == "name":
+                if key == "placement":
+                    prop["placement"] = placement
+                elif key == "name":
                     if not value.strip() and not prop["draft"]:
                         raise ProjectError("Please give the prop a name.")
                     prop["name"] = value.strip()[:MAX_PROP_NAME]
@@ -2266,6 +2315,10 @@ class ProjectStore:
     def _geometry(self, data: dict[str, Any]) -> str:
         """A new prop's geometry in this project (`data`): the Shape picked last in it (default_geometry)."""
         return default_geometry(data.get("geometry"))
+
+    def _retopo(self) -> str:
+        """A new prop's retopology method (retopo_default; DEFAULT_RETOPO_METHOD when that names none)."""
+        return retopo_method({"method": self.retopo_default()})
 
     def _trash_if_empty_untitled(self, project: str, busy: Collection[str]) -> None:
         """Move an untitled project without content (and without a job) to projects/.trash/."""

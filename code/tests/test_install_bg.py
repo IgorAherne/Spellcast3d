@@ -283,6 +283,55 @@ def test_gpu_jobs_wait_while_the_card_is_calibrated_for_pixal3d(tmp_path: Path) 
     asyncio.run(main())
 
 
+def test_the_hubs_own_gpu_tools_leave_the_card_for_the_calibration(tmp_path: Path) -> None:
+    """An image generator left loaded is idle, so the calibration's look at the card's load would pass with most of a
+    small card's memory taken: while the installer measures, the hub stops every GPU tool that has no job (one at
+    work first finishes it), starts none, and tells the installer in the card file when the card is free of them."""
+    from spellcast.install import progress as install_progress
+    from spellcast.procman import CALIBRATION_WAIT
+
+    state, adapters = adapters_with_state(tmp_path, {"imesh": "installed", "forge": "installed"})
+    measure, done = tmp_path / "measure", tmp_path / "done"
+    calibrating = progress("pixal3d", pixal3d=("running", f"{install_progress.CALIBRATING_STEP} · waiting", 0.98),
+                           forge=("skipped", "", None), imesh=("skipped", "", None))
+    installer = Installer(tmp_path, [
+        ["progress", progress("pixal3d", pixal3d=("running", "Downloading the AI models", 0.5),
+                              forge=("skipped", "", None), imesh=("skipped", "", None))],
+        ["wait_for", str(measure)], ["progress", calibrating], ["wait_for", str(done)], ["exit", 0]])
+    card = tmp_path / "calibration-card.json"
+    at_work: set[str] = {"forge"}
+    word = lambda: json.loads(card.read_text(encoding="utf-8")) if card.exists() else None      # noqa: E731
+
+    async def main() -> None:
+        async with running(tmp_path, adapters, installer.bg) as pm:
+            installer.bg.on_tick = lambda: pm.free_card_for_calibration(at_work, card_file=card)
+            await until(installer.bg.settled, what="the installer's plan")
+            pm.start("forge")
+            pm.start("imesh")
+            await until(lambda: pm.status("forge")["state"] == pm.status("imesh")["state"] == "ready", what="the tools")
+            await asyncio.sleep(1.2)
+            assert word() is None and pm.get("forge").alive()               # not calibrating: nothing is touched
+            measure.write_text("go", encoding="utf-8")
+            await until(lambda: word() is not None, what="the hub's word to the installer")
+            assert word() == {"free": False, "waiting_for": ["Fake forge"]}
+            await asyncio.sleep(1.2)
+            assert pm.get("forge").alive(), "a tool a job runs on finishes it first"
+            at_work.clear()
+            await until(lambda: (word() or {}).get("free") is True, what="the card to be free")
+            assert not pm.get("forge").alive() and pm.status("forge")["state"] == "stopped"
+            assert pm.status("imesh")["state"] == "ready", "a tool off the card stays"
+            with pytest.raises(ToolError) as e:
+                pm.start("forge")                                           # no GPU tool starts meanwhile
+            assert str(e.value) == CALIBRATION_WAIT
+            assert pm.start_early("forge") is False and pm.warm("forge") is False
+            done.write_text("go", encoding="utf-8")
+            await until(lambda: installer.bg.snapshot()["finished"], what="the installer to end")
+            pm.start("forge")
+            await until(lambda: pm.status("forge")["state"] == "ready", what="the tool to start once it is measured")
+
+    asyncio.run(main())
+
+
 def test_a_progress_file_of_an_earlier_run_is_ignored(tmp_path: Path) -> None:
     installer = Installer(tmp_path, [["exit", 0]])
     installer.progress_file.write_text(json.dumps(progress("forge", forge=("running", "Old", 0.5))), encoding="utf-8")

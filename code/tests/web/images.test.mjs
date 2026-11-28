@@ -1796,7 +1796,8 @@ test('New prop: the cards say Use Existing Images and Render Images; Ctrl+V take
     assert.deepEqual(cards.map((c) => c.all((e) => e.tagName === 'B')[0].textContent),
       ['Use Existing Images', 'Render Images', 'Import folder (multiple prop images)']);
     assert.equal(cards[1].byClass('sv-choice-text')[0].textContent, 'Generate images from words, with example images, or your own sketch');
-    assert.match(cards[2].byClass('sv-choice-text')[0].textContent, /from a folder\.\nImage names need/, 'on a line of its own');
+    assert.match(cards[2].byClass('sv-choice-text')[0].textContent, /from a folder\.\nA name that ends or starts with front, back, left or right .* any other image is a prop of its own\./,
+      'on a line of its own, and no name is "needed"');
     // Where a prop begins: the lessons over the community in the corner; Donate comes with the work, further on.
     const corner = host.byClass('sv-chooser')[0].children.filter((node) => node.tagName === 'A');
     assert.deepEqual(corner.map((link) => [link.textContent, link.className, link.getAttribute('target')]),

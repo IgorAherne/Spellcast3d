@@ -33,7 +33,8 @@ Don't worry about Python, git or CUDA: they are inside the zip.
 
 1. Download `spellcast3d-<version>-windows.zip` from the
    [Releases page](https://github.com/IgorAherne/spellcast3d/releases)
-2. Unzip it to a **short** folder with only English letters, for example `C:\spellcast3d`.
+2. Unzip it to a **short** place with only English letters, for example straight into `C:\`: the zip holds one
+   folder, `spellcast3d`, so that gives `C:\spellcast3d`.
 3. Double-click `run-browser\run-spellcast3d.bat`.
 
 Initial startup takes a few minutes and opens your browser.</br>

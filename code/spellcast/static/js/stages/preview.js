@@ -14,6 +14,7 @@ import { mapBar } from '../mapbar.js';
 import { projectId } from '../store.js';
 import { toast } from '../ui.js';
 import { discordCorner, donateCorner, emptyState } from './common.js';
+import { placeBar } from './placebar.js';
 
 // The main moves (viewer3d.js dragAction has them all: Blender's and 3ds Max's modifiers work too).
 const NAV_HINT = 'Orbit: middle or left drag · Pan: right drag · Zoom: wheel · F: frame';
@@ -41,11 +42,14 @@ export const rememberWireframe = (stage, on) => { wireChoice[stage] = !!on; };
  * switch). onView(mode): the artist picked a map view. maps: false leaves the map buttons out (the model
  * is shown in the view show() asks for); the Wireframe toggle (maps.offerWireframe) still shows under it,
  * alone, for every model, so the view keeps its size whatever the model has. wideLights: the lights of "All" reach
- * further (Retopo's bare clay: viewer3d.js ORBIT_REACH_WIDE).
+ * further (Retopo's bare clay: viewer3d.js ORBIT_REACH_WIDE). placing ({stage, get, set, start}: placebar.js): the
+ * model is shown where the prop stands in its saved files, with the Move / Rotate bar on the view's left edge.
  * Returns {el, stage (the dark area, for layers of the view on top), maps, show(), message(), badges(),
  * destroy()}.
  */
-export function modelPane({ tools = [], onView, maps: withMaps = true, discord = false, wideLights = false } = {}) {
+export function modelPane({
+  tools = [], onView, maps: withMaps = true, discord = false, wideLights = false, placing = null,
+} = {}) {
   const host = h('div', { class: 'sv-viewer-host' });
   const bar = progressBar(null);
   const loading = h('div', { class: 'sv-viewer-loading', hidden: true }, spinner(), h('span', null, 'Loading the 3D model…'), bar);
@@ -58,8 +62,9 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
   }, icon('reset'));
   const help = h('div', { class: 'sv-viewer-help', hidden: true }, NAV_HINT);
   const maps = mapBar({ onChange: onView, buttons: withMaps });
+  const place = placing && placeBar(placing);
   const stage = h('div', { class: 'sv-stagebox dark' }, host, still, loading, msg, badges,
-    h('div', { class: 'sv-viewer-tools' }, tools, reset), help, donateCorner(), discord && discordCorner());
+    h('div', { class: 'sv-viewer-tools' }, tools, reset), place?.el, help, donateCorner(), discord && discordCorner());
   // While a model loads, the bar keeps its place (or takes it), so the viewport does not jump.
   const mediabar = h('div', { class: 'sv-mediabar' }, maps);
   const el = h('div', { class: 'sv-model' }, stage, mediabar);   // the bar hides itself when it has nothing to show
@@ -73,6 +78,7 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
     shown = false;
     viewer?.detach(host);
     maps.unbind();
+    place?.unbind();
     mediabar.classList.remove('reserve');
     reset.hidden = help.hidden = loading.hidden = still.hidden = true;
   };
@@ -115,11 +121,14 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
         if (destroyed || mine !== token) return false;
         viewer.attach(host, stage);
         viewer.setLightReach(wideLights ? three.ORBIT_REACH_WIDE : undefined);
-        const ok = await viewer.show(url, kind, { onProgress: (f) => bar.set(f), extraMaps, keepView });
+        const ok = await viewer.show(url, kind, {
+          onProgress: (f) => bar.set(f), extraMaps, keepView, placement: placing ? placing.get() : null,
+        });
         if (!ok || destroyed || mine !== token) return false;
         showStill(null);
         reset.hidden = help.hidden = false;
         maps.bind(viewer);
+        place?.bind(viewer);
         mediabar.classList.toggle('reserve', !maps.hidden);
         // show() starts every model lit ("all"): the view asked for when the model has it, else the default.
         if (view !== 'all' && !maps.select(view)) maps.select(DEFAULT_VIEW);
@@ -159,6 +168,7 @@ export function modelPane({ tools = [], onView, maps: withMaps = true, discord =
       destroyed = true;
       shown = false;
       token++;
+      place?.unbind();
       viewer?.detach(host);
     },
   };

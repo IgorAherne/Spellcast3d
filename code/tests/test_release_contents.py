@@ -311,7 +311,8 @@ def test_a_copy_of_an_earlier_release_gets_todays_folder_and_a_developers_clone_
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows' Hidden flag")
 def test_the_zip_keeps_what_is_hidden_hidden(tmp_path: Path) -> None:
-    """File Explorer, 7-Zip and WinRAR hand a zip entry's Hidden flag on to the unpacked file or folder."""
+    """File Explorer, 7-Zip and WinRAR hand a zip entry's Hidden flag on to the unpacked file or folder. Everything is
+    inside the one folder spellcast3d: unpacked straight onto a drive, the zip leaves one folder there."""
     pr = _prepare_release()
     src = tmp_path / "src"
     _write(src, {".git/HEAD": "ref: refs/heads/main\n", "code/a.py": "a\n", "code/tool/.git": "gitdir: ../../.git/modules/tool\n",
@@ -323,8 +324,10 @@ def test_the_zip_keeps_what_is_hidden_hidden(tmp_path: Path) -> None:
     assert layout.hidden(src / ".git") and not layout.hidden(src / "code")
     pr.make_zip(src, tmp_path / "out.zip")
     with zipfile.ZipFile(tmp_path / "out.zip") as z:
-        attributes = {info.filename: info.external_attr & 0xFF for info in z.infolist()}
-        assert z.read(".git/HEAD") == b"ref: refs/heads/main\n"
+        names = z.namelist()
+        assert pr.ZIP_ROOT == "spellcast3d" and all(name.startswith("spellcast3d/") for name in names)
+        attributes = {info.filename.removeprefix("spellcast3d/"): info.external_attr & 0xFF for info in z.infolist()}
+        assert z.read("spellcast3d/.git/HEAD") == b"ref: refs/heads/main\n"
     assert attributes[".git/"] == pr.ZIP_FOLDER | pr.ZIP_HIDDEN
     assert attributes["code/tool/.git"] & pr.ZIP_HIDDEN
     assert attributes[".git/refs/tags/"] == pr.ZIP_FOLDER and attributes["models/checkpoints/"] == pr.ZIP_FOLDER

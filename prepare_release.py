@@ -107,6 +107,9 @@ SPARSE_PATTERNS = layout.SPARSE_PATTERNS
 # The licence's text for the artist: the root's LICENSE (GitHub reads it there) is left out of their folder.
 LICENSE_COPY = "code/LICENSE"
 ZIP_HIDDEN, ZIP_FOLDER = 0x02, 0x10     # MS-DOS attribute bits of a zip entry
+# The one folder the zip holds everything in. Without a version: the copy updates itself in place (tools\update.bat),
+# and a short name keeps the paths of the tools' files short.
+ZIP_ROOT = "spellcast3d"
 # The developers' own: their hand-over notes, their record of the work and their one-off tools (a folder ends with
 # "/"). They lie beside the code and are never tracked - the repository is public, and a release keeps its .git, so
 # a tracked file is in every copy whatever the checkout leaves out (check_files, verify_staging).
@@ -1838,8 +1841,9 @@ def print_sizes(staging: Path) -> None:
     print(f"  {'everything else':<22} {mb(total - counted):>12}")
 
 
-def make_zip(src: Path, zip_path: Path) -> None:
-    """Zip src's contents (src itself is the zip root) to zip_path. What is hidden in src (.git, and the .git file of
+def make_zip(src: Path, zip_path: Path, root: str = ZIP_ROOT) -> None:
+    """Zip src's contents to zip_path, all of it inside the one folder `root`: unpacked anywhere ("Extract here" on a
+    drive, say), it never spills its files among others. What is hidden in src (.git, and the .git file of
     each tool's checkout) is marked hidden in the zip: File Explorer, 7-Zip and WinRAR unpack it hidden again."""
     tmp = zip_path.with_name(zip_path.name + ".part")
     print(f"\nZipping into {zip_path}")
@@ -1850,16 +1854,17 @@ def make_zip(src: Path, zip_path: Path) -> None:
         for dirpath, dirnames, filenames in os.walk(src):
             dirnames.sort()
             here = Path(dirpath)
-            arc_dir = here.relative_to(src).as_posix()
-            is_hidden = arc_dir != "." and layout.hidden(here)
+            inside = here != src
+            arc_dir = (Path(root) / here.relative_to(src)).as_posix()
+            is_hidden = inside and layout.hidden(here)
             # A folder has an entry of its own when it is empty (git needs some: refs/tags...) or hidden.
-            if arc_dir != "." and (is_hidden or not dirnames and not filenames):
+            if inside and (is_hidden or not dirnames and not filenames):
                 entry = zipfile.ZipInfo.from_file(here, arc_dir + "/", strict_timestamps=False)
                 entry.external_attr |= ZIP_FOLDER | (ZIP_HIDDEN if is_hidden else 0)
                 z.writestr(entry, "")
             for name in sorted(filenames):
                 path = here / name
-                arc_name = path.relative_to(src).as_posix()
+                arc_name = f"{arc_dir}/{name}"
                 z.write(path, arc_name)
                 if layout.hidden(path):
                     z.getinfo(arc_name).external_attr |= ZIP_HIDDEN     # (written when the zip is closed)

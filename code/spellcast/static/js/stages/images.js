@@ -417,8 +417,8 @@ function pulse(el, times = 1) {
 // Not a way of one prop, so it is no tab of the workbench.
 const FOLDER_CARD = {
   choice: 'Import folder (multiple prop images)', icon: 'folder',
-  text: 'Batch-imports different props’ images from a folder.\nImage names need a _front, _back, _left, _right '
-    + 'suffix, or a front_, back_, left_, right_ prefix.',
+  text: 'Batch-imports different props’ images from a folder.\nA name that ends or starts with front, back, left or '
+    + 'right (knight_front, knight-back, left knight) is a side of that prop; any other image is a prop of its own.',
 };
 
 /**

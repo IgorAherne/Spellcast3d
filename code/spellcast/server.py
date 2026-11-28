@@ -383,8 +383,8 @@ class Hub:
             raise ProjectError(f"Saving the painting needs the retopology tool. {e}", 409) from e
 
     def can_convert(self, fmt: str) -> None:
-        """Raise ProjectError when an FBX or OBJ cannot be made now: its worker runs in the Instant Meshes
-        venv, which may not be installed yet."""
+        """Raise ProjectError when an FBX or OBJ (or a placed prop's GLB) cannot be made now: its worker runs in the
+        Instant Meshes venv, which may not be installed yet."""
         try:
             self.procman.check_available(paths.IMESH, installing_ok=False)
         except ToolError as e:
@@ -600,6 +600,8 @@ def create_app(adapters: dict[str, ToolAdapter] | None = None, *,
               config_watch=ConfigWatch(started_with),
               stage_tools={stage: [t for t in tools if t in adapters and stage in adapters[t].stages]
                            for stage, tools in paths.STAGE_TOOLS.items()})
+    # A new prop starts with the retopology method the artist picked last (the page saves it in the settings).
+    hub.store.retopo_default = lambda: (settings.get().get("retopo") or {}).get("default_method")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -614,6 +616,8 @@ def create_app(adapters: dict[str, ToolAdapter] | None = None, *,
         await hub.procman.startup()
         hub.jobs = JobQueue(hub.procman, hub.store, hub.settings, hub.adapters, hub.client)
         hub.jobs.start()
+        if hub.install is not None:     # the card is the calibration's alone while the installer measures it
+            hub.install.on_tick = lambda: hub.procman.free_card_for_calibration(hub.jobs.tools_at_work())
         hub.exporter = exports.Exporter(hub.store, converter, hub.can_convert)
         await asyncio.to_thread(hub.store.tidy_untitled)     # empty untitled projects of earlier sessions
         await asyncio.to_thread(hub.store.clear_work_dirs)   # what the tools' jobs left in projects/*/temp/

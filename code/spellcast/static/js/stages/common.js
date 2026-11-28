@@ -8,8 +8,9 @@ import { api, fileUrl } from '../api.js';
 import { formatBytes, h, plural } from '../dom.js';
 import { icon } from '../icons.js';
 import {
-  ACTIVE_JOB, FIRST_START, PROP_ENDED, STAGE_TOOL, boxesOf, bustFor, capital, configChanged, configProblems, imageTool, jobFor,
-  jobLoading, jobStopping, projectId, stageNoun, store, thumbOf, toolName, toolStatus,
+  ACTIVE_JOB, FIRST_START, PROP_ENDED, STAGE_TOOL, boxesOf, bustFor, capital, configChanged, configProblems, downloading, imageTool,
+  jobFor,
+  jobLoading, jobStopping, projectId, stageNoun, stepTime, store, thumbOf, toolName, toolStatus,
 } from '../store.js';
 import { croppedPicture, propPicture } from '../cropped.js';
 import { cancelJob, startJob } from '../actions.js';
@@ -185,11 +186,13 @@ export function toolGate(stage, tool = STAGE_TOOL[stage]) {
   }
   if (st.state === 'installing' || (st.installed === false && ['pending', 'running'].includes(comp?.status))) {
     const f = typeof comp?.fraction === 'number' ? comp.fraction : null;
-    const bytes = comp?.bytes_total ? ` · ${formatBytes(comp.bytes_done || 0)} of ${formatBytes(comp.bytes_total)}` : '';
+    const bytes = downloading(comp) ? ` · ${formatBytes(comp.bytes_done || 0)} of ${formatBytes(comp.bytes_total)}` : '';
+    // Without a download's numbers, how long the step has gone on: a percentage that stands still is not stuck.
+    const time = !bytes && comp?.status === 'running' ? stepTime(tool, comp) : '';
     return {
       kind: 'installing', fraction: f, bytes,
       text: `${capital(noun)} is installing…${f == null ? '' : ` ${Math.round(f * 100)}%`}`,
-      detail: `${comp?.step || comp?.message || 'Spellcast3D installs it in the background.'}${bytes}`,
+      detail: `${comp?.step || comp?.message || 'Spellcast3D installs it in the background.'}${bytes}${time && ` · ${time}`}`,
     };
   }
   if (st.state === 'not_installed' || st.installed === false) {

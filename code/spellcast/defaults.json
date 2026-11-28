@@ -8,5 +8,6 @@
               "wave_size": 0, "allow_spill": false},
   "imesh":   {"threads": -1},
   "lato2":   {"low_vram": "auto"},
+  "retopo":  {"default_method": "triflow"},
   "qwen":    {"int8_matmul": false, "int8_matmul_omnitexture": false}
 }

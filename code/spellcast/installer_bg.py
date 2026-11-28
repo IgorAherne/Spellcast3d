@@ -198,6 +198,9 @@ class BackgroundInstall:
         self.ready_quiet = ready_quiet  # ... once the console has been quiet this long (the tools' start lines first)
         self.proc: subprocess.Popen[bytes] | None = None
         self.spawn_error: str | None = None
+        # Called every EXIT_POLL seconds while the installer runs (the hub: what it owes the installer meanwhile -
+        # the card freed for the calibration, procman.free_card_for_calibration).
+        self.on_tick: Callable[[], None] | None = None
         self._task: asyncio.Task[None] | None = None
         self._spawned_at = 0.0         # time.time(): an older progress file belongs to an earlier run
         self._progress: dict[str, Any] = _NO_PROGRESS
@@ -241,6 +244,11 @@ class BackgroundInstall:
             return
         while proc.poll() is None:
             await asyncio.sleep(EXIT_POLL)
+            if self.on_tick is not None:
+                try:
+                    self.on_tick()
+                except Exception:       # noqa: BLE001 - the watch over the installer goes on whatever a tick does
+                    log.exception("The installer's tick failed")
         log.log(logging.INFO if proc.returncode == EXIT_OK else logging.WARNING,
                 "The installer finished (exit code %s).", proc.returncode)
         if self.echo is not None and self.page_url:

@@ -480,7 +480,7 @@ test('the layer over the workbench: a begun prop shows how far it is, also while
   const starting = { ...batchJob('j1', { p_1: 'waiting' }), status: 'starting_tool', current_prop: null, progress: { message: 'Starting Pixal3D…' } };
   reset({ jobs: [starting], states: { pixal3d: 'starting' } });
   layer.sync(store.project.props[0]);
-  assert.deepEqual([text.textContent, sliding()], ['Loading the 3D generator… (about half a minute)', true]);
+  assert.deepEqual([text.textContent, sliding()], ['Loading the 3D generator… (about a minute)', true]);
 });
 
 test('the 3D workbench: "Making 3D…" for every prop the job has begun, and the prop on it stays while the work goes from prop to prop', () => {
@@ -1060,7 +1060,7 @@ test('Faster 3D generation asks the same way: all 3D models, a seed no longer th
     assert.equal(sw.input.checked, false, 'nothing before the artist agrees');
     assert.match(asking().textContent, /all 3D generation: every 3D model made in the 3D stage, for every prop and project/);
     assert.match(asking().textContent, /a seed no longer gives the model the original Pixal3D makes/);
-    assert.match(asking().textContent, /Pixal3D restarts now \(about half a minute\)\./);
+    assert.match(asking().textContent, /Pixal3D restarts now \(about a minute\)\./);
     press('Turn on');
     await timers.tick();
     assert.deepEqual(sent, [['/api/settings', { pixal3d: { coarse_exact: false } }], ['/api/tools/pixal3d/stop'], ['/api/tools/pixal3d/start']]);
@@ -1091,11 +1091,11 @@ test('Faster 3D generation asks the same way: all 3D models, a seed no longer th
 
 // ---- words and settings ---------------------------------------------------------------------------------
 
-test('the 3D generator starts in about half a minute: it reads its models when a job needs them', () => {
-  assert.equal(FIRST_START.pixal3d, 'about half a minute');
-  assert.equal(TOOL_ETA.pixal3d, 'about half a minute');
+test('the 3D generator starts in about a minute: it reads its models when a job needs them', () => {
+  assert.equal(FIRST_START.pixal3d, 'about a minute');
+  assert.equal(TOOL_ETA.pixal3d, 'about a minute');
   reset({ states: { pixal3d: 'starting' } });
-  assert.equal(headline().text, 'Loading the 3D generator… (about half a minute)');
+  assert.equal(headline().text, 'Loading the 3D generator… (about a minute)');
 });
 
 test('Settings has no low-video-memory switch for the 3D generator, and saving never writes one', async () => {

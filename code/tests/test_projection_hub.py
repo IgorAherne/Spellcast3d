@@ -76,17 +76,24 @@ def ready_to_bake(store: ProjectStore, project: str, prop_id: str, low_poly: str
 
 class FakeConverter:
     """Stands in for exports.run_export_worker (the hub venv cannot run export_worker.py): writes the files
-    the worker would, and remembers each call as (source GLB, formats, name)."""
+    the worker would, and remembers each call as (source GLB, formats, name) - and the placements it was given, one
+    per call (None: the model as it is)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[Path, list[str], str]] = []
+        self.placements: list[dict[str, Any] | None] = []
 
-    def __call__(self, src: Path, outputs: dict[str, Path], name: str) -> dict[str, Any]:
+    def __call__(self, src: Path, outputs: dict[str, Path], name: str,
+                 placement: dict[str, Any] | None = None) -> dict[str, Any]:
         self.calls.append((Path(src), sorted(outputs), name))
+        self.placements.append(placement)
         result: dict[str, Any] = {"warnings": []}
         for fmt, folder in outputs.items():
             folder.mkdir(parents=True, exist_ok=True)
-            if fmt == "fbx":
+            if fmt == "glb":
+                (folder / f"{name}.glb").write_bytes(b"placed " + Path(src).read_bytes())
+                result["glb"] = {"files": [f"{name}.glb"]}
+            elif fmt == "fbx":
                 (folder / f"{name}.fbx").write_bytes(b"Kaydara FBX Binary " + Path(src).read_bytes())
                 result["fbx"] = {"files": [f"{name}.fbx"]}
             else:

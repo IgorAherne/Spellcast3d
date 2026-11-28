@@ -391,3 +391,97 @@ def test_a_webp_base_colour_is_swapped(shared: bool) -> None:
         assert glb.texture_source(other) != source
     with pytest.raises(ValueError):
         glb.image_mime(new)                              # outside a WebP GLB, WebP is no glTF image
+
+
+# ---- a GLB moved and turned (a prop's placement, for the export folder) -----------------------------
+
+QUARTER = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])     # about Z: +X to +Y, +Y to -X
+MOVE = np.array([0.5, 2.0, -1.0])
+
+
+def test_a_glb_is_placed_in_its_vertices(tmp_path: Path) -> None:
+    """glb.placed: positions, normals and tangents hold R p + t (the normals and tangents R alone, a tangent's w
+    kept), the positions' min / max follow, and every other byte of meaning stays - the images, the UVs, the indices."""
+    path, images = baked_like(tmp_path)
+    before, binary_before = parse(path)
+    placed = tmp_path / "placed.glb"
+    placed.write_bytes(glb.placed(path.read_bytes(), QUARTER, MOVE))
+    document, binary = parse(placed)
+    views_aligned(document, binary)
+    validate(placed)
+    attributes = document["meshes"][0]["primitives"][0]["attributes"]
+    old = {key: accessor(before, binary_before, index) for key, index in attributes.items()}
+    new = {key: accessor(document, binary, index) for key, index in attributes.items()}
+    np.testing.assert_allclose(new["POSITION"], old["POSITION"] @ QUARTER.T + MOVE, atol=1e-6)
+    np.testing.assert_allclose(new["NORMAL"], old["NORMAL"] @ QUARTER.T, atol=1e-6)
+    np.testing.assert_allclose(new["TANGENT"][:, :3], old["TANGENT"][:, :3] @ QUARTER.T, atol=1e-6)
+    assert np.array_equal(new["TANGENT"][:, 3], old["TANGENT"][:, 3]) and np.array_equal(new["TEXCOORD_0"], old["TEXCOORD_0"])
+    entry = document["accessors"][attributes["POSITION"]]
+    np.testing.assert_allclose([entry["min"], entry["max"]], [new["POSITION"].min(0), new["POSITION"].max(0)])
+    assert all("matrix" not in node and "translation" not in node for node in document["nodes"])
+    for texture in range(len(document["textures"])):
+        assert image_bytes(document, binary, texture) == image_bytes(before, binary_before, texture)
+    # Nothing but the three accessors' numbers and the positions' bounds changed.
+    entry.update(min=before["accessors"][attributes["POSITION"]]["min"], max=before["accessors"][attributes["POSITION"]]["max"])
+    assert document == before
+    # A placement that moves nothing gives the model back, number for number.
+    same, same_binary = parse_bytes(glb.placed(path.read_bytes(), np.eye(3), np.zeros(3)))
+    assert same == before and same_binary == binary_before
+
+
+def parse_bytes(data: bytes) -> tuple[dict[str, Any], bytes]:
+    json_length = struct.unpack_from("<I", data, 12)[0]
+    bin_length = struct.unpack_from("<I", data, 20 + json_length)[0]
+    return json.loads(data[20:20 + json_length]), data[28 + json_length:28 + json_length + bin_length]
+
+
+def test_a_glb_that_is_not_plain_carries_its_placement_in_a_node(tmp_path: Path) -> None:
+    """A GLB whose nodes have transforms of their own (another writer's) keeps its vertices: a node over the scene's
+    nodes holds the placement, which every reader applies - the hub's own (the FBX and OBJ made from it) too."""
+    path, _images = baked_like(tmp_path)
+    document, binary = parse(path)
+    document["nodes"][0]["translation"] = [0.0, 0.0, 3.0]
+    text = json.dumps(document).encode()
+    text += b" " * (-len(text) % 4)
+    other = struct.pack("<III", 0x46546C67, 2, 28 + len(text) + len(binary)) + struct.pack("<II", len(text), 0x4E4F534A) \
+        + text + struct.pack("<II", len(binary), 0x004E4942) + binary
+    wrapped, wrapped_binary = parse_bytes(glb.placed(other, QUARTER, MOVE))
+    assert wrapped_binary == binary                                           # not a vertex touched
+    top = wrapped["nodes"][wrapped["scenes"][0]["nodes"][0]]
+    assert top["children"] == [0] and wrapped["nodes"][0]["translation"] == [0.0, 0.0, 3.0]
+    matrix = np.array(top["matrix"]).reshape(4, 4).T                          # glTF writes it column by column
+    np.testing.assert_allclose(matrix[:3, :3], QUARTER)
+    np.testing.assert_allclose(matrix[:3, 3], MOVE)
+    out = tmp_path / "wrapped.glb"
+    out.write_bytes(glb.placed(other, QUARTER, MOVE))
+    validate(out)
+
+
+def test_a_model_is_converted_where_it_was_placed(tmp_path: Path) -> None:
+    """convert(placement=...): the FBX and the OBJ hold the model turned and moved, and a GLB of it may be asked for
+    beside them; placement_of reads the hub's quaternion."""
+    from instant_meshes_brush.assets import load_source
+    from spellbake.convert import convert, placement_of
+
+    rotation, move = placement_of({"move": MOVE.tolist(), "turn": [0.0, 0.0, 0.70710678, 0.70710678]})
+    np.testing.assert_allclose(rotation, QUARTER, atol=1e-7)
+    np.testing.assert_allclose(move, MOVE)
+    assert placement_of(None) is None
+    for bad in ({"move": [0, 0, 0]}, {"move": [0, 0, 0], "turn": [0, 0, 0, 0]}, {"move": [0, "x", 0], "turn": [0, 0, 0, 1]}):
+        with pytest.raises(ValueError):
+            placement_of(bad)
+    path, _images = baked_like(tmp_path)
+    made = load_source(path)
+    # The triangle's own three points (an FBX leaves out a point no triangle uses).
+    used = np.asarray(made.vertices, np.float64)[np.unique(np.asarray(made.faces))]
+    expected = np.unique((used @ QUARTER.T + MOVE).round(5), axis=0)
+    result = convert(path, {fmt: tmp_path / fmt for fmt in ("glb", "fbx", "obj")}, name="Crate", placement=(rotation, move))
+    assert result["glb"]["files"] == ["Crate.glb"] and result["fbx"]["files"] == ["Crate.fbx"]
+    for file in (tmp_path / "glb" / "Crate.glb", tmp_path / "fbx" / "Crate.fbx", tmp_path / "obj" / "Crate.obj"):
+        source = load_source(file)
+        points = np.asarray(source.vertices, np.float64)[np.unique(np.asarray(source.faces))]
+        np.testing.assert_allclose(np.unique(points.round(5), axis=0), expected, atol=2e-5, err_msg=file.name)
+        np.testing.assert_allclose(np.asarray(load_source(file).normals, np.float64)[0], [0.0, 0.0, 1.0], atol=1e-6,
+                                   err_msg=file.name)                         # turned about Z: it still looks along +Z
+    with pytest.raises(ValueError):
+        convert(path, {"glb": tmp_path / "plain"}, name="Crate")              # as made, the GLB is the model's own file

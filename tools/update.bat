@@ -51,8 +51,12 @@ set "SC3D_TRIFLOW_FAILED="
 if errorlevel 1 set "SC3D_TRIFLOW_FAILED=1"
 if exist "%ROOT%\code\triflow\.git" "%GIT%" -C "%ROOT%\code\triflow" config core.autocrlf false
 rem Never --recursive: the tools' own nested submodules are not needed and some break builds.
-rem TriFlow is left out here (update=none): it was done above, without changing line endings.
-"%GIT%" -c submodule.triflow.update=none -C "%ROOT%" submodule update --init --depth 1
+rem TriFlow was done above, without changing line endings: git finds it at its commit and says nothing
+rem of it here. Only when that failed is it left out (update=none: "Skipping submodule 'code/triflow'"),
+rem so that this step never checks it out with other line endings.
+set "SC3D_SKIP_TRIFLOW="
+if defined SC3D_TRIFLOW_FAILED set "SC3D_SKIP_TRIFLOW=-c submodule.triflow.update=none"
+"%GIT%" %SC3D_SKIP_TRIFLOW% -C "%ROOT%" submodule update --init --depth 1
 if errorlevel 1 goto :submodules_failed
 goto :install
 

@@ -13,7 +13,7 @@ globalThis.document ??= { addEventListener: () => {}, hidden: false };
 const STATIC = new URL('../../spellcast/static/js/', import.meta.url);
 const load = (path) => import(new URL(path, STATIC));
 
-const { store, jobFor, STAGES } = await load('store.js');
+const { store, jobFor, stepTime, STAGES } = await load('store.js');
 const { hubJob } = await import('./hub_job.mjs');
 const { badgeOf, deckOf, tileViews } = await load('shell/proplist.js');
 const { propPicture, cropBox, fillSide, frameStyle } = await load('cropped.js');
@@ -191,6 +191,30 @@ test('the status line: a tool error with details, then install trouble and progr
   });
   // short (the column is narrow): with the download's size the bar says how far it is
   assert.equal(headline().text, 'Installing the 3D generator · 1.0 GB of 4.0 GB');
+  // A step with no number moving (pip unpacking for minutes at one percentage) never looks stuck: the line has the
+  // step's clock, which the status line ticks, and what the step does now on hover. A new step starts it anew; what
+  // the step does right now (after " · ") does not.
+  const step = (text) => reset({ install: { running: true, current: 'lato2',
+    components: { lato2: comp('running', { fraction: 0, step: text }) } } });
+  step('Installing its Python packages');
+  const seen = new Set();
+  const line = headline(seen);
+  assert.deepEqual([line.text, line.clock, line.detail], ['Installing LATO.2… 0%', 'install:lato2:Installing its Python packages',
+    'Installing its Python packages']);
+  assert.ok(seen.has(line.clock), 'its time is kept while the line shows');
+  step('Installing its Python packages · torch');
+  assert.equal(headline().clock, line.clock);
+  step('Downloading its AI models');
+  assert.notEqual(headline().clock, line.clock);
+  // The install card's and the workbench's line of a tool: how long its step has gone on, after a quarter of a minute.
+  const c = { status: 'running', step: 'Installing its Python packages · torch', fraction: 0 };
+  assert.deepEqual([stepTime('x1', c, 1000), stepTime('x1', c, 10_000), stepTime('x1', c, 135_000)], ['', '', '2:14 on this step']);
+  assert.equal(stepTime('x1', { ...c, step: 'Installing its Python packages · numpy' }, 136_000), '2:15 on this step');
+  assert.equal(stepTime('x1', { ...c, step: 'Downloading its AI models' }, 137_000), '', 'another step: from the start');
+  // A download that is through is no news: "583 KB of 583 KB" standing for minutes read as stuck.
+  reset({ install: { running: true, current: 'triflow',
+    components: { triflow: comp('running', { fraction: 0.3, step: 'Installing its Python packages', bytes_done: 583_000, bytes_total: 583_000 }) } } });
+  assert.equal(headline().text, 'Installing TriFlow… 30%');
 });
 
 test('the status line leaves out what the workbench shows: the prop it shows being made, the tool of its stage loading', () => {

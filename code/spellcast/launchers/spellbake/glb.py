@@ -13,7 +13,8 @@ the Khronos glTF-Validator passes with no errors and no warnings (tests/bake/tes
   imported map may tile). Emissive factors above 1 go through KHR_materials_emissive_strength.
 
 set_base_color_image swaps the base colour image of a written GLB for another (the artist's painting
-on a bake) and leaves every other byte of meaning as it was.
+on a bake) and leaves every other byte of meaning as it was. placed moves and turns a GLB's model (the
+prop's placement, for the export folder).
 """
 
 from __future__ import annotations
@@ -354,13 +355,104 @@ def set_base_color_image(data: bytes, image: bytes, material: int = 0) -> bytes:
     else:
         binary, images[source]["bufferView"] = _append_view(binary, image, views)
         images[source]["mimeType"] = mime
+    return _pack_glb(gltf, binary, rest)
+
+
+def _pack_glb(gltf: dict[str, Any], binary: bytes, rest: bytes) -> bytes:
+    """A GLB of the document, its binary chunk (padded here; buffer 0 gets its length) and the chunks after it."""
     binary += bytes(-len(binary) % 4)
-    buffers[0]["byteLength"] = len(binary)
+    if gltf.get("buffers"):
+        gltf["buffers"][0]["byteLength"] = len(binary)
     document = json.dumps(gltf, separators=(",", ":"), allow_nan=False).encode("utf-8")
     document += b" " * (-len(document) % 4)
     total = 12 + 8 + len(document) + 8 + len(binary) + len(rest)
     return b"".join([struct.pack("<III", _GLB_MAGIC, 2, total), struct.pack("<II", len(document), _CHUNK_JSON),
                      document, struct.pack("<II", len(binary), _CHUNK_BIN), binary, rest])
+
+
+# ---------------------------------------------------------------------- a GLB moved and turned
+
+_PACKED_GEOMETRY = ("KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization")
+_NODE_TRANSFORMS = ("matrix", "translation", "rotation", "scale")
+_VERTEX_KINDS = {"POSITION": "VEC3", "NORMAL": "VEC3", "TANGENT": "VEC4"}
+
+
+def placed(data: bytes, rotation: np.ndarray, translation: np.ndarray) -> bytes:
+    """The GLB ``data`` with its model turned by ``rotation`` (3 x 3) about the file's origin, then moved by
+    ``translation``: p' = R p + t, in the file's own axes and units.
+
+    The vertices themselves are moved (positions, normals and tangents in the binary chunk, and the positions' min
+    and max), so the model's origin is where the artist put it in every program that reads the file. That takes the
+    plain layout every GLB of ours has: float32 attributes in the binary chunk, nodes without transforms of their
+    own. Any other GLB gets a node over its scenes' nodes that carries the placement instead - the same in a viewer
+    or a game engine, by a transform rather than in the vertices. Everything else stays as it was."""
+    rotation = np.asarray(rotation, dtype=np.float64).reshape(3, 3)
+    translation = np.asarray(translation, dtype=np.float64).reshape(3)
+    gltf, binary, rest = _read_glb(data)
+    chunk = bytearray(binary)
+    arrays = _vertex_arrays(gltf, chunk)
+    if arrays is None:
+        _place_scenes(gltf, rotation, translation)
+        return _pack_glb(gltf, binary, rest)
+    for kind, accessor, values in arrays:
+        turned = values[:, :3].astype(np.float64) @ rotation.T
+        if kind == "POSITION":
+            turned += translation
+        values[:, :3] = turned
+        if kind == "POSITION" and len(values):
+            accessor["min"], accessor["max"] = values.min(axis=0).tolist(), values.max(axis=0).tolist()
+    return _pack_glb(gltf, bytes(chunk), rest)
+
+
+def _vertex_arrays(gltf: dict[str, Any], chunk: bytearray) -> list[tuple[str, dict[str, Any], np.ndarray]] | None:
+    """(kind, accessor, its values as a writable view of ``chunk``) of every position, normal and tangent accessor,
+    each once - or None when the GLB does not keep them plainly (see placed)."""
+    buffers = gltf.get("buffers") or []
+    if not buffers or "uri" in buffers[0] or set(gltf.get("extensionsUsed") or []) & set(_PACKED_GEOMETRY):
+        return None
+    if gltf.get("skins") or any(key in node for node in gltf.get("nodes") or [] for key in _NODE_TRANSFORMS):
+        return None
+    accessors, views = gltf.get("accessors") or [], gltf.get("bufferViews") or []
+    kinds: dict[int, str] = {}
+    for mesh in gltf.get("meshes") or []:
+        for primitive in mesh.get("primitives") or []:
+            if primitive.get("targets") or primitive.get("extensions"):
+                return None
+            for kind in _VERTEX_KINDS:
+                index = (primitive.get("attributes") or {}).get(kind)
+                if index is not None and kinds.setdefault(index, kind) != kind:
+                    return None     # one accessor read as two things
+    arrays = []
+    for index, kind in kinds.items():
+        try:
+            accessor = accessors[_index(index, accessors)]
+            view = views[_index(accessor["bufferView"], views)]
+        except (KeyError, IndexError):
+            return None
+        width = 3 if _VERTEX_KINDS[kind] == "VEC3" else 4
+        count = accessor.get("count")
+        if accessor.get("componentType") != _FLOAT or accessor.get("type") != _VERTEX_KINDS[kind] \
+                or "sparse" in accessor or view.get("buffer") != 0 or "extensions" in view \
+                or not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return None
+        stride = view.get("byteStride") or 4 * width
+        offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        if stride < 4 * width or offset < 0 or (count and offset + (count - 1) * stride + 4 * width > len(chunk)):
+            return None
+        arrays.append((kind, accessor, np.ndarray((count, width), dtype="<f4", buffer=chunk, offset=offset,
+                                                  strides=(stride, 4))))
+    return arrays
+
+
+def _place_scenes(gltf: dict[str, Any], rotation: np.ndarray, translation: np.ndarray) -> None:
+    """A node carrying the placement over every scene's own nodes (column-major, as glTF writes a matrix)."""
+    matrix = np.eye(4)
+    matrix[:3, :3], matrix[:3, 3] = rotation, translation
+    nodes = gltf.setdefault("nodes", [])
+    for scene in gltf.get("scenes") or []:
+        if scene.get("nodes"):
+            nodes.append({"name": "placement", "matrix": matrix.T.reshape(-1).tolist(), "children": scene["nodes"]})
+            scene["nodes"] = [len(nodes) - 1]
 
 
 def _index(value: Any, items: list[Any]) -> int:

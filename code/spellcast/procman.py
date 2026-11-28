@@ -29,6 +29,7 @@ import asyncio
 import codecs
 import collections
 import ctypes
+import json
 import logging
 import os
 import re
@@ -38,7 +39,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Mapping
+from typing import IO, TYPE_CHECKING, Any, Collection, Mapping
 
 import httpx
 
@@ -72,6 +73,8 @@ BREAK_WAIT = 5.0            # after CTRL_BREAK_EVENT, before killing the tree
 KILL_WAIT = 5.0
 MAX_LOG_BYTES = 10 * 1024 * 1024
 PORT_SEARCH_SPAN = 100
+# Why no GPU tool starts while the installer measures the card for Pixal3D (install_wait, start).
+CALIBRATION_WAIT = "Waiting for the graphics-card calibration of the 3D step to finish (a few minutes)…"
 # How long a start waits for the background installer to say what it installs (it knows within a second
 # or two; much longer only while an installer runs in another window).
 INSTALL_SETTLE_TIMEOUT = 120.0
@@ -389,6 +392,7 @@ class ProcessManager:
         self.hub_port = hub_port
         self.logs_dir = logs_dir
         self.install = install
+        self._card_word: dict[str, Any] | None = None       # what free_card_for_calibration last told the installer
         self.console = hub_has_console()
         self._spawn_lock = asyncio.Lock()
 
@@ -451,7 +455,7 @@ class ProcessManager:
         if self.install is None:
             return None
         if self.get(tool_id).adapter.uses_gpu and self.calibrating():
-            return "Waiting for the graphics-card calibration of the 3D step to finish (a few minutes)…"
+            return CALIBRATION_WAIT
         entry = self.install.component(tool_id)
         if entry is not None:
             fraction = entry.get("fraction")
@@ -467,6 +471,30 @@ class ProcessManager:
             return False
         entry = self.install.component(paths.PIXAL3D)
         return bool(entry) and str(entry.get("step") or "").startswith(install_progress.CALIBRATING_STEP)
+
+    def free_card_for_calibration(self, at_work: Collection[str] = (), card_file: Path = paths.CALIBRATION_CARD) -> None:
+        """Called every moment while the installer runs. While it measures the card for Pixal3D (calibrating), none
+        of our own tools may keep video memory: an image generator left loaded after a picture is idle, so the
+        calibration's look at the card's load passes, yet it would measure in what is left of an 8 GB card. Every
+        GPU tool that runs without a job is stopped (`at_work`: the tools a job starts or runs on - they finish it
+        first; no new job or early start takes the card meanwhile: install_wait, start), and `card_file` tells the
+        installer, which waits for it, whether the card is free of them yet."""
+        if not self.calibrating():
+            self._card_word = None      # the next calibration's installer is told anew
+            return
+        holding = [tp for tp in self.tools.values() if tp.adapter.uses_gpu and tp.alive()]
+        for tp in holding:
+            idle = tp.state == READY and not tp.busy_count and tp.tool_id not in at_work
+            if idle and (tp.stop_task is None or tp.stop_task.done()):
+                log.info("Stopping %s: the graphics card is measured for the 3D step, with nothing else on it", tp.name)
+                self.request_stop(tp.tool_id)
+        word = {"free": not holding, "waiting_for": [tp.name for tp in holding]}
+        if word != self._card_word:
+            try:
+                paths.write_text_atomic(card_file, json.dumps(word))
+                self._card_word = word
+            except OSError as e:
+                log.debug("Could not write %s: %s", card_file, e)
 
     def status(self, tool_id: str) -> dict[str, Any]:
         tp = self.get(tool_id)
@@ -533,6 +561,8 @@ class ProcessManager:
             return tp
         if tp.state == READY and tp.alive():
             return tp
+        if tp.adapter.uses_gpu and self.calibrating():
+            raise ToolError(CALIBRATION_WAIT, 409)
         rival = self._busy_gpu_rival(tp)
         if rival:
             raise ToolError(f"{rival.name} is busy with a job and shares the graphics card with {tp.name}. "

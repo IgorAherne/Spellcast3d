@@ -104,9 +104,9 @@
 	Only what is missing is then downloaded. (If you copy the whole MODELS folder into
 	pixal3d\, Spellcast3D moves its contents up for you.)
 
-	Once they are there, Spellcast3D writes beside four of them a copy that is quicker to
-	load (the files ending in .model-dtypes.safetensors under pixal3d\hub, 11 GB; 11 GB more
-	with the multi-view models). Deleting them only makes the 3D step read the originals,
+	Once they are there, Spellcast3D writes copies of them that are quicker to load (the six
+	files ending in .model-dtypes.safetensors under pixal3d\hub, 14.4 GB; six more, another
+	14.4 GB, with the multi-view models). Deleting them only makes the 3D step read the originals,
 	which takes longer; Spellcast3D makes them again the next time it updates Pixal3D.
 
 	Pixal3D itself looks in code\pixal3d\MODELS: that is a link to this folder, which
@@ -118,7 +118,9 @@
 
 	HI3D  (the 3D stage's "Shape": finer shapes, refined from Pixal3D's)
 
-		hi3d\             Hi3D's AI models, about 11.4 GB, downloaded with Pixal3D's:
+		hi3d\             Hi3D's AI models, about 11.4 GB. Optional, and never part of the
+		                  installation: this folder stays empty until you press
+		                  "Download (11.4 GB)" in the 3D stage (pick Hi3D under Shape).
 		                  Hi3Dv1.0\ (Hi3D's networks with its LICENSE and NOTICE, from
 		                  huggingface.co/hi3d-official/Hi3Dv1.0),
 		                  dinov2-large\ (huggingface.co/facebook/dinov2-large),
@@ -127,10 +129,10 @@
 		                  shape_enc_next_dc_f16c32_fp16 files of
 		                  huggingface.co/microsoft/TRELLIS.2-4B)
 
-	Already have them? Put them here in these folders before the first start (or Spellcast3D
-	finds the ones in your HuggingFace download folder by itself, on the same drive): only
-	what is missing is then downloaded. Without them, props set to Pixal3D work as before,
-	and the 3D stage offers the download for props set to Hi3D.
+	Already have them? Put them here in these folders before you press Download (or
+	Spellcast3D finds the ones in your HuggingFace download folder by itself, on the same
+	drive): only what is missing is then downloaded. Without them, props set to Pixal3D work
+	as before, and the 3D stage offers the download for props set to Hi3D.
 
 	Hi3D is under the Hi3D Open License Agreement Version 1.0 (models\hi3d\Hi3Dv1.0\LICENSE),
 	with its Acceptable Use Policy; DINOv2 is Apache-2.0, CLIP and TRELLIS.2's encoder MIT.

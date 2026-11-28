@@ -24,12 +24,36 @@ export const viewer = {
   detach() {},
   frame() {},
   redraw() {},
-  async show(url) {
+  placements: [],               // the placement each show was given ({move, turn} | null), in order
+  gizmo: null,                  // the handles up ('move' | 'turn' | null) and whom they tell: setGizmo
+  onPlaced: null,
+  placed: { move: [0, 0, 0], turn: [0, 0, 0, 1] },
+  async show(url, _kind, { placement = null } = {}) {
     if (!models.has(url)) models.set(url, standInModel(TEX));
     this.current = models.get(url).pivot;
     this.view = 'all';
     this.shown.push(url);
+    this.placements.push(placement);
+    this.placed = placement || { move: [0, 0, 0], turn: [0, 0, 0, 1] };
+    this.gizmo = this.onPlaced = null;
     return true;
+  },
+  async setGizmo(mode, onPlaced = null) {
+    this.gizmo = mode || null;
+    this.onPlaced = mode ? onPlaced : null;
+  },
+  /** A test drags the handles: the model stands at `placement`, and the pane is told as after a real drag. */
+  drag(placement) {
+    this.placed = placement;
+    this.onPlaced?.(placement);
+  },
+  placeOnFloor() {
+    this.placed = { move: [0, 0.5, 0], turn: this.placed.turn };
+    return this.placed;
+  },
+  placeBack() {
+    this.placed = { move: [0, 0, 0], turn: [0, 0, 0, 1] };
+    return this.placed;
   },
   /** The viewer lets go of the model of `url`, its painting with it (as its cache does): shown again, it is loaded anew. */
   forget(url) {

@@ -23,13 +23,13 @@ export const STAGE_ROLES = {
 };
 // Said while a tool loads: "Loading the image generator… (the first time takes about a minute)".
 export const FIRST_START = {
-  qwen: 'this can take a minute', forge: 'the first time takes about a minute', pixal3d: 'about half a minute',
+  qwen: 'this can take a minute', forge: 'the first time takes about a minute', pixal3d: 'about a minute',
   lato2: 'this can take a minute', triflow: 'this can take a minute',
 };
 // How long a start takes ("Starting again takes about a minute"). Pixal3D answers as soon as its libraries are
 // loaded: it reads each of its models from disk when a job needs it.
 export const TOOL_ETA = {
-  qwen: 'about a minute', forge: '30-90 seconds', pixal3d: 'about half a minute', imesh: 'a few seconds', lato2: 'about a minute', triflow: 'about a minute',
+  qwen: 'about a minute', forge: '30-90 seconds', pixal3d: 'about a minute', imesh: 'a few seconds', lato2: 'about a minute', triflow: 'about a minute',
 };
 export const RUNNING = new Set(['starting', 'ready', 'busy']);
 export const ACTIVE_JOB = new Set(['queued', 'starting_tool', 'running']);
@@ -157,6 +157,31 @@ export const boxesOf = () => store.project?.props.filter((p) => !p.draft) || [];
 export const toolStatus = (tool) => store.status?.tools?.[tool] || null;
 
 export const toolName = (tool) => toolStatus(tool)?.display_name || TOOL_NAMES[tool] || tool;
+
+/**
+ * A download of a tool being installed (component `c` of the hub's install status) is under way: its size is known
+ * and not all there. One that is through is no news - "583 KB of 583 KB" standing for minutes reads as stuck.
+ */
+export const downloading = (c) => !!c?.bytes_total && (c.bytes_done || 0) < c.bytes_total;
+
+const QUIET_STEP_MS = 15000;    // an install step this long with no download's numbers says how long it has been at it
+// When this page first saw each tool being installed at its step (the step's own words, before " · what it does now").
+const stepSince = new Map();
+/**
+ * "2:14 on this step" for a tool whose install step (component `c` of the hub's install status) has gone on for a
+ * while with no number to show - pip unpacks PyTorch for minutes at one percentage: the time moves at every look, so
+ * the line never reads as stuck. '' before that.
+ */
+export function stepTime(id, c, now = Date.now()) {
+  const key = String(c?.step || '').split(' · ')[0];
+  const at = stepSince.get(id);
+  if (!at || at.key !== key) {
+    stepSince.set(id, { key, since: now });
+    return '';
+  }
+  const s = Math.floor((now - at.since) / 1000);
+  return now - at.since >= QUIET_STEP_MS ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} on this step` : '';
+}
 
 export const bustFor = (stage, propId) => store.bust[`${stage}:${propId}`] || store.openStamp;
 

@@ -393,6 +393,10 @@ class JobQueue:
         """Projects with a job that is waiting or running."""
         return {job.project for job in list(self._jobs.values()) if job.status in ACTIVE}
 
+    def tools_at_work(self) -> set[str]:
+        """The tools a job is starting or running on right now."""
+        return {job.tool for job in list(self._jobs.values()) if job.status in (STARTING_TOOL, RUNNING)}
+
     def active_props(self, project: str, stage: str | None = None) -> set[str]:
         """Ids of the project's props with a job (of `stage`, else of any stage) that is waiting or running."""
         return {prop_id for job in list(self._jobs.values()) if job.status in ACTIVE and job.project == project

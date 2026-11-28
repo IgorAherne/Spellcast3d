@@ -842,6 +842,33 @@ def api(tmp_path: Path) -> Any:
         yield app, client, adapters
 
 
+def test_the_method_picked_last_is_what_a_new_prop_starts_with_in_every_project(api: Any) -> None:
+    """The page saves a pick as the hub's setting retopo.default_method: new props and the draft start with it, in
+    this project and any other, until another is picked. A prop that has a method keeps it."""
+    app, client, _ = api
+    store: ProjectStore = app.state.hub.store
+    client.post("/api/projects", json={"name": "One"})
+    first = store.add_prop("One", "Barrel")
+    assert first["retopo"]["settings"]["method"] == TRIFLOW                      # until the first pick
+    draft = store.ensure_draft("One")
+    assert draft["retopo"]["settings"]["method"] == TRIFLOW
+    assert client.patch("/api/settings", json={"retopo": {"default_method": "blender"}}).status_code == 400
+    assert client.patch("/api/settings", json={"retopo": {"default_method": LATO2}}).json()["retopo"] == {
+        "default_method": LATO2}
+    assert store.add_prop("One", "Crate")["retopo"]["settings"]["method"] == LATO2
+    assert store.ensure_draft("One")["id"] == draft["id"]                        # the same draft, now with the default
+    assert store.ensure_draft("One")["retopo"]["settings"]["method"] == LATO2
+    assert store.get_prop("One", first["id"])["retopo"]["settings"]["method"] == TRIFLOW
+    client.post("/api/projects", json={"name": "Two"})
+    assert store.add_prop("Two", "Lamp")["retopo"]["settings"]["method"] == LATO2
+    # A store on its own (no hub settings), or a setting that names no method: TriFlow.
+    alone = ProjectStore(store.root.parent / "alone")
+    alone.create_project("P")
+    assert alone.add_prop("P", "Barrel")["retopo"]["settings"]["method"] == TRIFLOW
+    alone.retopo_default = lambda: "blender"
+    assert alone.add_prop("P", "Crate")["retopo"]["settings"]["method"] == TRIFLOW
+
+
 def test_api_jobs_with_a_tool_the_pick_and_the_license(api: Any) -> None:
     app, client, _ = api
     store: ProjectStore = app.state.hub.store

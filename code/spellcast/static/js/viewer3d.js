@@ -78,6 +78,13 @@ const grey = (v) => new THREE.Color(v, v, v);
 // A mid-grey, matte clay: a light one under the scene's lights and environment reads as a flat white
 // silhouette, so the shape was hard to judge. "None" uses it a quarter lighter (with the model's own normals):
 // under the studio's two lights alone the mid-grey read too dark there. The same in every stage.
+// The floor of a model's saved files, drawn while its Move / Rotate handles are up (setGizmo): a grid at their
+// origin, at the height 0, in the files' own units (a model is about 1 across) with cells a tenth of one, and the
+// origin's three axes.
+const FLOOR_SIZE = 4;
+const FLOOR_CELL = 0.1;
+const FLOOR_AXIS = 0x8b7dff;
+const FLOOR_LINE = 0x4a5263;
 const CLAY = { color: 0x7e8591, roughness: 0.92, metalness: 0, envMapIntensity: 0.4 };
 const NONE_CLAY = { ...CLAY, color: 0x9ea6b5 };
 
@@ -417,6 +424,10 @@ class Viewer {
     this.place = null;     // where the model last on screen stood (show's keepView)
     this.lightsAt = 0;     // when the lights of "all" last moved on (ms)
     this.layerUrl = null;  // the layer shown over the view (setLayer)
+    // Where the model on screen stands in its saved files (show's `placement`), and the handles that move it
+    // (setGizmo): the mode on, the pane's onPlaced, three's TransformControls and the floor drawn at the origin.
+    this.placed = { move: new THREE.Vector3(), turn: new THREE.Quaternion() };
+    this.gizmo = { mode: null, onPlaced: null, handles: null, floor: null, origin: new THREE.Vector3() };
   }
 
   /** Draws the scene again at the next frame. */
@@ -556,6 +567,7 @@ class Viewer {
     if (!this.container || (container && container !== this.container)) return;
     this.token++;          // a show() still loading for this container resolves false
     this.stopLoading();
+    this.setGizmo(null);
     this.renderer.setAnimationLoop(null);
     this.orbitLight(false);
     this.resizer.unobserve(this.container);
@@ -602,12 +614,15 @@ class Viewer {
    * colorspace}}) adds maps a GLB cannot carry, on its own UVs. keepView: `url` is another model of the
    * object last on screen (its high or low poly, its texture changed): it takes that model's place and the
    * camera stays where the artist left it, so the two can be compared up close - and that model stays on screen
-   * until this one is there, loaded at once.
+   * until this one is there, loaded at once. placement ({move, turn} | null): where the model stands in its saved
+   * files (the Retopo and Export pages): it is shown turned and moved so, about the files' origin (setGizmo draws
+   * it); every other page shows a model as it was made.
    */
-  async show(url, kind, { onProgress, extraMaps = {}, keepView = false } = {}) {
+  async show(url, kind, { onProgress, extraMaps = {}, keepView = false, placement = null } = {}) {
     this.init();
     const token = ++this.token;
     this.stopLoading();         // nobody waits for the previous model any more
+    this.setGizmo(null);        // the pane that shows a model puts its handles back
     // Where frame() put the model last on screen: one shown with keepView goes to the same place, also when a
     // model still loading had taken that one off the screen meanwhile.
     if (this.current) this.place = this.current.children[0].position.clone();
@@ -659,6 +674,11 @@ class Viewer {
     this.root.add(pivot);
     this.current = pivot;
     this.orbitLight(true);
+    // Turned as placed before it is centred; a model that takes another's place stands where that one stood, which
+    // holds the move already (the two are one prop's).
+    this.placed.move.fromArray(placement?.move || [0, 0, 0]);
+    this.placed.turn.fromArray(placement?.turn || [0, 0, 0, 1]);
+    pivot.children[0].quaternion.copy(this.placed.turn);
     if (place) {
       pivot.children[0].position.copy(place);
       this.orbit.fit(pivot);
@@ -667,6 +687,123 @@ class Viewer {
       this.frame();
     }
     return true;
+  }
+
+  // ---- where the model stands in its saved files, and the handles that put it there ---------------------------
+
+  /** The placement of the model on screen as the hub keeps it: {move: [x, y, z], turn: [x, y, z, w]}. */
+  placement() {
+    return { move: this.placed.move.toArray(), turn: this.placed.turn.toArray() };
+  }
+
+  /**
+   * Where the saved files' origin is on screen: the model's own origin, less its move. frame() centres the model in
+   * the view wherever it was placed, so the origin is worked out from the model, never kept.
+   */
+  fileOrigin() {
+    const object = this.current?.children[0];
+    return object ? object.position.clone().sub(this.placed.move) : new THREE.Vector3();
+  }
+
+  /**
+   * The Move ('move') or Rotate ('turn') handles on the model on screen, with the floor of its saved files drawn
+   * under it (a grid at their origin, the height 0); null takes both away. onPlaced(placement) is told after every
+   * drag, and after placeOnFloor() and placeBack(). The handles are three.js's TransformControls, loaded at their
+   * first use; a drag of theirs holds the camera still.
+   */
+  async setGizmo(mode, onPlaced = null) {
+    const gizmo = this.gizmo;
+    gizmo.mode = mode || null;
+    gizmo.onPlaced = mode ? onPlaced : null;
+    if (mode && !gizmo.handles) {
+      const { TransformControls } = await import('three/addons/controls/TransformControls.js');
+      if (!gizmo.handles) this.makeHandles(TransformControls);
+    }
+    this.syncGizmo();
+  }
+
+  makeHandles(TransformControls) {
+    const gizmo = this.gizmo;
+    const handles = new TransformControls(this.camera, this.renderer.domElement);
+    handles.setSize(0.85);
+    handles.addEventListener('change', () => { this.dirty = true; });
+    handles.addEventListener('dragging-changed', (e) => {
+      this.controls.enabled = !e.value;
+      if (e.value) gizmo.origin.copy(this.fileOrigin());   // the origin stays where it is while the model moves
+      else gizmo.onPlaced?.(this.readPlaced(gizmo.origin));
+    });
+    gizmo.handles = handles;
+    this.scene.add(handles.getHelper());
+    const floor = new THREE.Group();
+    const grid = new THREE.GridHelper(FLOOR_SIZE, FLOOR_SIZE / FLOOR_CELL, FLOOR_AXIS, FLOOR_LINE);
+    const axes = new THREE.AxesHelper(FLOOR_CELL * 2);
+    for (const lines of [grid, axes]) {
+      lines.material.transparent = true;
+      lines.material.opacity = lines === grid ? 0.55 : 0.9;
+      lines.material.depthWrite = false;
+      lines.raycast = () => {};
+    }
+    floor.add(grid, axes);
+    floor.visible = false;
+    gizmo.floor = floor;
+    this.scene.add(floor);
+  }
+
+  /** The handles and the floor as the mode and the model on screen ask (after a show, a frame, a placement). */
+  syncGizmo() {
+    const { mode, handles, floor } = this.gizmo;
+    if (!handles) return;
+    const object = mode && this.current ? this.current.children[0] : null;
+    if (object) {
+      handles.setMode(mode === 'turn' ? 'rotate' : 'translate');
+      handles.setSpace(mode === 'turn' ? 'local' : 'world');
+      if (handles.object !== object) handles.attach(object);
+      floor.position.copy(this.fileOrigin());
+    } else if (handles.object) {
+      handles.detach();
+      this.controls.enabled = true;     // a drag cut short by a new model must not leave the camera held
+    }
+    floor.visible = !!object;
+    this.dirty = true;
+  }
+
+  /** The model was moved or turned on screen, the files' origin staying at `origin` -> its placement, read back. */
+  readPlaced(origin) {
+    const object = this.current.children[0];
+    this.placed.move.copy(object.position).sub(origin);
+    this.placed.turn.copy(object.quaternion).normalize();
+    this.orbit.fit(this.current);       // the lights go round the model where it stands now
+    this.syncGizmo();
+    return this.placement();
+  }
+
+  /**
+   * Stands the model on the floor of its saved files, their origin under the middle of it (what a game engine
+   * expects of a prop or a character: dropped into a level, it stands on the ground). Its turn stays. -> the
+   * placement it has now, or null without a model.
+   */
+  placeOnFloor() {
+    const object = this.current?.children[0];
+    if (!object) return null;
+    const origin = this.fileOrigin();
+    this.current.updateMatrixWorld(true);
+    // From every vertex (precise): the box of a turned model's own box is larger than the model, and would leave it
+    // hovering over the floor.
+    const box = new THREE.Box3().setFromObject(object, true);
+    if (box.isEmpty()) return null;
+    const middle = box.getCenter(new THREE.Vector3());
+    object.position.add(new THREE.Vector3(origin.x - middle.x, origin.y - box.min.y, origin.z - middle.z));
+    return this.readPlaced(origin);
+  }
+
+  /** The model back as it was made, no move and no turn -> that placement, or null without a model. */
+  placeBack() {
+    const object = this.current?.children[0];
+    if (!object) return null;
+    const origin = this.fileOrigin();
+    object.position.copy(origin);
+    object.quaternion.identity();
+    return this.readPlaced(origin);
   }
 
   /** The views the model on screen offers: ['none', 'all', 'basecolor', ...], or [] (no texture maps). */
@@ -740,6 +877,7 @@ class Viewer {
     this.controls.minDistance = radius * 0.2;
     this.controls.maxDistance = radius * 8;
     this.controls.update();
+    this.syncGizmo();           // the files' floor follows the model to the middle of the view
     this.dirty = true;
     return true;
   }

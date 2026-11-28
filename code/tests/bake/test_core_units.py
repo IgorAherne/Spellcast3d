@@ -594,6 +594,8 @@ def test_prepare_a_retopo_obj(tmp_path: Path) -> None:
         assert low.repacked and low.ring == lowpoly.RING_REPACKED
         assert low.stats["flipped_triangles"] == 1 and low.stats["dropped_triangles"] == 1
         assert low.stats["triangles"] == len(faces) and low.stats["min_chart_gap_px"] >= 2
+        # The clean mesh's own points, as Retopo counts them; the files hold more (a seam's point once per side).
+        assert low.stats["vertices"] == len(points) < low.stats["render_vertices"]
         mesh = low.mesh
         np.testing.assert_allclose(np.linalg.norm(mesh.tangents[:, :3], axis=1), 1.0)
         assert np.all(np.abs(np.einsum("ij,ij->i", mesh.tangents[:, :3], mesh.normals)) < 1e-9)

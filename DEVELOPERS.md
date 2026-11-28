@@ -120,8 +120,8 @@ identical, or look the same where a change is allowed to alter rounding.
 3. `python prepare_release.py build`. It clones the **committed, pushed** state into
    `release\staging\spellcast3d\` (keeping `.git`, so users can update with `tools\update.bat`), fetches
    the tools at their pinned commits, adds `tools\python` and `tools\git`, and writes
-   `release\spellcast3d-<version>-windows.zip`.
-4. Test the zip: unzip it to `C:\spellcast3d` on a clean machine and run it.
+   `release\spellcast3d-<version>-windows.zip`, which holds everything in one folder, `spellcast3d`.
+4. Test the zip: unzip it into `C:\` on a clean machine (it becomes `C:\spellcast3d`) and run it.
 5. On GitHub: draft a release, upload the zip as an asset. Never commit the zip.
 
 Never amend or force-push a released commit: users update from it.

@@ -5,7 +5,7 @@
 import { api } from '../api.js';
 import { formatBytes, h } from '../dom.js';
 import { icon } from '../icons.js';
-import { configProblems, on, store } from '../store.js';
+import { configProblems, downloading, on, stepTime, store } from '../store.js';
 import { pollStatusSoon } from '../actions.js';
 import { progressBar, spinner } from '../controls.js';
 import { attempt } from '../ui.js';
@@ -95,7 +95,8 @@ export function mountInstallCard(host) {
       row.text.textContent = c.status === 'failed' && c.message ? c.message : c.step || c.message || WORDS[c.status] || c.status;
       row.bar.hidden = c.status !== 'running';
       row.bar.set(typeof c.fraction === 'number' ? c.fraction : null);
-      row.bytes.textContent = c.status === 'running' && c.bytes_total ? `${formatBytes(c.bytes_done || 0)} of ${formatBytes(c.bytes_total)}` : '';
+      row.bytes.textContent = c.status !== 'running' ? ''
+        : downloading(c) ? `${formatBytes(c.bytes_done || 0)} of ${formatBytes(c.bytes_total)}` : stepTime(id, c);
       row.bytes.hidden = !row.bytes.textContent;
     }
   }
@@ -126,11 +127,14 @@ export function mountInstallCard(host) {
     configText.textContent = problems.join(' ');
     const left = comps.filter(([, c]) => c.status === 'running' || c.status === 'pending').length;
     const current = comps.find(([id]) => id === inst.current)?.[1];
+    toggle.title = '';
     if (trouble) {
       title.textContent = failed.length ? `${NAMES[failed[0][0]] || failed[0][0]}: could not be installed` : 'The installation stopped';
     } else if (working) {
       const pct = typeof current?.fraction === 'number' ? ` · ${Math.round(current.fraction * 100)}%` : '';
       title.textContent = left ? `Installing ${left === 1 ? '1 tool' : `${left} tools`}${pct}` : inst.message || 'Checking what still needs installing…';
+      // On hover, what the tool at work does right now: the pill itself stays short.
+      toggle.title = current ? `${NAMES[inst.current] || inst.current}: ${current.step || current.message || WORDS.running}` : '';
     } else {
       title.textContent = noImages ? 'Installed, without an image generator' : 'Everything is installed';
       doneTimer ||= setTimeout(() => { sawWork = false; doneTimer = null; render(); }, 6000);

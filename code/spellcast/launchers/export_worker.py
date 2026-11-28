@@ -9,6 +9,9 @@ and instant_meshes_brush, never the hub. The request is one of
 
     {"cmd": "convert", "src": <model file (.glb)>, "name": <file name without extension>,
      "outputs": {"fbx": <folder>, "obj": <folder>}}          (either or both formats)
+     ... and optionally "placement": {"move": [x, y, z], "turn": [x, y, z, w]}, where the artist put the
+     prop (spellbake.convert.placement_of): every file holds the model moved and turned so, and "outputs"
+     may then ask for "glb" too - the model's own GLB with the placement in it
     {"cmd": "repaint", "dir": <bake folder>, "rgba": <raw file>, "width": W, "height": H,
      "unpainted": <file> (optional)}
 
@@ -51,7 +54,7 @@ from PIL import Image
 
 from spellbake import BakeError, fbx, glb, replace_files
 from spellbake.bake import PNG_COMPRESS_LEVEL
-from spellbake.convert import FORMATS, convert
+from spellbake.convert import FORMATS, PLACED_FORMATS, convert, placement_of
 
 PROGRESS_INTERVAL = 0.25
 # A just-written folder can be held briefly by a virus scanner or the search indexer.
@@ -101,15 +104,20 @@ def run_convert(request: dict[str, Any], out: Output) -> dict[str, Any]:
         raise RequestError("the request has no 'src' path")
     if not isinstance(name, str) or not name or Path(name).name != name:
         raise RequestError("'name' must be a file name")
-    if not isinstance(outputs, dict) or not outputs or set(outputs) - set(FORMATS) \
+    try:
+        placement = placement_of(request.get("placement"))
+    except ValueError as exc:
+        raise RequestError(str(exc)) from None
+    formats = FORMATS if placement is None else FORMATS + PLACED_FORMATS
+    if not isinstance(outputs, dict) or not outputs or set(outputs) - set(formats) \
             or not all(isinstance(v, str) and v for v in outputs.values()):
-        raise RequestError(f"'outputs' must map some of {', '.join(FORMATS)} to folders")
+        raise RequestError(f"'outputs' must map some of {', '.join(formats)} to folders")
     finals = {fmt: Path(folder) for fmt, folder in outputs.items()}
     temporary = {fmt: folder.with_name(folder.name + ".tmp") for fmt, folder in finals.items()}
     try:
         for folder in temporary.values():
             shutil.rmtree(folder, ignore_errors=True)
-        result = convert(Path(src), temporary, name=name, progress=out.progress)
+        result = convert(Path(src), temporary, name=name, progress=out.progress, placement=placement)
         for fmt, folder in temporary.items():
             _replace_folder(folder, finals[fmt])
     finally:

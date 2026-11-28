@@ -1,7 +1,8 @@
 // Stage 4, Retopo: each prop's 3D model is rebuilt as clean, light meshes with UVs, one per size the prop asks for
 // (the boxes on its tile on the left: thousands of vertices, 0.25 for 250, up to three; tileSizes / sizeTile), and the
-// artist picks the one the prop keeps. Each prop picks its method at the top of the workbench (every new prop starts
-// with TriFlow, whatever the prop before it picked): TriFlow or LATO.2 (AI tools on the graphics card) or Instant
+// artist picks the one the prop keeps. Each prop picks its method at the top of the workbench - a pick is also the
+// default from then on: the props without a clean mesh take it, and every new prop starts with it, in every project
+// (pickMethod; TriFlow until the first pick): TriFlow or LATO.2 (AI tools on the graphics card) or Instant
 // Meshes (the processor), whose interactive viewer, a click away, also shapes a mesh by hand with guide strokes - its
 // Accept keeps that one. TriFlow is free for non-commercial use only, and says so wherever it is picked. A size
 // outside the vertices a method places is made with the nearest count it places, and the page says so.
@@ -17,7 +18,7 @@ import { api, localUrl, propApi } from '../api.js';
 import { h, plural } from '../dom.js';
 import { icon } from '../icons.js';
 import { ACTIVE_JOB, boxesOf, bump, getProp, jobFor, projectId, store, toolName, toolStatus } from '../store.js';
-import { pollStatusSoon, queueSettings, replaceProp, startJob } from '../actions.js';
+import { pollStatusSoon, queueSettings, replaceProp, savePlacement, startJob, updateUi } from '../actions.js';
 import { field, segmented, seedInput, sliderField, spinner } from '../controls.js';
 import { attempt, confirmDialog, toast } from '../ui.js';
 import { licenseChip, licenseLine } from '../licenses.js';
@@ -139,6 +140,53 @@ export function waitingHint(props) {
 // ---- the method picker over both kinds of view ------------------------------------------------------
 
 /**
+ * The props that take the method picked on prop `id` with it: every other prop (the draft too) that has no clean mesh
+ * and is not being retopologized, unless the artist picked its method by hand (project.ui.retopo_picked) - so one
+ * pick is enough for a project of new props, and a prop set apart on purpose stays apart.
+ */
+export function methodFollowers(id, method) {
+  const picked = store.project?.ui?.retopo_picked || {};
+  return (store.project?.props || []).filter((p) => p.id !== id && !picked[p.id] && retopoMethod(p) !== method
+    && !p.retopo?.obj && !p.retopo?.variants?.length && !jobFor('retopo', p.id));
+}
+
+/** A prop is set to `method`: the clean meshes that method made for it before are its own again, on screen at once
+ * (the hub does the same when the method is saved); its thumbnail showed the other method's, so it is drawn again. */
+function setMethod(p, method) {
+  const retopo = retopoSwitched(p.retopo, method);
+  if (retopo !== p.retopo) {
+    p.retopo = retopo;
+    if (p.thumbs) delete p.thumbs.retopo;
+  }
+  queueSettings(p.id, 'retopo', { method });
+}
+
+/**
+ * The artist picked `method` on prop `id`: it is that prop's, the props that follow take it too (methodFollowers),
+ * and it is the method every new prop starts with from now on, in every project (the hub's settings,
+ * retopo.default_method) - said in a toast, with what could not be saved when the hub refused.
+ */
+export function pickMethod(id, method) {
+  const p = getProp(id);
+  if (!p || retopoMethod(p) === method) return;
+  const followers = methodFollowers(id, method);
+  for (const prop of [p, ...followers]) setMethod(prop, method);
+  updateUi({ retopo_picked: { ...(store.project.ui?.retopo_picked || {}), [id]: true } });
+  const switched = followers.filter((f) => !f.draft).length;
+  const keep = boxesOf().some((b) => b.id !== id && retopoMethod(b) !== method);
+  const name = toolName(method);
+  api('PATCH', '/api/settings', { retopo: { default_method: method } }).then((settings) => {
+    store.settings = settings;
+    toast(`${name} is now the default for all the props: new props start with it`
+      + `${switched ? `, and ${plural(switched, 'prop')} here without a clean mesh ${switched === 1 ? 'was' : 'were'} `
+        + 'switched to it' : ''}.${keep ? ' The props that have their clean meshes, or a method you picked for them, keep '
+        + 'theirs.' : ''}`, 'info', 8000);
+  }).catch((e) => {
+    toast(`${name} is picked for this prop, but could not be kept as the default for new props: ${e.message || e}`, 'warn');
+  });
+}
+
+/**
  * "Retopologize with [TriFlow | LATO.2 | Instant Meshes]" at the top of the workbench, saved per prop
  * (retopo.settings.method), then `extra` (the viewer's way back). Each method keeps the clean meshes it made for the
  * prop (rules.retopoSwitched: those under 50,000 vertices), so picking a method again shows them, their numbers and
@@ -150,16 +198,7 @@ function methodBar(id, ...extra) {
   const seg = segmented(METHODS.map((m) => ({
     value: m.value, title: m.title, label: [m.label, licenseChip(m.value)],
   })), retopoMethod(getProp(id)), (method) => {
-    const p = getProp(id);
-    if (!p || retopoMethod(p) === method) return;
-    // The clean meshes this method made before are the prop's again, on screen at once (the hub does the same when
-    // the method is saved); the thumbnail shows the other method's, so it is drawn again.
-    const retopo = retopoSwitched(p.retopo, method);
-    if (retopo !== p.retopo) {
-      p.retopo = retopo;
-      if (p.thumbs) delete p.thumbs.retopo;
-    }
-    queueSettings(id, 'retopo', { method });
+    pickMethod(id, method);
     ctx?.refresh?.();
   });
   seg.classList.add('rt-methods');
@@ -336,7 +375,11 @@ function buildProp(prop) {
   // No map buttons: this stage is about the edges, and buttons only the 3D model has would resize the view at
   // each High / Low (the camera stays put for the comparison). The Wireframe toggle is there for both sides, far
   // from them, under the viewport: the pointer over High or Low rings it, as Images' buttons ring the Resolution.
-  const pane = modelPane({ tools: [sides], maps: false, wideLights: true });
+  const pane = modelPane({
+    tools: [sides], maps: false, wideLights: true,
+    // Where the prop stands in its saved files: the handles are a press away, on the view's left edge.
+    placing: { stage: 'retopo', get: () => getProp(id)?.placement || null, set: (placement) => savePlacement(id, placement) },
+  });
   for (const button of sides.buttons) button.addEventListener('pointerenter', () => pane.maps.ringWireframe());
   const busy = busyLayer('retopo');
   const variants = variantSwitch(id, (size) => {

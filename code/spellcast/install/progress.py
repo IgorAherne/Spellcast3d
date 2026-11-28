@@ -143,6 +143,10 @@ class Progress:
             entry = self._current()
             if entry is not None:
                 entry["message"] = line[:MESSAGE_CHARS]
+                # A download that is through is no news once the step goes on (pip unpacking what it fetched takes
+                # minutes): "583 KB of 583 KB" standing there reads as stuck.
+                if self._measure is None and entry["bytes_total"] and entry["bytes_done"] == entry["bytes_total"]:
+                    entry.update(bytes_done=None, bytes_total=None)
 
     # ---- writing --------------------------------------------------------------------------------------
     def _current(self) -> dict[str, Any] | None:

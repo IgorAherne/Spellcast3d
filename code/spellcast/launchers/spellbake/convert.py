@@ -42,7 +42,7 @@ from PIL import Image
 from instant_meshes_brush.assets import AssetError, load_source
 from instant_meshes_brush.materials import ImageError, MaterialSpec
 
-from . import BakeError
+from . import BakeError, glb
 from .fbx import FbxMaterial, write_fbx_materials
 from .objexport import MtlMaps, MtlMaterial, write_obj_materials
 from .sampling import linear_to_srgb8, srgb_to_linear, unorm8
@@ -51,6 +51,7 @@ from .tangents import mikk_tangents, normalize
 Progress = Callable[[float, str], None]
 
 FORMATS = ("fbx", "obj")
+PLACED_FORMATS = ("glb",)       # ... and, for a model with a placement, its own format with the placement in it
 PNG_COMPRESS_LEVEL = 6
 BAND_ROWS = 256                 # map rows converted at a time: float temporaries stay small at 4096 px
 _MTL_UNSAFE = re.compile(r"[^\w\-.]+")
@@ -208,20 +209,60 @@ def _tangents(positions: np.ndarray, normals: np.ndarray, uv: np.ndarray,
     return positions[flat], normals[flat], uv[flat], corners, np.arange(len(flat)).reshape(-1, 3)
 
 
+def placement_of(value: Any) -> tuple[np.ndarray, np.ndarray] | None:
+    """A prop's placement as the hub sends it ({"move": [x, y, z], "turn": [x, y, z, w], a unit quaternion}; None:
+    the model as it is) -> (rotation 3 x 3, translation): a point p of the model goes to R p + t, in the model's
+    own axes (Y up, its front along +Z) and units. ValueError when it is not one."""
+    if value is None:
+        return None
+    try:
+        move = np.asarray(value["move"], dtype=np.float64).reshape(3)
+        x, y, z, w = (float(part) for part in value["turn"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("'placement' must be {'move': [x, y, z], 'turn': [x, y, z, w]}") from None
+    length = (x * x + y * y + z * z + w * w) ** 0.5
+    if not np.isfinite(move).all() or not np.isfinite(length) or length < 1e-9:
+        raise ValueError("'placement' must hold finite numbers and a quaternion that is not zero")
+    x, y, z, w = x / length, y / length, z / length, w / length
+    rotation = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                         [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                         [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+    return rotation, move
+
+
 def convert(src: str | Path, outputs: Mapping[str, str | Path], *, name: str,
-            progress: Progress | None = None) -> dict[str, Any]:
+            progress: Progress | None = None, placement: tuple[np.ndarray, np.ndarray] | None = None
+            ) -> dict[str, Any]:
     """Save the model ``src`` as each of ``outputs`` ({"fbx" | "obj": folder}), named ``name``:
     <name>.fbx (maps embedded), <name>.obj + <name>.mtl + <name>_<map>.png. The folders are created.
+
+    ``placement`` (placement_of): the model is turned and moved by it in every file, vertices and normals alike -
+    and ``outputs`` may then ask for "glb" too, the model's own GLB with the same done to it (glb.placed).
 
     Returns {"<format>": {"files": [names written in its folder]}, "stats": {"vertices", "triangles",
     "materials", "seconds"}, "warnings": [...]}. Raises BakeError, with a message for the artist, when
     the model cannot be read or written."""
     started = time.perf_counter()
     report = progress or (lambda fraction, message: None)
-    unknown = set(outputs) - set(FORMATS)
+    unknown = set(outputs) - set(FORMATS if placement is None else FORMATS + PLACED_FORMATS)
     if unknown or not outputs:
         raise ValueError(f"outputs must be some of {FORMATS}, not {sorted(outputs)}")
     src = Path(src)
+    result: dict[str, Any] = {}
+    if "glb" in outputs:
+        report(0.0, "Placing the 3D model…")
+        folder = Path(outputs["glb"])
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            (folder / f"{name}.glb").write_bytes(glb.placed(src.read_bytes(), *placement))
+        except (OSError, ValueError) as exc:
+            raise BakeError(f"The 3D model {src.name} could not be read: {exc}.") from exc
+        result["glb"] = {"files": [f"{name}.glb"]}
+        if set(outputs) == {"glb"}:
+            report(1.0, "Saved.")
+            result["stats"] = {"seconds": round(time.perf_counter() - started, 2)}
+            result["warnings"] = []
+            return result
     report(0.0, "Reading the 3D model…")
     try:
         source = load_source(src)
@@ -230,6 +271,9 @@ def convert(src: str | Path, outputs: Mapping[str, str | Path], *, name: str,
     warnings = list(source.warnings)
     positions = source.vertices.astype(np.float64)
     normals = source.normals.astype(np.float64)
+    if placement is not None:       # the tangents are worked out from these below, so they turn with them
+        positions = positions @ placement[0].T + placement[1]
+        normals = normals @ placement[0].T
     uv = source.uv.astype(np.float64)
     faces = source.faces.astype(np.int64)
     face_materials = source.face_materials()
@@ -240,7 +284,6 @@ def convert(src: str | Path, outputs: Mapping[str, str | Path], *, name: str,
         materials = [_material(spec, material_name, pool, warnings.append)
                      for spec, material_name in zip(source.materials, names)]
     map_files = _map_files(name, materials)
-    result: dict[str, Any] = {}
 
     if "fbx" in outputs:
         report(0.45, "Writing the FBX…")

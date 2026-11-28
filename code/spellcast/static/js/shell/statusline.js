@@ -6,7 +6,7 @@
 import { formatBytes, formatElapsed, h } from '../dom.js';
 import { icon } from '../icons.js';
 import {
-  ACTIVE_JOB, FIRST_START, PROP_ENDED, STAGE_TOOL, TOOL_NAMES, TOOL_ROLES, capital, getProp, jobLoading, jobStopping,
+  ACTIVE_JOB, FIRST_START, PROP_ENDED, STAGE_TOOL, TOOL_NAMES, TOOL_ROLES, capital, downloading, getProp, jobLoading, jobStopping,
   stageNoun, stageTool, store, toolName, toolNoun, toolStatus,
 } from '../store.js';
 import { progressBar, spinner } from '../controls.js';
@@ -152,10 +152,14 @@ export function headline(seen = new Set(), centre = {}) {
     const c = comps[id] || {};
     const pct = typeof c.fraction === 'number' ? ` ${Math.round(c.fraction * 100)}%` : '';
     const what = `Installing ${TOOL_ROLES[id] ? toolNoun(id) : 'the tools'}`;
+    // A step can take minutes with no number moving (pip unpacking PyTorch): its clock ticks, so the line never
+    // looks stuck. The step's own words (before " · what it does right now") name the clock.
+    const clock = `install:${id}:${String(c.step || '').split(' · ')[0]}`;
+    elapsed(clock, seen);
     // Short: the column is narrow. With the download's size the bar says how far it is.
     return {
-      kind: 'install', fraction: c.fraction ?? null,
-      text: c.bytes_total ? `${what} · ${formatBytes(c.bytes_done || 0)} of ${formatBytes(c.bytes_total)}` : `${what}…${pct}`,
+      kind: 'install', fraction: c.fraction ?? null, clock, detail: c.step || c.message || '',
+      text: downloading(c) ? `${what} · ${formatBytes(c.bytes_done || 0)} of ${formatBytes(c.bytes_total)}` : `${what}…${pct}`,
     };
   }
   // A job waits in the queue while the installer is busy with its tool (or in another window): the hub says why.
@@ -209,7 +213,7 @@ export function createStatusLine(handlers) {
     if (el.dataset.kind !== line.kind) lead.replaceChildren(alarm ? icon('alert') : spinner());   // a new spinner would restart
     el.dataset.kind = line.kind;
     text.textContent = line.text;
-    el.title = line.text;
+    el.title = line.detail ? `${line.text}\n${line.detail}` : line.text;   // an install: what its step does now
     bar.hidden = line.kind !== 'busy' && !(line.kind === 'install' && line.fraction != null);
     bar.set(line.fraction);
     details.hidden = !line.tool;

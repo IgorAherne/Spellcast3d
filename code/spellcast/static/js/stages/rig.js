@@ -1,11 +1,13 @@
 // Stage 6, "Export All" (still 'rig' in the code, the project files and the hub; rigging itself is to
 // come): where Projection's "Export all" goes down to. The workbench shows the prop's finished model (the
-// same viewer and navigation as 3D and Projection) and says where the exported props are.
+// same viewer and navigation as 3D and Projection) where it stands in its saved files, with the Move / Rotate handles
+// that put it there (placebar.js), and says where the exported props are.
 
 import { api } from '../api.js';
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
-import { projectId } from '../store.js';
+import { getProp, projectId } from '../store.js';
+import { savePlacement } from '../actions.js';
 import { attempt } from '../ui.js';
 import {
   afterMove, boxFile, boxHeading, discordCorner, donateCorner, emptyState, fadeIn, focusBox, thumbUrl,
@@ -16,6 +18,10 @@ import { omnitextureUsed } from './rules.js';
 const EXPORTED = '“Export all” in Projection saves every finished prop into its own folder in the project’s exports '
   + 'folder, ready to drag into your game engine. Press it again after a change. Rigging (skeletons for '
   + 'characters) is coming later.';
+
+const PLACING = 'A model is made centred on its middle. Move or turn it with the handles on the left of the view, or '
+  + 'stand it on the floor with one press: the grid is the floor of the saved files, its centre their origin. Every '
+  + 'file saved from then on holds the model there (press “Export all” again for the ones saved before).';
 
 /** Opens the project's exports folder in File Explorer again (Export all opened it once; a closed window is no loss). */
 const openExports = () => attempt(() => api('POST', '/api/open-folder', { which: 'exports', project: projectId() }));
@@ -41,10 +47,18 @@ function bestModel(p) {
 }
 
 function buildProp(prop) {
-  const pane = modelPane({ discord: true });
+  const pane = modelPane({
+    discord: true,
+    // Where the prop stands in its saved files, the Move handles up from the start: this is the page for it.
+    placing: {
+      stage: 'rig', start: 'move', get: () => getProp(prop.id)?.placement || null,
+      set: (placement) => savePlacement(prop.id, placement),
+    },
+  });
   const heading = boxHeading();
   const side = h('div', { class: 'sv-side' },
     h('div', { class: 'sv-side-scroll' }, heading,
+      h('p', { class: 'hint sv-place-hint' }, PLACING),
       emptyState('folder', 'Exported props', EXPORTED, exportsButton(),
         h('button', { class: 'btn ghost', onclick: () => ctx?.goto('projection') }, icon('sun'), 'Go to Projection'))));
   const el = h('div', { class: 'sv sv-rig' }, h('div', { class: 'sv-media' }, pane.el), side);

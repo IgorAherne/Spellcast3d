@@ -28,7 +28,7 @@
 	   all of them; RTX 30xx and newer are the fastest.
 	-  NVIDIA driver 570 or newer:   https://www.nvidia.com/drivers
 	-  32 GB of RAM recommended (the 3D step on its own works within 16 GB)
-	-  About 92 GB of free disk space (33 GB more for the optional multi-view models, see 3D below)
+	-  About 92 GB of free disk space (36 GB more for the optional multi-view models, see 3D below)
 	-  Internet for the first start (it downloads about 55 GB - less if you already have
 	   the AI models: see THE MODELS FOLDER below)
 
@@ -38,7 +38,8 @@
 
 	INSTALL
 
-	1. Unzip into a SHORT folder, for example:      C:\spellcast3d
+	1. Unzip into a SHORT place, for example straight into C:\
+	   The zip holds one folder, spellcast3d, so that gives:      C:\spellcast3d
 
 	   Not the Desktop, not Downloads, not 'Program Files'. Long folder paths break some
 	   of the AI tools. Use only English letters and numbers in the folder path, and avoid
@@ -362,8 +363,9 @@
 	             (faster, follows the picture closely) or Hi3D (finer carved detail, slower). Each
 	             prop has its own; a new prop starts with the one you picked last (Pixal3D at first).
 	             The colours come from Pixal3D either way. Hi3D's AI models
-	             (11.4 GB) come with the 3D step's installation; while they are not on this PC the
-	             panel says so and offers "Download (11.4 GB)" - pick Pixal3D meanwhile.
+	             (11.4 GB) are a download of their own, never part of the installation: while
+	             they are not on this PC the panel says so and offers "Download (11.4 GB)" - pick
+	             Pixal3D meanwhile.
 	             While Hi3D is picked (or made the model shown), "Powered by Hi3D 1.0" stands next
 	             to Shape, a link to Hi3D's website: its license (the Hi3D Open License Agreement)
 	             asks for it. The shapes it makes are yours; see 'README - LICENSE.txt'.
@@ -475,8 +477,11 @@
 	             keep the colours the 3D stage gave them.
 	
 	-  Retopo:   each prop gets clean low-poly meshes with UVs, and you pick the one it keeps. At
-	             the top, "Retopologize with" picks how (hover a method for a reminder); every new
-	             prop starts with TriFlow until you pick another one for it:
+	             the top, "Retopologize with" picks how (hover a method for a reminder). A pick is
+	             also your default from then on: the props that have no clean mesh yet take it too,
+	             and every new prop starts with it, in every project (TriFlow until your first
+	             pick; a note at the viewport's bottom left says so each time). A prop you set to
+	             another method by hand keeps it:
 	
 	             Instant Meshes  quads. Runs on the processor. "Shape it by hand in the viewer" opens
 	                             its interactive viewer: change the mesh with the panel on the right,
@@ -538,6 +543,8 @@
 	
 	             "Project textures" bakes every prop once each has a clean mesh picked; until then it
 	             is greyed out and says which props still need a pick or their clean meshes.
+	             Where the prop stands in its saved files: the four buttons on the viewport's left
+	             edge (Move, Rotate, stand it on the floor, back as it was made) - see Export below.
 	
 	-  Projection:  "Bake textures" copies the detailed model's surface - colour, normals
 	             (the small bumps), roughness, metallic, ambient occlusion, glow - onto the
@@ -562,8 +569,20 @@
 	             project's exports folder and open it in File Explorer; "Export all" saves
 	             every finished prop there, each in its own folder. Closed that window? The Export
 	             stage (the last one) has an "Open the exports folder" button.
-	             Saving a prop whose clean mesh TriFlow made reminds you that it is for
-	             non-commercial use only.
+	             "Vertices" is the clean mesh's count, as Retopo shows it; "Split at UV seams" is
+	             how many the saved files hold (a point on a UV seam or a hard edge is stored once
+	             per side, in every file format and game engine).
+
+	-  Export:   the last stage shows each prop's finished model where it stands in its saved
+	             files. A model is made centred on its middle, so a character dropped into a game
+	             engine would sink half into the floor. The grid is the floor of the saved files
+	             and its centre their origin: drag the arrows to move the model (Move) or the
+	             rings to turn it (Rotate), or press "Stand it on the floor" - the origin then sits
+	             under the middle of the model. The fourth button puts it back as it was made. The
+	             same four buttons are on the left edge of Retopo's viewport. Every file saved
+	             from then on (.glb, .fbx, .obj, "Export all") holds the model there, in its
+	             vertices; press "Export all" again for files saved before. Baking and painting
+	             are not affected.
 	
 	The big button only does what each prop still needs: a prop that already has a fresh
 	result is left as it is. In 3D and Projection, the button above it (for example
@@ -673,8 +692,8 @@
 	text-encoder files: models\vae and models\text-encoders (read when the image
 	generator starts).
 
-	Pixal3D (the 3D step) keeps its AI models (about 27 GB, and an 11 GB faster-loading copy
-	of four of them that Spellcast3D makes itself) in:
+	Pixal3D (the 3D step) keeps its AI models (about 27 GB, and 14.4 GB of faster-loading
+	copies - six files - that Spellcast3D makes itself) in:
 
 		models\pixal3d
 
@@ -683,10 +702,11 @@
 	hub, torch) into models\pixal3d before the first start: only what is missing is then
 	downloaded. An older copy of Spellcast3D kept them in code\pixal3d\MODELS; they are
 	moved into models\pixal3d at the first start (on the same drive, nothing is copied).
-	The optional multi-view models (22 GB more, see 3D above, and 11 GB for their copy) go
+	The optional multi-view models (22 GB more, see 3D above, and 14.4 GB for their copies) go
 	there too, once you press "Download (22 GB)" in the 3D stage.
 
-	Hi3D's (11.4 GB, the 3D stage's Shape) go into models\hi3d, with Pixal3D's: one folder each
+	Hi3D's (11.4 GB, the 3D stage's Shape) go into models\hi3d once you press "Download
+	(11.4 GB)" in the 3D stage - the installation leaves that folder empty: one folder each
 	for Hi3Dv1.0, dinov2-large, clip-vit-large-patch14 and trellis2-shape-encoder (see
 	models\README.txt). Those in your HuggingFace download folder (on the same drive) are not
 	downloaded again.

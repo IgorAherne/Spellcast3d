@@ -61,8 +61,9 @@ _MTL_MAP_KEYWORDS = frozenset({"map_kd", "map_ka", "map_ks", "map_ns", "map_d", 
                                "decal", "refl", "map_pr", "map_pm", "map_ps", "map_ke"})
 NO_EXPLORER_ENV = "SPELLCAST_NO_EXPLORER"
 
-# convert(src GLB, {format: cache folder}, file name without extension) -> export_worker.py's result.
-Converter = Callable[[Path, dict[str, Path], str], dict[str, Any]]
+# convert(src GLB, {format: cache folder}, file name without extension, the prop's placement or None) ->
+# export_worker.py's result.
+Converter = Callable[[Path, dict[str, Path], str, "dict[str, Any] | None"], dict[str, Any]]
 # repaint(bake folder, raw RGBA file, width, height, where to keep the bake's own base colour map first or None)
 # -> export_worker.py's result: {"files": [...]}.
 Repainter = Callable[[Path, Path, int, int, Path | None], dict[str, Any]]
@@ -126,13 +127,18 @@ def show_in_explorer(target: Path, select: bool) -> bool:
 
 # ---- the worker ------------------------------------------------------------------------------------
 
-def run_export_worker(src: Path, outputs: dict[str, Path], name: str) -> dict[str, Any]:
+def run_export_worker(src: Path, outputs: dict[str, Path], name: str,
+                      placement: dict[str, Any] | None = None) -> dict[str, Any]:
     """Convert `src` into each of `outputs` ({format: folder}) with launchers/export_worker.py in the imesh
-    venv -> its result. Blocking (run it in a thread). Raises ProjectError with the worker's words."""
+    venv -> its result. With `placement` (the prop's, projects.check_placement) the model is moved and turned by it
+    in every file, and "glb" may be asked for too. Blocking (run it in a thread). Raises ProjectError with the
+    worker's words."""
     first = next(iter(outputs.values()))
     first.parent.mkdir(parents=True, exist_ok=True)
-    request = {"cmd": "convert", "src": str(src), "name": name,
-               "outputs": {fmt: str(folder) for fmt, folder in outputs.items()}}
+    request: dict[str, Any] = {"cmd": "convert", "src": str(src), "name": name,
+                               "outputs": {fmt: str(folder) for fmt, folder in outputs.items()}}
+    if placement is not None:
+        request["placement"] = placement
     return _run_worker(request, first.parent / f"request{os.getpid()}.json", f"Saving {name}",
                        "the program that saves FBX and OBJ files", CONVERT_TIMEOUT)
 
@@ -318,7 +324,7 @@ class Exporter:
                 if baked is not None:
                     self._save_bake(project, prop, baked, stem, EXPORT_FORMATS, saved)
                 elif (low := self.store.result_file(project, prop, "retopo", "obj")) is not None:
-                    self._place(low, saved, f"{stem}_retopo.obj")
+                    self._write(saved, f"{stem}_retopo.obj", lambda tmp: _copy_obj(low, tmp, None, prop.get("placement")))
                 elif omnitexture_used(prop) and (high := self.store.result_file(
                         project, prop, "omnitexture", "glb")) is not None:
                     self._save_model(project, prop, "omnitexture", high, f"{stem}_high", EXPORT_FORMATS, saved)
@@ -337,11 +343,14 @@ class Exporter:
     # ---- the parts ----------------------------------------------------------------------------------
     def _save_model(self, project: str, prop: dict[str, Any], stage: str, glb: Path, name: str,
                     formats: Iterable[str], saved: Saved) -> None:
-        """A GLB as <name>.glb (copied) and/or converted to <name>.fbx / <name>.obj + .mtl + maps."""
+        """A GLB as <name>.glb (copied) and/or converted to <name>.fbx / <name>.obj + .mtl + maps. A prop with a
+        placement (projects.check_placement) is saved where the artist put it: its GLB is made by the worker too,
+        with the placement in its vertices."""
         formats = list(formats)
-        if "glb" in formats:
+        placement = prop.get("placement")
+        if "glb" in formats and placement is None:
             self._place(glb, saved, f"{name}.glb")
-        converted = [fmt for fmt in formats if fmt in CONVERTED]
+        converted = [fmt for fmt in formats if fmt in CONVERTED or (fmt == "glb" and placement is not None)]
         if converted:
             for folder, files in self._converted(project, prop, stage, glb, name, converted, saved).values():
                 for file in files:
@@ -349,26 +358,30 @@ class Exporter:
 
     def _save_bake(self, project: str, prop: dict[str, Any], baked: dict[str, Any], stem: str,
                    formats: Iterable[str], saved: Saved) -> None:
-        """The bake's own files, flat in the prop's folder; what it was baked without is converted from its GLB."""
+        """The bake's own files, flat in the prop's folder; what it was baked without is converted from its GLB. A
+        prop with a placement: the GLB and the FBX made from the bake's GLB with the placement in them, the bake's
+        own OBJ with its points moved (its maps and MTL are the bake's own either way)."""
         formats = list(formats)
-        if "glb" in formats:
-            self._place(baked["glb"], saved, f"{stem}.glb")
-        if "fbx" in formats and baked["fbx"] is not None:
-            self._place(baked["fbx"], saved, f"{stem}.fbx")
+        placement = prop.get("placement")
+        own = [fmt for fmt in ("glb", "fbx") if fmt in formats and baked[fmt] is not None and placement is None]
+        for fmt in own:
+            self._place(baked[fmt], saved, f"{stem}.{fmt}")
         if "obj" in formats and baked["obj"] is not None:
-            self._place_baked_obj(baked, stem, saved)
-        missing = [fmt for fmt in CONVERTED if fmt in formats and baked[fmt] is None]
-        if missing:
-            self._save_model(project, prop, "projection", baked["glb"], stem, missing, saved)
+            self._place_baked_obj(baked, stem, saved, placement)
+        made = [fmt for fmt in formats if fmt not in own and (fmt != "obj" or baked["obj"] is None)]
+        if made:
+            self._save_model(project, prop, "projection", baked["glb"], stem, made, saved)
 
-    def _place_baked_obj(self, baked: dict[str, Any], stem: str, saved: Saved) -> None:
+    def _place_baked_obj(self, baked: dict[str, Any], stem: str, saved: Saved,
+                         placement: dict[str, Any] | None = None) -> None:
         """The bake's OBJ, its MTL and every baked map, flat: <stem>.obj, <stem>.mtl, <stem>_<map>.png. The
         MTL's map paths (../maps/basecolor.png) and the OBJ's mtllib line name the new files."""
         obj: Path = baked["obj"]
         mtl = obj.with_suffix(".mtl")
         maps = [(path, f"{stem}_{map_id}{path.suffix.lower()}") for map_id, path in baked["maps"]]
         has_mtl = mtl.is_file()
-        self._write(saved, f"{stem}.obj", lambda tmp: _copy_obj(obj, tmp, f"{stem}.mtl" if has_mtl else None))
+        self._write(saved, f"{stem}.obj",
+                    lambda tmp: _copy_obj(obj, tmp, f"{stem}.mtl" if has_mtl else None, placement))
         if has_mtl:
             flat = {os.path.normcase(str(path.resolve())): name for path, name in maps}
             text = _flat_mtl(mtl.read_text(encoding="utf-8", errors="replace"), mtl.parent, flat)
@@ -378,12 +391,16 @@ class Exporter:
 
     def _converted(self, project: str, prop: dict[str, Any], stage: str, glb: Path, name: str,
                    formats: list[str], saved: Saved) -> dict[str, tuple[Path, list[str]]]:
-        """{format: (cache folder, its files)}: made by the worker unless the cache still fits the GLB."""
+        """{format: (cache folder, its files)}: made by the worker unless the cache still fits the GLB (and the
+        prop's placement)."""
         prop_dir = self.store.prop_dir(project, prop["id"])
         root = prop_dir / CACHE_FOLDER / stage
         stat = glb.stat()
+        placement = prop.get("placement")
         source = {"glb": glb.resolve().relative_to(prop_dir.resolve()).as_posix(), "size": stat.st_size,
                   "mtime_ns": stat.st_mtime_ns, "name": name, "version": CACHE_VERSION}
+        if placement is not None:
+            source["placement"] = placement
         ready: dict[str, tuple[Path, list[str]]] = {}
         for fmt in formats:
             files = _cached(root / fmt, source)
@@ -394,7 +411,7 @@ class Exporter:
             for fmt in missing:
                 self.can_convert(fmt)
             log.info("Converting %s to %s", glb, ", ".join(missing))
-            result = self.convert(glb, {fmt: root / fmt for fmt in missing}, name)
+            result = self.convert(glb, {fmt: root / fmt for fmt in missing}, name, placement)
             for fmt in missing:
                 files = (result.get(fmt) or {}).get("files")
                 if not isinstance(files, list) or not files or not all(
@@ -464,14 +481,48 @@ def _flat_mtl(text: str, folder: Path, flat: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _copy_obj(src: Path, dst: Path, mtllib: str | None) -> None:
-    """Copy an OBJ with its mtllib line (at the top, before any geometry) naming `mtllib` instead."""
+def _copy_obj(src: Path, dst: Path, mtllib: str | None, placement: dict[str, Any] | None = None) -> None:
+    """Copy an OBJ with its mtllib line (at the top, before any geometry) naming `mtllib` instead (None: as it is).
+    With `placement`, its points and normals are moved and turned by it; its faces, UVs and groups stay as they
+    are (a clean mesh keeps its quads)."""
+    place = _obj_placer(placement) if placement is not None else None
     with open(src, "rb") as reader, open(dst, "wb") as writer:
         for line in reader:
             if line.startswith(b"mtllib") and mtllib is not None:
                 writer.write(f"mtllib {mtllib}\n".encode("utf-8"))
                 break
-            writer.write(line)
             if line[:2] in (b"v ", b"vt", b"vn", b"f "):
+                writer.write(place(line) if place else line)
                 break
-        shutil.copyfileobj(reader, writer, 1 << 20)
+            writer.write(line)
+        if place is None:
+            shutil.copyfileobj(reader, writer, 1 << 20)
+        else:
+            writer.writelines(place(line) for line in reader)
+
+
+def _obj_placer(placement: dict[str, Any]) -> Callable[[bytes], bytes]:
+    """line -> the OBJ line with `placement` done to it: a "v" line's point turned and moved (what follows its
+    three numbers - a weight, a vertex colour - kept), a "vn" line's normal turned, any other line as it is."""
+    x, y, z, w = placement["turn"]
+    rows = ((1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
+            (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
+            (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)))
+    moves = {b"v": placement["move"], b"vn": (0.0, 0.0, 0.0)}
+
+    def place(line: bytes) -> bytes:
+        if line[:1] != b"v":
+            return line
+        parts = line.split()
+        move = moves.get(parts[0]) if parts else None
+        if move is None:
+            return line
+        try:
+            a, b, c = float(parts[1]), float(parts[2]), float(parts[3])
+        except (IndexError, ValueError):
+            return line
+        point = [f"{row[0] * a + row[1] * b + row[2] * c + shift:.9g}".encode("ascii") for row, shift in zip(rows, move)]
+        ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
+        return b" ".join([parts[0], *point, *parts[4:]]) + ending
+
+    return place

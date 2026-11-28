@@ -233,6 +233,15 @@
 .sv-viewer-tools .seg { background: rgba(15, 18, 23, 0.72); backdrop-filter: blur(6px); }
 .sv-viewer-tools .seg .seg-btn { white-space: nowrap; }   /* a short neighbour must not fold a name in two */
 .sv-stagebox:has(.sv-viewer-tools .seg) .sv-badges { max-width: calc(100% - 200px); }
+/* The Move / Rotate bar of a model that can be placed in its saved files (placebar.js): down the view's left edge,
+   clear of the badges above it and the corner buttons below. */
+.sv-place {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 3;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.sv-place .icon-btn[aria-pressed="true"] { background: var(--accent-deep); border-color: var(--accent); color: #fff; }
+.sv-place-gap { height: 6px; }
+.sv-place-hint { margin: 10px 0 0; }
 .sv-badges { position: absolute; top: 10px; left: 10px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 64px); }
 /* The number on a stage's own button in the viewport's corner ("Retopo All", "Omni-Texture the chosen"): how many
    props it works on - white on the button's violet. */

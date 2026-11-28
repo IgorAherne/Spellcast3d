@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -569,6 +570,45 @@ CALIBRATION_STEPS_ALONE = {INT8_TILES_CALIBRATION_WORK: "triton", HI3D_CALIBRATI
 _CALIBRATION_LINE = re.compile(r"^\[CALIBRATE\]\s+(?:(\d{1,3})%\s+)?(.*)$")
 
 
+# The hub that runs this installer in the background stops its own GPU tools once it reads the calibration's step
+# (procman.free_card_for_calibration) and says so in paths.CALIBRATION_CARD: an image generator left loaded is idle,
+# so the calibration's own look at the card's load would pass with most of an 8 GB card's memory taken.
+HUB_ANSWER_WAIT = 20.0          # seconds for the hub's first word; none: no hub is listening, the calibration goes on
+HUB_TOOLS_WAIT = 15 * 60.0      # ... and for its tools to be gone (one at work finishes its job first)
+
+
+def _wait_for_the_hubs_tools(ctx: Ctx, answer_wait: float = HUB_ANSWER_WAIT, tools_wait: float = HUB_TOOLS_WAIT,
+                             card_file: Path | None = None, poll: float = 0.5) -> bool:
+    """Wait until the hub says none of its tools holds the graphics card -> whether it said so. False when no hub
+    answered within `answer_wait`, or its tools were still there after `tools_wait`: the calibration then runs
+    all the same (it waits for a quiet card itself, and marks a run beside a busy one as not final)."""
+    card_file = card_file or paths.CALIBRATION_CARD
+    began = time.monotonic()
+    said = ""
+    while True:
+        try:
+            word = json.loads(card_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            word = None                 # not written yet, or being replaced
+        waited = time.monotonic() - began
+        if isinstance(word, dict):
+            if word.get("free") is True:
+                return True
+            names = ", ".join(str(name) for name in word.get("waiting_for") or []) or "Spellcast3D's tools"
+            if names != said:
+                said = names
+                ctx.progress.detail(f"waiting for {names} to finish and close")
+                ctx.out.line(f"Waiting for {names} to finish and close, so that the card is measured with nothing "
+                             f"else on it.")
+            if waited >= tools_wait:
+                ctx.out.line(f"{names} still held the graphics card after {tools_wait / 60:.0f} minutes: measuring "
+                             f"beside it.")
+                return False
+        elif waited >= answer_wait:
+            return False
+        time.sleep(poll)
+
+
 def _calibration_line(ctx: Ctx, text: str) -> None:
     m = _CALIBRATION_LINE.match(text.strip())
     if m is None:
@@ -1033,9 +1073,13 @@ class Pixal3D(Component):
             _note_retries(retried)
         elif not only and not ctx.dry_run:
             _forget_retries()               # a whole calibration: its own steps cut short get their own retries
+        if not ctx.dry_run:
+            paths.CALIBRATION_CARD.unlink(missing_ok=True)      # the hub's word of an earlier calibration
         ctx.step(progress.CALIBRATING_STEP, until=until)
         ctx.out.line("Pixal3D now measures your graphics card once, so that it runs as fast as it can on it. Please "
                      "keep heavy programs (Blender, games, videos, Photoshop) closed until it is done.")
+        if not ctx.dry_run and ctx.progress.path is not None:
+            _wait_for_the_hubs_tools(ctx)
         try:
             ctx.run(argv, cwd=paths.PIXAL3D_DIR, env=ctx.env(self.id, pixal3d_calibration_env()),
                     fail="the calibration did not finish", on_line=lambda text: _calibration_line(ctx, text))

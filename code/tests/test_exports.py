@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from spellcast import exports, paths
+from spellcast import exports, paths, projects
 from spellcast.projects import ProjectError, ProjectStore
 from test_projection_hub import FakeConverter, tiny_png
 
@@ -213,6 +213,121 @@ def test_props_of_the_same_name_get_a_folder_each(tmp_path: Path) -> None:
     assert one.answer(False) == {"folder": "exports\\Demo\\barrel_2", "folder_path": str(folder / "barrel_2"),
                                  "files": ["barrel_2_high.glb"], "shown": "barrel_2_high.glb", "opened": False}
     assert len(list((folder / "barrel_2").iterdir())) == 5
+
+
+# ---- a prop's placement: where its model stands in the saved files -----------------------------------------
+
+QUARTER_TURN = [0.0, 0.0, 0.70710678, 0.70710678]       # a quarter turn about Z: +X goes to +Y, +Y to -X
+
+
+def test_a_placement_is_checked_and_stored_as_a_unit_quaternion() -> None:
+    assert projects.check_placement(None) is None
+    assert projects.check_placement({"move": [0, 0, 0], "turn": [0, 0, 0, 2]}) is None          # it moves nothing
+    assert projects.check_placement({"move": [0, 0, 0], "turn": [0, 0, 0, -1]}) is None
+    assert projects.check_placement({"move": [0.5, 0, 0], "turn": [0, 0, 0, 1]}) == {
+        "move": [0.5, 0.0, 0.0], "turn": [0.0, 0.0, 0.0, 1.0]}
+    stored = projects.check_placement({"move": [0, 1, 0], "turn": [0, 0, -2, -2]})
+    assert stored == {"move": [0.0, 1.0, 0.0], "turn": [0.0, 0.0, 0.707106781, 0.707106781]}   # unit length, w not negative
+    for bad in ("here", {"move": [0, 0, 0]}, {"move": [0, 0], "turn": [0, 0, 0, 1]}, {"move": [0, 0, 0], "turn": [0, 0, 0, 0]},
+                {"move": [0, 0, float("nan")], "turn": [0, 0, 0, 1]}, {"move": [0, 1e9, 0], "turn": [0, 0, 0, 1]},
+                {"move": [0, 0, True], "turn": [0, 0, 0, 1]}, {"move": [0, 0, 0], "turn": [0, 0, 0, 1], "scale": 2}):
+        with pytest.raises(ProjectError):
+            projects.check_placement(bad)
+
+
+def test_an_obj_is_copied_with_its_points_moved_and_turned(tmp_path: Path) -> None:
+    src = tmp_path / "low.obj"
+    src.write_bytes(b"# clean mesh\r\nmtllib low.mtl\r\nv 1 0 0\r\nv 0 1 0 0.5 0.5 0.5\nvt 0.25 0.75\nvn 1 0 0\n"
+                    b"vp 1 2 3\nv broken\nf 1/1/1 2/1/1 3/1/1 4/1/1\n")
+    exports._copy_obj(src, tmp_path / "placed.obj", "Barrel.mtl", {"move": [0.5, 2.0, -1.0], "turn": QUARTER_TURN})
+    lines = (tmp_path / "placed.obj").read_bytes().split(b"\n")
+    assert lines[:2] == [b"# clean mesh\r", b"mtllib Barrel.mtl"]
+    assert [float(n) for n in lines[2].split()[1:]] == pytest.approx([0.5, 3.0, -1.0], abs=1e-7)     # (1,0,0) -> (0,1,0) + move
+    assert lines[2].endswith(b"\r")                                                                    # its own line ending
+    point = lines[3].split()
+    assert [float(n) for n in point[1:4]] == pytest.approx([-0.5, 2.0, -1.0], abs=1e-7) and point[4:] == [b"0.5"] * 3
+    assert [float(n) for n in lines[5].split()[1:]] == pytest.approx([0.0, 1.0, 0.0], abs=1e-7)      # a normal turns, never moves
+    # UVs, parameter points, a line that is no point and the faces (a quad stays a quad) are as they were.
+    assert lines[4] == b"vt 0.25 0.75" and lines[6:] == [b"vp 1 2 3", b"v broken", b"f 1/1/1 2/1/1 3/1/1 4/1/1", b""]
+    exports._copy_obj(src, tmp_path / "plain.obj", None)
+    assert (tmp_path / "plain.obj").read_bytes() == src.read_bytes()
+
+
+def test_a_placed_prop_is_saved_where_the_artist_put_it(tmp_path: Path) -> None:
+    """Every file of a placed prop holds the placement: its GLB and FBX are made by the worker with it, an OBJ of its
+    own (the clean mesh, a bake's) is copied with its points moved. Made again only when the placement changes."""
+    store = ProjectStore(tmp_path / "projects")
+    store.create_project("Demo")
+    high, low = (store.add_prop("Demo", name)["id"] for name in ("Statue", "Crate"))
+    for pid in (high, low):
+        glb = store.prop_dir("Demo", pid) / "mesh" / "mesh.glb"
+        glb.parent.mkdir(parents=True)
+        glb.write_bytes(b"glTF-high")
+        store.apply_stage_patch("Demo", pid, "mesh", {"glb": "mesh/mesh.glb"})
+    obj = store.prop_dir("Demo", low) / "retopo" / "lato2.obj"
+    obj.parent.mkdir(parents=True)
+    obj.write_text("v 1 0 0\nf 1 1 1\n", encoding="utf-8")
+    store.apply_stage_patch("Demo", low, "retopo", {"obj": "retopo/lato2.obj", "method": "lato2", "source": "mesh/mesh.glb"})
+    converter = FakeConverter()
+    exporter = exports.Exporter(store, converter, lambda fmt: None)
+    folder = tmp_path / "exports" / "Demo"
+
+    exporter.save_prop("Demo", high, "mesh", "glb")
+    assert converter.calls == [] and (folder / "Statue" / "Statue_high.glb").read_bytes() == b"glTF-high"   # as made: copied
+
+    placement = {"move": [0.0, 0.5, 0.0], "turn": QUARTER_TURN}
+    stored = store.patch_prop("Demo", high, {"placement": placement})["placement"]
+    assert stored == {"move": [0.0, 0.5, 0.0], "turn": [0.0, 0.0, 0.707106781, 0.707106781]}
+    store.patch_prop("Demo", low, {"placement": placement})
+    exporter.save_prop("Demo", high, "mesh", "glb")
+    exporter.save_prop("Demo", high, "mesh", "fbx")
+    glb = store.prop_dir("Demo", high) / "mesh" / "mesh.glb"
+    assert converter.calls == [(glb, ["glb"], "Statue_high"), (glb, ["fbx"], "Statue_high")]
+    assert converter.placements == [stored, stored]
+    assert (folder / "Statue" / "Statue_high.glb").read_bytes() == b"placed glTF-high"
+    exporter.save_prop("Demo", high, "mesh", "glb")
+    assert len(converter.calls) == 2                                    # kept while the placement stands
+    store.patch_prop("Demo", high, {"placement": {"move": [0, 0.75, 0], "turn": [0, 0, 0, 1]}})
+    exporter.save_prop("Demo", high, "mesh", "glb")
+    assert len(converter.calls) == 3 and converter.placements[-1]["move"] == [0.0, 0.75, 0.0]     # moved: made again
+
+    # Export all: the clean mesh alone is copied with its points placed; the statue's three files are the worker's.
+    saved = exporter.save_all("Demo")
+    assert saved.warnings == []
+    point = (folder / "Crate" / "Crate_retopo.obj").read_text(encoding="utf-8").splitlines()[0].split()
+    assert [float(n) for n in point[1:]] == pytest.approx([0.0, 1.5, 0.0], abs=1e-6)
+    assert converter.calls[-1] == (glb, ["fbx", "obj"], "Statue_high")   # its GLB is in the cache already
+
+    store.patch_prop("Demo", high, {"placement": None})                 # back as made: the model's own file again
+    assert "placement" in store.get_prop("Demo", high) and store.get_prop("Demo", high)["placement"] is None
+    exporter.save_prop("Demo", high, "mesh", "glb")
+    assert (folder / "Statue" / "Statue_high.glb").read_bytes() == b"glTF-high"
+    with pytest.raises(ProjectError):
+        store.patch_prop("Demo", high, {"placement": {"move": "up"}})
+
+
+@pytest.mark.skipif(not paths.venv_python(paths.IMESH).is_file(), reason="the Instant Meshes venv is not installed")
+def test_the_real_worker_places_a_model_in_every_format(tmp_path: Path) -> None:
+    """The worker moves the vertices themselves: the GLB's positions (and their min / max), the FBX and the OBJ hold
+    R p + t - the triangle (0,0,0) (1,0,0) (0,1,0) a quarter turn about Z, then up by 2."""
+    src = tmp_path / "prop" / "mesh" / "mesh.glb"
+    src.parent.mkdir(parents=True)
+    _triangle_glb(src)
+    cache = tmp_path / "prop" / "export_cache" / "mesh"
+    placement = {"move": [0.5, 2.0, 0.0], "turn": QUARTER_TURN}
+    result = exports.run_export_worker(src, {fmt: cache / fmt for fmt in ("glb", "fbx", "obj")}, "Tri_high", placement)
+    assert result["glb"]["files"] == ["Tri_high.glb"] and result["fbx"]["files"] == ["Tri_high.fbx"]
+    gltf, binary = _glb_chunks((cache / "glb" / "Tri_high.glb").read_bytes())
+    expected = [(0.5, 2.0, 0.0), (0.5, 3.0, 0.0), (-0.5, 2.0, 0.0)]
+    assert list(struct.iter_unpack("<3f", binary[:36])) == [pytest.approx(p, abs=1e-6) for p in expected]
+    accessor = gltf["accessors"][0]
+    assert accessor["min"] == pytest.approx([-0.5, 2.0, 0.0], abs=1e-6) and accessor["max"] == pytest.approx([0.5, 3.0, 0.0], abs=1e-6)
+    assert "matrix" not in json.dumps(gltf["nodes"]) and binary[36:48] == struct.pack("<3I", 0, 1, 2)   # in the vertices
+    points = [[float(n) for n in line.split()[1:]] for line in
+              (cache / "obj" / "Tri_high.obj").read_text(encoding="utf-8").splitlines() if line.startswith("v ")]
+    assert sorted(map(tuple, points)) == [pytest.approx(p, abs=1e-6) for p in sorted(expected)]
+    with pytest.raises(ProjectError):       # a GLB of the model as it is has nothing to make: it is the model's file
+        exports.run_export_worker(src, {"glb": cache / "glb2"}, "Tri_high")
 
 
 def test_images_save_puts_the_viewports_picture_into_the_props_folder(tmp_path: Path) -> None:

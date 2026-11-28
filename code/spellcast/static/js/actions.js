@@ -285,6 +285,23 @@ export function queueSettings(propId, stage, patch) {
   saveTimer = setTimeout(flushSettings, 500);
 }
 
+let placing = Promise.resolve();   // the placements on their way to the hub, one after the other
+
+/**
+ * Where the prop's model stands in its saved files (the Move / Rotate handles of Retopo and Export; null: as it was
+ * made): kept on the prop at once and sent to the hub, which saves every file with it from then on.
+ */
+export function savePlacement(propId, placement) {
+  const prop = getProp(propId);
+  if (!prop) return placing;
+  prop.placement = placement;
+  const project = projectId();
+  placing = placing.then(() => api('PATCH', propApi(project, propId), { placement })).catch((e) => {
+    toast(`Where the model stands could not be saved: ${e.message || e}`, 'error');
+  });
+  return placing;
+}
+
 /**
  * Records the views sliced from a prop's pictures ([{view, src, rect}], see rules.VIEW_ORDER) locally
  * right away, so the page shows them, and saves them to the hub shortly after.

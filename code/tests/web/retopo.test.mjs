@@ -142,7 +142,7 @@ const shownWith = [];
 const showModel = viewer.show.bind(viewer);
 viewer.show = (url, kind, opts = {}) => {
   shownWith.push({ url, keepView: !!opts.keepView });
-  return showModel(url);
+  return showModel(url, kind, opts);
 };
 
 const STATIC = new URL('../../spellcast/static/js/', import.meta.url);
@@ -155,7 +155,9 @@ const {
   RETOPO_KEEP_VERTICES, RETOPO_SIZES, RETOPO_VERTICES, retopoFresh, retopoSizeName, retopoSwitched, retopoVertices,
 } = await load('stages/rules.js');
 const { licenseOf, nonCommercial } = await load('licenses.js');
-const { default: RETOPO, settingsChanged, waitingHint } = await load('stages/retopo.js');
+const { default: RETOPO, methodFollowers, pickMethod, settingsChanged, waitingHint } = await load('stages/retopo.js');
+const { default: EXPORT } = await load('stages/rig.js');
+const { placementOrNone } = await load('stages/placebar.js');
 const { toastSaved } = await load('stages/preview.js');
 const { TOOLS: DIAGNOSTICS } = await load('shell/settings.js');
 const { NAMES: INSTALL_NAMES, ORDER: INSTALL_ORDER } = await load('shell/install.js');
@@ -604,6 +606,108 @@ test('each method keeps its clean meshes while another is picked: back at its me
     variants: [{ size: 2, obj: 'retopo/retopo.obj', stats: null }] };
   assert.equal(retopoSwitched(old, 'imesh'), old);
   assert.equal(retopoSwitched(old, 'triflow'), old, 'it does not say how many vertices: it stays');
+});
+
+test('a method picked on one prop is the default from then on: the props without a clean mesh take it, the hub keeps it for new props, a toast says so', async () => {
+  const toasts = new FakeEl('div');
+  const byId = document.getElementById;
+  document.getElementById = (id) => (id === 'toasts' ? toasts : byId(id));
+  try {
+    const done = made(prop('done', 'triflow'), 'triflow', { 2: 2000 }, { picked: 2 });
+    const { host } = await mount([prop('a', 'triflow'), prop('b', 'triflow'), prop('c'), done, { ...prop('draft', 'triflow'), draft: true }]);
+    assert.deepEqual(methodFollowers('a', 'lato2').map((p) => p.id), ['b', 'c', 'draft'], 'not the one that has its clean meshes');
+    const button = (label) => host.all((e) => e.tagName === 'BUTTON' && e.textContent.startsWith(label))[0];
+    button('LATO.2').click();
+    await flushSettings();
+    await settle();
+    const method = (id) => store.project.props.find((p) => p.id === id).retopo.settings.method;
+    assert.deepEqual(['a', 'b', 'c', 'done', 'draft'].map(method), ['lato2', 'lato2', 'lato2', 'triflow', 'lato2']);
+    assert.deepEqual(store.project.ui.retopo_picked, { a: true });
+    const sent = hub.calls.map((call, i) => [call, hub.bodies[i]]);
+    assert.deepEqual(sent.find(([call]) => call === 'PATCH /api/settings')[1], { retopo: { default_method: 'lato2' } });
+    assert.deepEqual(sent.filter(([call]) => /\/props\/[^/]+$/.test(call)).map(([call, body]) => [call.split('/').pop(), body.retopo.settings.method]).sort(),
+      [['a', 'lato2'], ['b', 'lato2'], ['c', 'lato2'], ['draft', 'lato2']]);
+    assert.equal(toasts.lastChild.byClass('toast-text')[0].textContent,
+      'LATO.2 is now the default for all the props: new props start with it, and 2 props here without a clean mesh were '
+      + 'switched to it. The props that have their clean meshes, or a method you picked for them, keep theirs.');
+    // A prop set apart by hand stays apart: 'a' was picked, so a pick on 'b' leaves it.
+    pickMethod('b', 'imesh');
+    assert.deepEqual(['a', 'b', 'c', 'done'].map(method), ['lato2', 'imesh', 'imesh', 'triflow']);
+    // The same method again changes nothing and says nothing.
+    const before = toasts.children.length;
+    pickMethod('b', 'imesh');
+    await settle();
+    assert.equal(toasts.children.length, before + 1, 'only the pick before it spoke');
+  } finally {
+    document.getElementById = byId;
+  }
+});
+
+test('the Move / Rotate bar: where the prop stands in its saved files - off at first on Retopo, a drag is saved, Back takes it away', async () => {
+  const placed = { move: [0, 0.5, 0], turn: [0, 0, 0, 1] };
+  const a = made(prop('a', 'triflow', { placement: placed }), 'triflow', { 2: 2000 }, { picked: 2 });
+  const { host } = await mount([a]);
+  const bar = host.byClass('sv-place')[0];
+  const button = (label) => bar.all((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === label)[0];
+  assert.equal(bar.hidden, false, 'with the model on screen');
+  assert.deepEqual(viewer.placements.at(-1), placed, 'the model is shown where the prop stands');
+  assert.equal(viewer.gizmo, null, 'no handles until asked: the topology is what is looked at here');
+  assert.equal(button('Back as it was made').disabled, false);
+  button('Move').click();
+  await settle();
+  assert.deepEqual([viewer.gizmo, button('Move').getAttribute('aria-pressed'), button('Rotate').getAttribute('aria-pressed')],
+    ['move', 'true', 'false']);
+  hub.calls = [];
+  hub.bodies = [];
+  const turned = { move: [0.1, 0.5, 0], turn: [0, 0.7071068, 0, 0.7071068] };
+  viewer.drag(turned);
+  await settle();
+  const saves = () => hub.bodies.filter((body, i) => hub.calls[i] === 'PATCH /api/projects/Props/props/a');
+  assert.deepEqual(saves(), [{ placement: turned }]);
+  assert.deepEqual(store.project.props[0].placement, turned);
+  button('Rotate').click();
+  await settle();
+  assert.equal(viewer.gizmo, 'turn');
+  button('Rotate').click();
+  await settle();
+  assert.equal(viewer.gizmo, null, 'pressed again: the handles go');
+  // On the floor puts the handles up (the floor shows with them) and saves where the model then stands.
+  button('Stand it on the floor').click();
+  await settle();
+  assert.equal(viewer.gizmo, 'move');
+  assert.deepEqual(saves().at(-1), { placement: { move: [0, 0.5, 0], turn: turned.turn } });
+  button('Back as it was made').click();
+  await settle();
+  assert.deepEqual([saves().at(-1), store.project.props[0].placement, button('Back as it was made').disabled],
+    [{ placement: null }, null, true], 'a placement that moves nothing is none');
+  assert.equal(placementOrNone({ move: [0, 0, 0], turn: [0, 0, 0, -1] }), null);
+  // The handles stay as the artist left them on this page, for the next prop too: taken away here.
+  button('Move').click();
+  await settle();
+  assert.equal(viewer.gizmo, null);
+});
+
+test('the Export page shows the finished model where it stands in its saved files, the Move handles up from the start', async () => {
+  const placed = { move: [0, 0.47, 0], turn: [0, 0, 0, 1] };
+  const a = made(prop('a', 'triflow', { placement: placed, projection: { glb: 'projection/bake_001/projection.glb' } }),
+    'triflow', { 2: 2000 }, { picked: 2 });
+  RETOPO.unmount();
+  reset([a], { tools: tools(), install: { components: {} } });
+  const host = new FakeEl('div');
+  const ctx = { selectedId: 'a', stageId: 'rig', project: store.project, select() {}, goto() {}, moving: false, settled: Promise.resolve() };
+  EXPORT.mount(host, ctx);
+  await settle();
+  try {
+    assert.match(viewer.shown.at(-1), /projection\.glb/);
+    assert.deepEqual([viewer.placements.at(-1), viewer.gizmo], [placed, 'move']);
+    assert.match(host.byClass('sv-place-hint')[0].textContent, /the grid is the floor of the saved files/);
+    // Another page's model is shown as it was made, without handles.
+    EXPORT.unmount();
+    await mount([prop('b', 'triflow', { placement: placed })]);
+    assert.deepEqual([viewer.placements.at(-1), viewer.gizmo], [placed, null]);
+  } finally {
+    EXPORT.unmount();
+  }
 });
 
 // ---- TriFlow's terms, the tool lists ---------------------------------------------------------------------------

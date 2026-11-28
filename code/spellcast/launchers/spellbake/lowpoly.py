@@ -702,6 +702,9 @@ def prepare(
         polygons=low.polygons,
         triangles=len(mesh.faces),
         flipped_triangles=flipped,
+        # The clean mesh's own points (what Retopo counts), and the vertices the files hold: a point on a UV seam
+        # or a hard edge is one vertex per side there.
+        vertices=int(len(np.unique(low.tri_pos))),
         render_vertices=len(mesh.positions),
         min_chart_gap_px=min_chart_gap(uvs, tri_uv, resolution),
     )

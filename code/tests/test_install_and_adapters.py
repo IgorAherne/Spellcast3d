@@ -15,6 +15,7 @@ import msvcrt
 import os
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -1564,6 +1565,55 @@ def test_the_calibration_lines_drive_the_step_text_and_bar() -> None:
     components._calibration_line(ctx, "[SPARSE] Conv backend: flex_gemm")        # not the calibration's own line
     assert entry["step"].endswith("shape 3 of 9")
     assert entry["step"].startswith(progress.CALIBRATING_STEP)                   # procman.calibrating() still sees it
+
+
+def test_the_calibration_waits_for_the_hubs_word_that_its_tools_left_the_card(tmp_path: Path) -> None:
+    """install/components._wait_for_the_hubs_tools: the installer a hub runs waits until the hub's card file says free
+    (the hub stops its idle GPU tools meanwhile: procman.free_card_for_calibration), saying whom it waits for; with
+    no word at all (no hub listening) or tools that never go, it goes on after its waits."""
+    tracker = progress.Progress(None)
+    tracker.begin({"pixal3d": (progress.PENDING, "")})
+    tracker.start("pixal3d")
+    tracker.step(progress.CALIBRATING_STEP, until=1.0)
+    ctx = Ctx(out=Output(transient=False), dry_run=False, base_python=Path(sys.executable), progress=tracker)
+    card = tmp_path / "calibration-card.json"
+    wait = lambda **limits: components._wait_for_the_hubs_tools(                                 # noqa: E731
+        ctx, card_file=card, poll=0.02, **{"answer_wait": 0.2, "tools_wait": 0.4, **limits})
+
+    began = time.monotonic()
+    assert wait() is False and 0.2 <= time.monotonic() - began < 2.0       # nobody answered: on it goes
+    card.write_text(json.dumps({"free": True, "waiting_for": []}), encoding="utf-8")
+    assert wait() is True
+    card.write_text(json.dumps({"free": False, "waiting_for": ["Qwen-Image 2.1"]}), encoding="utf-8")
+    threading.Timer(0.25, lambda: card.write_text(json.dumps({"free": True, "waiting_for": []}), encoding="utf-8")).start()
+    assert wait(tools_wait=10.0) is True
+    step = tracker._data["components"]["pixal3d"]["step"]
+    assert step == f"{progress.CALIBRATING_STEP} · waiting for Qwen-Image 2.1 to finish and close"
+    card.write_text(json.dumps({"free": False, "waiting_for": ["Qwen-Image 2.1"]}), encoding="utf-8")
+    began = time.monotonic()
+    assert wait() is False and 0.4 <= time.monotonic() - began < 3.0       # still there: measured beside it
+    card.write_text("{half", encoding="utf-8")                              # being replaced: read as no word yet
+    assert wait() is False
+
+
+def test_a_download_that_is_through_no_longer_shows_its_size() -> None:
+    """Progress.note: once pip goes on after a download (it unpacks for minutes), the entry's bytes are cleared -
+    "583 KB of 583 KB" standing there read as stuck. A download under way, or a step's own measure, keeps them."""
+    tracker = progress.Progress(None)
+    tracker.begin({"lato2": (progress.PENDING, "")})
+    tracker.start("lato2")
+    tracker.step("Installing its Python packages", until=0.5)
+    entry = tracker._data["components"]["lato2"]
+    tracker.download(300, 583)
+    tracker.note("Downloading triflow.whl")
+    assert (entry["bytes_done"], entry["bytes_total"]) == (300, 583)
+    tracker.download(583, 583)
+    tracker.note("Installing collected packages: torch")
+    assert (entry["bytes_done"], entry["bytes_total"], entry["message"]) == (None, None, "Installing collected packages: torch")
+    tracker.step("Downloading its AI models", until=1.0, measure=lambda: (10, 10))
+    tracker.download(10, 10)
+    tracker.note("still linking")
+    assert (entry["bytes_done"], entry["bytes_total"]) == (10, 10)          # a folder measured every second: kept
 
 
 def test_pips_already_satisfied_lines_stay_off_the_console(capsys: pytest.CaptureFixture[str]) -> None:

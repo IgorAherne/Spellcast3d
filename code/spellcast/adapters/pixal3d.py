@@ -18,8 +18,9 @@ default; the staged engine makes it within the card's memory). Those models are 
 
 Each prop's shape is made by the geometry its settings pick (projects.py mesh.settings.geometry, sent as "geometry"):
 Hi3D v1.0, which refines Pixal3D's coarse shape in the same launcher, or Pixal3D's own networks; the texture is
-Pixal3D's either way, and mesh.geometry records which one made the model. Hi3D's networks come with Pixal3D's install
-(install/components.py); a prop set to Hi3D while they are not on this PC fails with the hub's words (HI3D_MISSING).
+Pixal3D's either way, and mesh.geometry records which one made the model. Hi3D's packages come with Pixal3D's install
+(install/components.py), its networks only from the 3D panel's Download; a prop set to Hi3D while they are not on
+this PC fails with the hub's words (HI3D_MISSING).
 """
 
 from __future__ import annotations

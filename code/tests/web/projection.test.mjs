@@ -13,7 +13,13 @@ test('a bake\'s numbers: the model\'s vertices and texture, then the projection\
     ray_distance_percent: 1.1394, seconds: 15.36, warnings: ['A chart is small'],
   };
   const facts = bakeFacts({ projection: { glb: 'projection/bake_001/projection.glb', stats, settings: { ray_distance: null } } });
-  assert.deepEqual(facts.model, [['Vertices', '10,511'], ['Texture', '2048 × 2048 px']]);
+  // A bake made before the clean mesh's own count was kept: the files' vertices alone.
+  assert.deepEqual(facts.model, [['Vertices', '10,511'], ['Split at UV seams', null], ['Texture', '2048 × 2048 px']]);
+  // The count Retopo shows first, then what the files hold of it (a seam's points are a vertex per side).
+  const counted = bakeFacts({ projection: { glb: 'p.glb', stats: { ...stats, vertices: 2160, render_vertices: 3079 } } });
+  assert.deepEqual(counted.model.slice(0, 2), [['Vertices', '2,160'], ['Split at UV seams', '3,079 in the saved files']]);
+  const whole = bakeFacts({ projection: { glb: 'p.glb', stats: { ...stats, vertices: 500, render_vertices: 500 } } });
+  assert.deepEqual(whole.model.slice(0, 2), [['Vertices', '500'], ['Split at UV seams', null]]);
   assert.deepEqual(facts.projection, [['Covered', '46 %'], ['Missed', '0.01 %'],
     ['Ray distance', '1.14 % of the size (automatic)'], ['Time', '15.4 s']]);
   assert.deepEqual(facts.warnings, ['A chart is small']);
